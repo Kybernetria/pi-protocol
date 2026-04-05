@@ -1,247 +1,210 @@
-# Pi Extension Protocol — Ecosystem & Notable Extensions
+# Pi Protocol - Ecosystem and Packaging Specification
 
-> **Status:** Draft / Work in Progress
-> This document describes the broader pi-* ecosystem, notable extensions, known open questions, and future extension slots. It is intentionally more speculative than the core spec.
+Status: Ultimate Draft Spec v0.1.0
 
----
+## 1. Package roles
 
-## 1. Ecosystem Model
+The protocol ecosystem has four package roles.
 
-### 1.1 Federation, Not Monorepo
+### 1.1 Protocol SDK
+A small shared package that provides:
 
-The pi-* ecosystem is a **federation of independent repositories**. Each extension lives in its own repo, is independently installable, and follows the protocol as a standard — not as a runtime dependency.
+- manifest types and schema
+- bootstrap helpers
+- registration helpers
+- invoke helpers
+- shared validator logic used by nodes
 
-`pi-mono` is the reference implementation and home of the Host runtime. It is not the mandatory home of all extensions.
+This is a platform dependency, not inter-node coupling.
 
-This means:
-- Extensions cannot be linted for cross-repo import violations — there are none by design
-- Protocol compliance is enforced by the manifest shape and the Host's manifest parser, not by CI
-- Community extensions are first-class participants as long as they implement the protocol correctly
-- Adding a new extension to the ecosystem requires zero changes to any existing repo
+### 1.2 Certified node package
+A domain package that:
 
-### 1.2 The Protocol Is a Standard, Not a Package
+- is a valid Pi package
+- ships `pi.protocol.json`
+- ships bootstrap logic
+- ships local handlers
+- exposes one or more `provides`
+- joins the shared network automatically
 
-The protocol is a **spec document** and a **types package** (for TypeScript interface convenience). It is not a runtime. Extensions do not depend on a `pi-protocol` package at runtime — they implement the interfaces it defines.
+### 1.3 Optional explicit host package
+An optional package that explicitly starts the fabric.
 
-There is no "core" that extensions extend. There are extensions that follow the standard, and extensions that don't. Protocol-compliant extensions are interoperable. That's the whole deal.
+Useful for:
 
-### 1.3 All Extensions Are Peers
+- team-wide operational bundles
+- observability-heavy environments
+- debugging and test harnesses
 
-pi-pe, pi-meta, pi-ng, pi-kb, pi-medical, pi-qs — these are all just extensions. They follow the same protocol, implement the same manifest shape, and participate in the delegate pool the same way. None of them are more "core" than any other.
+Not required for batteries-included certification.
 
-What makes some extensions notable is what they *provide* — capabilities that other extensions commonly find useful. But architecturally, pi-meta is not more special than pi-medical. It's just an extension whose `provides` entries happen to be useful infrastructure. The decision to delegate to it is the same as any other delegation decision: is it in the pool, and does the agent decide to call it?
+### 1.4 Validator or generator package
+A tooling package that:
 
-This also means there is no mandatory bundle of extensions. Every pi-* extension is independently useful. Synergy is emergent, not wired.
+- validates manifests
+- checks handler coverage
+- checks forbidden imports
+- stamps out new certified package templates
 
-### 1.4 Protocol Compliance
+## 2. Equality model
 
-A pi-* extension is protocol-compliant if it:
+All certified domain packages are equal nodes.
 
-1. Declares a valid `pi` block in `package.json` with at minimum a `purpose` string
-2. Implements the failure hook interface
-3. Does not hardcode sibling extension names in its manifest
-4. Follows the `provides` invocable schema for any callable interfaces it exposes
+Equality means:
 
-Everything else is the extension author's choice. An extension with an empty `provides` array, no model hints, and no registered pipelines still fully participates in the ecosystem as a general-purpose agent available in the delegate pool.
+- same protocol contract shape
+- same bootstrap expectations
+- same routing mechanism through the fabric
+- same inability to directly import sibling nodes
 
-### 1.5 Protocol Evolution and the Small Repo Advantage
+Equality does not mean:
 
-Because every protocol-compliant extension is small, focused, and follows the same manifest shape, **the protocol can evolve without ecosystem-wide pain.**
+- no shared singleton fabric exists
+- all nodes expose the same number or kind of `provides`
+- a node cannot orchestrate other nodes through the fabric
 
-When a new required manifest attribute is added to the spec — a 5th, 6th, nth field that all compliant extensions must implement — the update process is:
+## 3. Batteries-included distribution model
 
-1. Update the protocol spec document
-2. Update the types package
-3. Run an agent across all pi-* repos to add the new field
+### 3.1 Default UX requirement
+The default expected user experience is:
 
-This works because each repo is small and specialised. The change surface is minimal and uniform. There is no monolithic codebase where adding a protocol field means untangling 40,000 lines of coupled logic. The small repo constraint is not just about independence — it is what makes the protocol itself maintainable and evolvable over time.
+- install a certified package
+- load it in Pi
+- the package automatically joins the protocol network
 
-This is a significant long-term advantage and worth preserving as an explicit design constraint: **pi-* extensions should do one thing well and stay small.**
+The user SHOULD NOT need a separate manual setup step for a dedicated protocol host extension.
 
----
+### 3.2 How batteries-included works
+Each certified package ships the same bootstrap pattern.
 
-## 2. Notable Extensions
+The first certified package loaded creates the fabric singleton if needed. All other certified packages reuse it.
 
-These extensions are worth documenting because their `provides` capabilities are broadly useful across the ecosystem. They are extensions like any other — not required, not privileged, not a separate tier.
+### 3.3 Why this is not a barrier to entry
+The protocol bootstrap is part of each certified package.
 
----
+That means there is no extra human setup burden beyond installing the package itself.
 
-### 2.1 pi-pe — Pipeline Engine
+A package MAY depend on a shared protocol SDK at the npm level. That is not inter-node codependency and does not require the user to think about installing a separate protocol runtime extension first.
 
-**What it is:** An extension that formalises delegation patterns into executable DAG pipelines. When loaded, other extensions can invoke pi-pe to build and execute pipelines, or use it as a node execution engine for pipelines they've already defined.
+## 4. Repository shape
 
-**Why it's notable:** Pipelines built with pi-pe register as `provides` invocables in the owning extension's manifest. This means a complex multi-step workflow gradually becomes a single deterministic callable. The ecosystem gets progressively more capable as pipelines are built and registered — without any changes to the protocol.
+Recommended certified node layout:
 
-**Provides (examples):**
-- `build_pipeline` — construct a new DAG pipeline from available extensions as nodes
-- `execute_pipeline` — run a named pipeline with a given input
-- Named pipeline instances registered by other extensions via `pipeline:` invoke prefix
+```text
+pi-medical/
+  package.json
+  pi.protocol.json
+  extensions/
+    index.ts
+  protocol/
+    handlers.ts
+    schemas/
+      interpret_lab_results.input.json
+      interpret_lab_results.output.json
+  skills/
+  prompts/
+  README.md
+```
 
-Full specification: `pi-protocol-patterns.md` Section 3.
+### Why this shape is recommended
+- `package.json` stays native Pi
+- `pi.protocol.json` is easy to find and validate
+- `extensions/index.ts` matches Pi's normal extension discovery
+- `protocol/handlers.ts` keeps local business logic separate from bootstrap glue
+- explicit schemas make generated packages more trustworthy and testable
 
----
+## 5. Native Pi package metadata
 
-### 2.2 pi-meta — Self-Healing Agent
+Certified node packages MUST still be valid Pi packages.
 
-**What it is:** An extension that subscribes to `pi:escalation` events emitted by the failure hook. When a tool call or delegate invocation fails after retries and nothing else handles the escalation, pi-meta attempts to diagnose and resolve the failure — reading available documentation, reformulating the call, and retrying.
+Example:
 
-**Why it's notable:** The failure hook fires regardless of whether pi-meta is loaded. But without pi-meta (or a custom handler), an unhandled escalation surfaces directly to the user. pi-meta is the most capable default handler for that hook — but it is still just an extension, and the hook is still just an open event.
+```json
+{
+  "name": "pi-medical",
+  "keywords": ["pi-package"],
+  "dependencies": {
+    "@kyvernitria/pi-protocol-sdk": "^0.1.0"
+  },
+  "pi": {
+    "extensions": ["./extensions"],
+    "skills": ["./skills"],
+    "prompts": ["./prompts"]
+  }
+}
+```
 
-**Provides (examples):**
-- `diagnose_failure` — analyse a failed call and suggest a resolution
-- `retry_with_correction` — reformulate and retry a failed invocation
+## 6. No inter-node imports
 
-**Open questions:**
-- Does pi-meta have a maximum attempt depth before giving up?
-- Can pi-meta construct new pipelines via pi-pe as a recovery strategy?
-- What is the terminal failure behaviour when pi-meta itself fails? `[OPEN]`
+### Allowed imports
+A certified node MAY import:
 
----
+- Pi packages
+- protocol SDK packages
+- protocol validator or generator packages
+- local files in the same repository
+- ordinary third-party libraries
 
-### 2.3 pi-ng — Notification & Escalation
+### Forbidden imports
+A certified node MUST NOT import another certified node package directly.
 
-**What it is:** An extension that subscribes to `pi:escalation` events and notifies the user through external channels. Initially Signal, extensible to others.
+This rule is what preserves the network as a web of equal nodes instead of a hidden dependency tree.
 
-**Why it's notable:** Essential for long-running or background agent tasks where the user is not watching the session. When pi-meta is also loaded, pi-ng acts after pi-meta — notifying only if recovery fails or escalation persists.
+## 7. Projections and local Pi resources
 
-**Provides (examples):**
-- `notify_user` — send a message to the user's configured notification channel
-- `escalate_with_context` — send a structured failure summary with trace context
+Certified nodes MAY expose Pi-facing projections:
 
----
+- tools
+- commands
+- skills
+- prompt templates
+- UI helpers
 
-### 2.4 pi-kb — Knowledge Base & Documentation Layer
+These are allowed and useful, but they are not the canonical inter-node contract.
 
-**What it is:** An extension that provides a machine-traversable documentation layer for the ecosystem. Inspired by lat.md's wikilink graph concept but implemented as a pi-specific extension.
+The canonical external contract is still `provides` through the fabric.
 
-**Status:** Unfilled slot. Defined gap. No implementation exists yet.
+## 8. Session scope and process boundaries
 
-**Why it's notable:** The protocol's `purpose` string is intentionally minimal — enough for an agent to orient itself quickly. pi-kb would provide the deeper layer: structured documentation, graph-based traversal of related concepts, on-demand context injection when agents need more than a one-paragraph description.
+The fabric is process-local.
 
-**What it would provide:**
-- Structured documentation nodes beyond the `purpose` string
-- Graph traversal of related concepts across extensions
-- On-demand context injection for agents that need deeper understanding
-- Potentially: shared concept nodes referenced by multiple extensions (e.g. a shared definition of "clinical trial" used by both pi-medical and pi-research)
+That means:
 
-**Protocol integration if built:**
-- Extensions would register a `docs` reference in their manifest `[PROVISIONAL]`
-- The Host or agent queries pi-kb for a node by extension + topic
-- Traversal depth and token budget are pi-kb's concern, not the core protocol's
+- one Pi process has one protocol fabric singleton
+- `pi.events` is process-local, not distributed
+- external multi-process or remote federation is out of scope for v0.1.0
 
-**Open questions:**
-- Documentation node format — Markdown with frontmatter? Custom schema?
-- Traversal model — agent-driven vs Host-driven?
-- Token budget model for node retrieval
-- Cross-extension shared nodes — possible or each extension self-contained? `[OPEN]`
+This is acceptable because the target is seamless interaction inside a Pi session runtime.
 
----
+## 9. Certification levels
 
-### 2.5 Future Extension Slots
+### Level 0 - Plain Pi package
+A package that uses Pi but has no protocol semantics.
 
-Patterns identified from standard agentic design pattern references that have no current pi-* home. Documented here to prevent ecosystem fragmentation if community extensions start building toward these capabilities independently.
+### Level 1 - Manifested node
+A package with `pi.protocol.json` and `provides`, but incomplete runtime glue.
 
-| Slot | What it would provide |
-|---|---|
-| pi-eval | Quality gates, golden tests, production monitoring for agent outputs |
-| pi-guard | Input sanitisation, output safety checks, ethical guardrails |
-| pi-goal | SMART goal definition, KPI tracking, progress monitoring across sessions |
-| pi-learn | Feedback collection, prompt/policy improvement from real usage |
-| pi-mem | Long-term episodic memory, cross-session user context |
+### Level 2 - Certified node
+A package that passes the full compliance checklist.
 
-None of these are planned. They are placeholder names.
+Future agent-generated protocol packages SHOULD target Level 2 directly.
 
----
+## 10. Recommended generation strategy
 
-## 3. The Capability Naming Question
+If an agent is asked to create a new certified node package, it SHOULD generate from a standard template that already includes:
 
-This is a deliberate protocol decision worth documenting explicitly.
+- `pi.protocol.json`
+- bootstrap entrypoint
+- local handlers file
+- schema directory
+- compliance checklist
 
-**The protocol does not define a canonical capability vocabulary.**
+This keeps protocol adoption mechanical and repeatable.
 
-Extensions name their own `provides` entries freely. The Host does not use capability names for routing — it exposes the full delegate pool and lets the agent reason about which delegate to use. `provides` entries are read by the agent, not parsed by a deterministic router.
+## 11. Vendored shim alternative
 
-**Consequences:**
-- Community extensions may use inconsistent naming conventions. This is acceptable.
-- If two extensions provide invocables with identical names, this is a conflict the user resolves.
-- If two extensions do similar things with different names, the agent resolves it. If the agent can't, the user will.
-- There is no central registry. There is no PR process for adding to a capabilities enum.
+If a team does not want a direct dependency on the protocol SDK, a certified package MAY vendor an equivalent generated shim.
 
-**Why this is the right call:**
-A canonical vocabulary would require governance, create contribution friction, and lock the ecosystem's expressiveness to whatever names were anticipated at spec time. The protocol's job is routing and communication, not semantics. Extensions bring the semantics.
+However, the vendored shim MUST remain behaviorally equivalent to the canonical bootstrap and registration contract.
 
----
-
-## 4. Open Questions Index
-
-A consolidated list of unresolved questions from across all three documents. Not blockers — items to revisit as the protocol matures and pi-mono's extension system is better understood.
-
-### Core Protocol
-- `[OPEN]` Mid-session extension changes: how does pi-mono currently handle hot-reload, and should the protocol align with that behaviour?
-- `[OPEN]` Protocol versioning: version scheme, migration strategy, backward compatibility guarantees
-- `[OPEN]` Terminal failure state: exact behaviour when nothing handles a `pi:escalation` event
-- `[OPEN]` Full context transfer mechanics within pi's session model
-
-### Delegation & Provenance
-- `[OPEN]` Should the orchestrator have opt-in access to the full call tree for a given `trace_id`?
-- `[OPEN]` Exact failure hook retry configuration API — per-extension config shape
-- `[OPEN]` Is there a maximum hop depth for delegation chains, and who enforces it?
-
-### pi-pe
-- `[OPEN]` Concrete TypeScript API for DAG pipeline construction
-- `[OPEN]` How does pi-pe handle partial pipeline failures — one node fails, others succeed?
-
-### pi-meta
-- `[OPEN]` Maximum attempt depth / self-healing limit before pi-meta gives up
-- `[OPEN]` Can pi-meta construct new pipelines via pi-pe as a recovery strategy?
-- `[OPEN]` Terminal failure behaviour when pi-meta itself fails
-
-### pi-kb
-- `[OPEN]` Documentation node format
-- `[OPEN]` Traversal model: agent-driven vs Host-driven
-- `[OPEN]` Token budget model for node retrieval
-- `[OPEN]` Cross-extension shared nodes: possible or each extension self-contained?
-
----
-
-## 5. Design Decisions Log
-
-A record of significant architectural decisions made during protocol design. Exists so future contributors don't re-open settled questions without context.
-
-| Decision | Rationale |
-|---|---|
-| Protocol is a standard, not a runtime | Extensions implement the spec. No `pi-protocol` runtime dependency. No privileged core package. |
-| All extensions are peers | pi-pe and pi-meta are not more core than pi-medical. Architectural parity prevents hidden coupling and makes the ecosystem compositional. |
-| Small, specialised repos as a hard constraint | Keeps change surfaces minimal and uniform. Makes protocol evolution tractable — an agent can update all extensions when the spec gains a new required field. This is a long-term maintenance advantage, not just a style preference. |
-| No canonical capability vocabulary | Avoids governance overhead, contribution friction, and semantic lock-in. The protocol is plumbing. |
-| Manifests declare intent, Host resolves reality | Prevents stale references when extensions are loaded/unloaded. No extension ever breaks because a sibling isn't present. |
-| Extensions never reference each other by name in manifests | Same as above. Capability slots, not package names. |
-| Opaque delegation by default | Prevents context bloat in multi-hop chains. Each hop is a compression boundary. Orchestrators see results, not reasoning. |
-| Failure hook is core, handlers are extensions | Every extension participates in failure handling. What handles the escalation event is just another extension in the pool. |
-| Documentation layer is a future extension slot | Layers 1 and 2 are sufficient for the protocol to function. Layer 3 is pi-kb's problem when it exists. |
-| Four delegation patterns are reference, not enum | Real delegations are messy. pi-pe formalises them when precision is needed. Outside pi-pe they are conventions. |
-| Delegate pool is session-scoped | Avoids runtime complexity. Defers to pi-mono's native extension discovery for mid-session changes. |
-| Model selection by tier + optional specific | Keeps extensions model-agnostic in the common case. Provider abstraction lives in pi-ai. |
-
----
-
-## 6. Checklist for Protocol-Compliant Extensions
-
-For extension authors building pi-* extensions that follow this protocol.
-
-### Required
-- [ ] `pi` block in `package.json` with valid `purpose` string
-- [ ] Failure hook interface implemented
-- [ ] No sibling extension names hardcoded in manifest
-- [ ] `pi.protocol` version declared `[when versioning is formalised]`
-- [ ] Repo is small and single-purpose
-
-### Recommended
-- [ ] `provides` entries for any named callable interfaces
-- [ ] `config.model` block with at minimum a `tier` declaration
-- [ ] README references pi protocol version targeted
-- [ ] `provides` entries added for any pi-pe pipelines once built
-
-### When Available
-- [ ] pi-kb documentation nodes for complex capabilities
-- [ ] pi-pe pipelines registered as `provides` entries for hardened recurring workflows
+The recommended path remains using the shared SDK to reduce drift.

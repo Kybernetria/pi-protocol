@@ -1,0 +1,432 @@
+# Pi Protocol - Runtime and Fabric Specification
+
+Status: Ultimate Draft Spec v0.1.0
+
+## 1. Runtime model
+
+Pi Protocol runs as one shared fabric singleton inside an active Pi process.
+
+The fabric is responsible for:
+
+- node registration
+- registry construction and validation
+- invoke routing
+- trace and span management
+- failure recording and escalation
+- budget propagation and usage accounting
+- optional Pi projections of protocol state
+
+## 2. Batteries-included bootstrap
+
+### 2.1 Default requirement
+Every certified node MUST ship the tiny bootstrap logic required to create or join the fabric.
+
+The user SHOULD NOT need to manually install a dedicated protocol host extension package before a certified node can participate.
+
+### 2.2 Singleton storage
+The fabric MUST be stored as a process-local singleton.
+
+Recommended implementation:
+
+```ts
+const FABRIC_KEY = Symbol.for("pi-protocol.fabric");
+```
+
+### 2.3 Bootstrap flow
+Bootstrap MUST behave like this:
+
+1. look up `globalThis[FABRIC_KEY]`
+2. if present, reuse it
+3. if absent, create a new fabric and store it
+4. register the current node with the fabric
+
+### 2.4 No creator privilege
+The package that first creates the fabric singleton MUST NOT gain routing preference, semantic authority, or registry privilege beyond process-local initialization.
+
+## 3. Standard bootstrap pattern
+
+Every certified node SHOULD use one standard helper pattern.
+
+```ts
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { ensureProtocolFabric, registerProtocolNode } from "@kyvernitria/pi-protocol-sdk";
+import manifest from "../pi.protocol.json";
+import * as handlers from "../protocol/handlers.js";
+
+export default function (pi: ExtensionAPI) {
+  const fabric = ensureProtocolFabric(pi);
+  registerProtocolNode(pi, fabric, {
+    manifest,
+    handlers,
+    source: {
+      packageName: "pi-medical",
+      packageVersion: "1.0.0"
+    }
+  });
+}
+```
+
+The exact helper names MAY vary, but the behavior MUST remain equivalent.
+
+## 4. Fabric API
+
+The fabric MUST expose at least these capabilities.
+
+```ts
+interface ProtocolFabric {
+  registerNode(node: RegisteredNode): void;
+  unregisterNode(nodeId: string): void;
+  getRegistry(): ProtocolRegistrySnapshot;
+  invoke(req: ProtocolInvokeRequest): Promise<ProtocolInvokeResult>;
+  describe(nodeId?: string): ProtocolRegistrySnapshot | ProtocolNodeSnapshot | null;
+}
+```
+
+## 5. Registration contract
+
+### 5.1 Registered node payload
+
+```ts
+interface RegisteredNode {
+  manifest: PiProtocolManifest;
+  handlers: Record<string, ProtocolHandler>;
+  source?: {
+    packageName?: string;
+    packageVersion?: string;
+    extensionPath?: string;
+  };
+}
+```
+
+### 5.2 Handler contract
+
+```ts
+type ProtocolHandler = (ctx: ProtocolCallContext, input: unknown) => Promise<unknown>;
+```
+
+### 5.3 Handler resolution
+The fabric MUST resolve each `provides[].handler` against the node's local handler map.
+
+The handler name is local to the node. It is not globally routed.
+
+## 6. Registry model
+
+The fabric MUST maintain a validated registry of all public provides.
+
+### 6.1 Snapshot shape
+
+```ts
+interface ProtocolRegistrySnapshot {
+  protocolVersion: string;
+  nodes: ProtocolNodeSnapshot[];
+  provides: ProtocolProvideSnapshot[];
+}
+
+interface ProtocolNodeSnapshot {
+  nodeId: string;
+  purpose: string;
+  tags?: string[];
+  source?: {
+    packageName?: string;
+    packageVersion?: string;
+  };
+  provides: ProtocolProvideSnapshot[];
+}
+
+interface ProtocolProvideSnapshot {
+  globalId: string;
+  nodeId: string;
+  name: string;
+  description: string;
+  tags?: string[];
+  effects?: string[];
+  visibility: "public" | "internal";
+  modelHint?: ModelHint;
+}
+```
+
+### 6.2 Validation responsibilities
+The fabric MUST validate:
+
+- unique `nodeId`
+- unique global provide IDs
+- handler existence for every provide
+- schema availability for every provide
+
+## 7. Invoke contract
+
+### 7.1 Request
+
+```ts
+interface ProtocolInvokeRequest {
+  traceId?: string;
+  parentSpanId?: string;
+  callerNodeId: string;
+  provide: string;
+  input: unknown;
+  target?: {
+    nodeId?: string;
+    tagsAny?: string[];
+  };
+  routing?: "deterministic" | "best-match";
+  modelHint?: {
+    tier?: "fast" | "balanced" | "reasoning";
+    specific?: string | null;
+  };
+  budget?: {
+    remainingUsd?: number;
+    remainingTokens?: number;
+    deadlineMs?: number;
+  };
+  handoff?: {
+    brief?: string;
+    opaque?: boolean;
+  };
+}
+```
+
+### 7.2 Result
+
+```ts
+type ProtocolInvokeResult =
+  | {
+      ok: true;
+      traceId: string;
+      spanId: string;
+      nodeId: string;
+      provide: string;
+      output: unknown;
+      meta?: {
+        durationMs?: number;
+        costUsd?: number;
+        tokenUsage?: number;
+        modelUsed?: string;
+        warnings?: string[];
+      };
+    }
+  | {
+      ok: false;
+      traceId: string;
+      spanId: string;
+      error: {
+        code:
+          | "NOT_FOUND"
+          | "AMBIGUOUS"
+          | "INVALID_INPUT"
+          | "INVALID_OUTPUT"
+          | "EXECUTION_FAILED"
+          | "BUDGET_EXCEEDED"
+          | "TIMEOUT"
+          | "CANCELLED";
+        message: string;
+        details?: unknown;
+      };
+    };
+```
+
+## 8. Routing rules
+
+### 8.1 Deterministic routing
+The fabric MUST use deterministic routing when:
+
+- `target.nodeId` is specified, or
+- only one public provide matches the request
+
+### 8.2 Best-match routing
+Best-match routing MAY be supported.
+
+In v0.1.0 the conservative behavior is preferred:
+
+1. filter by local provide name, visibility, target hints, and tags
+2. if one match remains, use it
+3. if multiple matches remain, return `AMBIGUOUS`
+
+The fabric SHOULD NOT silently invent a winner in a genuinely ambiguous case.
+
+## 9. Validation boundaries
+
+The fabric owns validation at these boundaries.
+
+1. request validation
+2. input schema validation before handler execution
+3. output schema validation after handler execution
+4. result envelope construction
+
+This ensures stable semantics regardless of how simple or complex a node's local handler implementation is.
+
+## 10. Protocol call context
+
+The handler context SHOULD include:
+
+```ts
+interface ProtocolCallContext {
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+  callerNodeId: string;
+  calleeNodeId: string;
+  provide: string;
+  budget?: {
+    remainingUsd?: number;
+    remainingTokens?: number;
+    deadlineMs?: number;
+  };
+  modelHint?: ModelHint;
+  fabric: ProtocolFabric;
+  pi: {
+    appendEntry: (kind: string, data: unknown) => void;
+    sendMessage?: (message: unknown, options?: unknown) => void;
+    events?: unknown;
+  };
+}
+```
+
+The exact shape MAY vary, but the trace, caller, callee, and provide identity MUST be available.
+
+## 11. Failure model
+
+### 11.1 Required behavior
+When an invocation fails, the fabric MUST:
+
+1. classify the error
+2. record the failure in provenance entries
+3. optionally apply retry policy
+4. emit a protocol failure event if unresolved
+5. return a structured failure result
+
+### 11.2 Recommended error code mapping
+- `NOT_FOUND` for no valid target
+- `AMBIGUOUS` for unresolved routing ambiguity
+- `INVALID_INPUT` for schema mismatch before execution
+- `INVALID_OUTPUT` for schema mismatch after execution
+- `EXECUTION_FAILED` for handler-level failure
+- `BUDGET_EXCEEDED` for budget policy failure
+- `TIMEOUT` for execution deadline expiry
+- `CANCELLED` for operator or runtime cancellation
+
+### 11.3 Retry policy
+Retry MAY exist, but the retry policy MUST be explicit and bounded.
+
+## 12. Provenance model
+
+Pi session custom entries MUST be the canonical protocol provenance store.
+
+### 12.1 Why session entries
+Pi already gives:
+
+- durable per-session storage
+- branch-aware persistence
+- invisibility to the LLM unless explicitly projected
+
+That makes session custom entries the correct protocol audit substrate.
+
+### 12.2 Required entry kinds
+The fabric SHOULD record at least:
+
+- registry snapshots
+- span starts and ends
+- failures
+- budget snapshots or usage updates
+- routing decisions when ambiguity filtering occurs
+
+### 12.3 Span entry shape
+
+```ts
+interface ProtocolSpanEntry {
+  kind: "span";
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+  callerNodeId: string;
+  calleeNodeId: string;
+  provide: string;
+  status: "started" | "succeeded" | "failed";
+  startedAt: number;
+  endedAt?: number;
+  meta?: {
+    durationMs?: number;
+    costUsd?: number;
+    tokenUsage?: number;
+    modelUsed?: string;
+  };
+  error?: {
+    code: string;
+    message: string;
+  };
+}
+```
+
+### 12.4 Registry snapshot entry shape
+
+```ts
+interface ProtocolRegistryEntry {
+  kind: "registry_snapshot";
+  recordedAt: number;
+  registry: ProtocolRegistrySnapshot;
+}
+```
+
+### 12.5 Failure entry shape
+
+```ts
+interface ProtocolFailureEntry {
+  kind: "failure";
+  recordedAt: number;
+  traceId: string;
+  spanId: string;
+  callerNodeId: string;
+  calleeNodeId?: string;
+  provide: string;
+  error: {
+    code: string;
+    message: string;
+    details?: unknown;
+  };
+}
+```
+
+## 13. Budget model
+
+Budget support is part of the runtime contract.
+
+A caller MAY provide:
+
+- remaining USD budget
+- remaining token budget
+- execution deadline
+
+A callee MAY return:
+
+- observed cost
+- observed token usage
+- warnings
+
+The fabric SHOULD record and propagate these values.
+
+## 14. Model hints
+
+The runtime recognizes standardized model tiers:
+
+- `fast`
+- `balanced`
+- `reasoning`
+
+A node MAY declare defaults in its manifest.
+A caller MAY override those defaults in an invoke request.
+
+The fabric MAY use Pi model selection machinery or pass the hint through to nested execution mechanisms.
+
+## 15. Pi integration points
+
+The runtime is expected to use Pi capabilities that already exist.
+
+Strong fits:
+
+- extension entrypoints in `extensions/index.ts`
+- `pi.events` for in-process protocol events
+- session custom entries via `appendEntry()`
+- custom messages via `sendMessage()` where appropriate
+- commands and tools as optional projections
+- `session_start`, `session_shutdown`, and reload flows
+
+The protocol does not require Pi core to understand any of these protocol semantics natively.

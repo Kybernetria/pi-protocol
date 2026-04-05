@@ -1,292 +1,191 @@
-# Pi Extension Protocol — Core Specification
+# Pi Protocol - Core Specification
 
-> **Status:** Draft / Work in Progress
-> This document reflects the current state of architectural thinking. Not all decisions are final. Sections marked `[OPEN]` contain unresolved questions. Sections marked `[PROVISIONAL]` are directionally agreed but details may shift.
+Status: Ultimate Draft Spec v0.1.0
 
----
+## 1. Normative language
 
-## 1. What This Protocol Is
+The keywords MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are normative in this document.
 
-The Pi Extension Protocol is the **glue layer** between independent pi-* extensions. It defines how extensions discover each other, how they communicate, how they fail gracefully, and how the Host resolves capability availability at runtime.
+## 2. What Pi Protocol is
 
-The protocol is **not** a capability vocabulary. It does not dictate what extensions must be good at. It dictates how they describe themselves, how they expose callable interfaces, and how the Host wires them together dynamically.
+Pi Protocol is a protocol layer that runs on top of Pi and turns protocol-certified Pi packages into interoperable nodes inside one shared runtime network.
 
-The protocol is **plumbing, not semantics.** Extensions bring the semantics.
+The protocol defines:
 
----
+- how a node describes itself
+- how a node exposes `provides`
+- how a node joins the network automatically
+- how cross-node invocation is validated and routed
+- how traces, failures, and budgets are recorded
+- how future generated packages can conform reliably
 
-## 2. Design Principles
+## 3. Design goals
 
-### 2.1 The Protocol Is Glue
-The protocol's job is to make extensions discoverable and interoperable. It does not define what an extension does — only how it presents itself and how it can be invoked.
+### 3.1 Equal domain nodes
+All domain packages are equal protocol nodes.
 
-### 2.2 Manifests Declare Intent. The Host Resolves Reality.
-A manifest is static. It expresses what an extension *wants* to provide and *wants* to delegate to. The Host reads all loaded manifests at session start and produces a live capability map reflecting what is *actually available*. These are two different things and must be treated as such.
+No domain node receives special semantic privilege, routing privilege, or direct code access to another domain node.
 
-### 2.3 Extensions Never Reference Each Other By Name
-No extension manifest hardcodes the name of another extension. Extensions declare capability intents. The Host resolves which loaded extension satisfies those intents at runtime. This means extensions are never broken by the absence of a sibling package.
+### 3.2 Batteries included
+A certified node MUST work when installed by itself.
 
-### 2.4 Deterministic First, Probabilistic Last
-Everything that can be handled by code — routing, dispatch, schema validation, failure handling — must be handled by code. The agent (LLM) is invoked only for tasks that genuinely require reasoning: choosing between ambiguous delegates, synthesising results, deciding delegation strategy.
+The user SHOULD NOT be required to manually install a dedicated protocol host package just to make the node participate in the protocol network.
 
-### 2.5 Structure Is On-Demand, Not Mandatory Overhead
-The `purpose` and `provides` blocks exist to be read when needed. They are not injected into every prompt. The agent reads them when it has genuine uncertainty. In the common case, it may not read them at all.
+### 3.3 One shared fabric per process
+A Pi process MUST have at most one active protocol fabric singleton.
 
-### 2.6 All Extensions Are Peers
-The protocol is a standard, not a runtime. pi-pe, pi-meta, pi-ng, and pi-kb are extensions like any other — they follow the same manifest shape, participate in the delegate pool the same way, and are not required by the protocol. What makes them notable is what they provide, not any architectural privilege. An extension that never delegates to any of them still fully participates in the protocol.
+That fabric is shared infrastructure, not a domain node.
 
----
+### 3.4 Deterministic first, probabilistic last
+Validation, registration, routing, tracing, failure handling, and budget accounting MUST be handled in code first.
 
-## 3. The Extension Manifest
+LLM reasoning MAY be used for ambiguity that code cannot responsibly resolve, but MUST NOT be the default mechanism for routine protocol operation.
 
-Every pi-* protocol-aligned extension declares a `pi` block in its `package.json`. This block is the contract between the extension and the Host.
+### 3.5 Pi-native, not Pi-fictional
+The protocol MUST align with Pi as it exists today:
 
-### 3.1 Manifest Shape
+- Pi packages already use `package.json#pi`
+- Pi extensions register tools, commands, shortcuts, hooks, and UI
+- Pi sessions are tree-shaped and durable
+- Pi session custom entries are a natural provenance store
 
-```json
-{
-  "name": "pi-medical",
-  "version": "1.0.0",
-  "pi": {
-    "purpose": "A medical expert agent. Provides clinical reasoning, interprets health data, and can retrieve and summarise medical research.",
-    "provides": [
-      {
-        "name": "clinical_trial_lookup",
-        "type": "invocable",
-        "description": "Retrieves, filters, and summarises relevant clinical trials for a given health query.",
-        "input": "{ query: string, filters?: { condition?: string, date_range?: string } }",
-        "output": "{ trials: Trial[], summary: string }",
-        "invoke": "pipeline:clinical_trial_lookup"
-      },
-      {
-        "name": "interpret_lab_results",
-        "type": "invocable",
-        "description": "Interprets a set of lab values and returns a plain-language clinical summary.",
-        "input": "{ labs: LabResult[] }",
-        "output": "{ interpretation: string, flags: string[] }",
-        "invoke": "tool:interpret_lab_results"
-      }
-    ],
-    "config": {
-      "model": {
-        "tier": "reasoning",
-        "specific": null
-      },
-      "blacklist": []
-    }
-  }
-}
-```
+## 4. Non-goals
 
-### 3.2 Manifest Fields
+The protocol does not attempt to:
 
-#### `purpose` — string
-One short paragraph. What this extension is and does, written for an agent that has never encountered it. Not a capability list. Just orientation. The agent reads this when it needs to understand a delegate before engaging it.
+- change Pi core internals
+- create a mandatory universal ontology for every domain
+- force all orchestration into strict DAGs
+- make skills or prompt templates the canonical transport layer
+- permit direct code imports between certified domain nodes
 
-This is **not** the same as `provides`. `purpose` is passive description. `provides` is active interface.
+## 5. Key terms
 
-#### `provides` — array of invocables
-Named callable interfaces exposed by this extension. Each entry has:
+### Node
+A protocol-certified Pi package participating in the protocol network.
 
-| Field | Type | Description |
-|---|---|---|
-| `name` | string | Unique name within this extension's namespace |
-| `type` | `"invocable"` | Currently the only type. Reserved for future expansion. |
-| `description` | string | What this invocable does. Written for agent consumption. |
-| `input` | string (schema) | Expected input shape. TypeScript interface notation or JSON Schema. |
-| `output` | string (schema) | Output shape. |
-| `invoke` | string | Dispatch target. Format: `pipeline:name`, `tool:name`, `command:name` |
+### Provide
+A named callable interface exposed by a node.
 
-`provides` entries grow over time as workflows are understood and hardened. A newly created extension may have an empty `provides` array and expose only itself as a general-purpose agent. Registered pi-pe pipelines are added to `provides` when they are built.
+### Fabric
+The shared per-process runtime that maintains registry, routing, tracing, failure handling, and budget accounting.
 
-#### `config` — object
+### Bootstrap
+The tiny extension logic shipped in every certified package that ensures the shared fabric exists and registers the current node.
 
-**`model`** — model selection for this extension's agent.
-- `tier`: `"fast"` | `"balanced"` | `"reasoning"` — capability tier hint. The Host selects the best available model at this tier.
-- `specific`: string | null — optionally names an exact model. Host uses this if available, falls back to `tier` if not.
+### Projection
+A Pi-facing surface generated from protocol state, such as a tool, command, skill, or prompt template.
 
-**`blacklist`** — array of extension names this extension refuses to delegate to. Overrides global policy. Default empty (permissive).
+### Trace
+A linked chain of protocol invocations.
 
-#### `delegates` — NOT author-defined
-The `delegates` pool is **not written by the extension author**. It is resolved and injected by the Host at session start. See Section 4.
+### Span
+A single protocol invocation within a trace.
 
----
+## 6. Architecture
 
-## 4. The Host
+Pi Protocol has three architectural layers.
 
-The Host is pi's runtime layer (`pi-agent-core` / `pi-coding-agent`). Its responsibilities in the context of this protocol are:
+### 6.1 Pi substrate
+Pi itself provides:
 
-### 4.1 Session Start: Capability Resolution
+- extension loading
+- tools and commands
+- session storage
+- session trees and branch summaries
+- event hooks
+- UI surfaces
+- SDK and RPC embedding
 
-On session start, the Host:
+### 6.2 Protocol fabric
+The protocol fabric is the shared singleton runtime.
 
-1. Scans all loaded extensions
-2. Reads each extension's `pi` manifest block
-3. Builds a **live delegate pool**: all loaded extensions minus any blacklisted pairs
-4. Injects the resolved delegate pool into each extension's runtime context
-5. Makes each extension's `provides` entries available for deterministic dispatch
+It owns:
 
-The delegate pool is **session-scoped**. It reflects what is loaded when the session starts. Mid-session extension changes follow however pi-mono's existing extension discovery handles them — the protocol defers to pi's native behaviour here. `[OPEN: confirm exact behaviour with pi-mono extension hot-reload mechanics]`
+- node registration
+- registry construction
+- invoke routing
+- provenance
+- failure recording
+- budget propagation
+- optional Pi projections of protocol state
 
-### 4.2 Deterministic Dispatch
+### 6.3 Domain nodes
+Every certified domain package is a node.
 
-When an agent calls a named invocable (`provides` entry), the Host:
+A node owns:
 
-1. Resolves which loaded extension owns that invocable
-2. Validates the input against the declared schema
-3. Dispatches to the `invoke` target (`pipeline:`, `tool:`, or `command:`)
-4. Returns the result envelope to the calling agent
+- its manifest
+- its local handlers
+- its own local code and resources
+- its own domain semantics
 
-No LLM reasoning is involved in dispatch. This is fully deterministic.
+A node does not own:
 
-### 4.3 Failure Hook
+- another node's handlers
+- another node's code
+- the global registry
+- the shared transport semantics
 
-See Section 6.
+## 7. Core invariants
 
----
+These invariants are mandatory.
 
-## 5. Agent Interaction Modes
+1. Every certified node MUST ship `pi.protocol.json`.
+2. Every certified node MUST ship bootstrap logic in its Pi extension entrypoint.
+3. Every certified node MUST be installable and usable on its own.
+4. Every certified node MUST register with the shared fabric at runtime.
+5. No certified node MAY import another certified node directly.
+6. Cross-node interaction MUST go through the fabric.
+7. `package.json#pi` MUST remain native Pi metadata.
+8. Protocol metadata MUST live in `pi.protocol.json`.
+9. The global identity of a provide MUST be `nodeId.provideName`.
+10. Session custom entries MUST be the source of truth for protocol provenance.
 
-An agent interacting with a delegate has three modes. The agent chooses the appropriate mode based on what it knows and what it needs. The protocol imposes no overhead on simpler modes.
+## 8. Batteries-included model
 
-### Mode 1: Direct Invocable Call
-The agent knows exactly what it needs. It calls a named `provides` entry with a structured input. Fully deterministic. No `purpose` read required.
+The protocol adopts batteries-included mode as the default and recommended distribution model.
 
-```
-agent → Host: invoke "pi-medical:clinical_trial_lookup" with { query: "..." }
-Host → pi-medical: dispatch pipeline:clinical_trial_lookup
-pi-medical → Host: result envelope
-Host → agent: result
-```
+That means any certified package MAY be the first package to bring up the fabric singleton. The fact that one package creates the fabric first MUST NOT grant that package any routing preference, semantic authority, or registry ownership beyond process-local initialization.
 
-### Mode 2: Informed Delegation
-The agent has partial knowledge. It reads `purpose` and/or scans `provides` descriptions to understand the delegate, then decides how to engage — either via a specific invocable or a natural language prompt.
+The fabric code is shared infrastructure.
 
-### Mode 3: Blind Subagent Handoff
-The agent sees the delegate name. Protocol awareness is sufficient — the delegate's name or general reputation is enough context. The agent passes a natural language prompt directly to the delegate as a subagent. No `purpose` read, no `provides` lookup.
+## 9. Equality clarified
 
-This mode imposes near-zero overhead and is appropriate for simple or well-understood delegations.
+"All extensions are equal" means:
 
----
+- identical protocol contract shape
+- identical access to the network through the fabric
+- no domain node gets a privileged protocol role
+- no domain node gets direct code reach into another domain node
 
-## 6. Failure Hook
+It does not mean:
 
-### 6.1 Purpose
-Every pi-* extension must implement a failure hook interface. This is a **core protocol requirement**, not opt-in. The hook fires when a tool call or delegate invocation fails after retries. What handles the hook is opt-in (pi-meta, custom handler, or nothing — which logs and surfaces to user).
+- there is no shared singleton runtime
+- nodes cannot participate in hierarchical workflows
+- all nodes must expose the same kinds of `provides`
 
-### 6.2 Trigger Conditions `[PROVISIONAL]`
-- Fires after **2+ failed attempts** on the same call
-- Retry count is configurable per extension
-- Fires on both tool call failures and delegate invocation failures
+Hierarchical orchestration is allowed.
+Privileged architecture is not.
 
-### 6.3 Hook Payload
+## 10. Codependency rule
 
-```typescript
-interface PiFailureHook {
-  trigger: "after_n_retries";
-  retries_before_trigger: number;       // default: 2
-  payload: {
-    failed_call: ToolCall | DelegateCall;
-    error: PiError;
-    attempt_count: number;
-    extension_id: string;
-  };
-}
-```
+### Allowed dependencies
+A certified node MAY depend on:
 
-The payload contains only the **failed call and error**. Not the full conversation context. The handler can request more context if needed.
+- Pi packages
+- a shared protocol SDK
+- a shared protocol validator or code generator
+- ordinary third-party libraries
+- local files in the same repository
 
-### 6.4 Outcomes
+### Forbidden dependencies
+A certified node MUST NOT import another certified domain node package directly.
 
-| Outcome | Meaning |
-|---|---|
-| `"handled"` | Process continues. Failure is logged if it was a first-time failure on this call. |
-| `"escalate"` | Emits an open `pi:escalation` event that any installed extension can subscribe to. |
+A shared SDK is platform coupling, not inter-node coupling.
 
-### 6.5 Escalation Events
-The `pi:escalation` event is open — any installed extension can subscribe. pi-meta subscribes to attempt self-healing. pi-ng subscribes to notify the user. Neither is required. If nothing subscribes, the event is logged and the session surfaces the failure to the user directly.
+## 11. Certification target
 
-This keeps the failure hook in core without pulling any opt-in extension into core.
+The protocol is designed so that future generated packages can reliably conform by template.
 
-### 6.6 Terminal Failure `[OPEN]`
-When pi-meta itself fails, or when no handler resolves the escalation, a terminal failure state must be defined. Current thinking: log full context, surface clearly to user, halt the failing delegation chain without halting the entire session. Exact behaviour TBD.
-
----
-
-## 7. Delegation Envelope `[PROVISIONAL]`
-
-When one extension delegates to another, the request is wrapped in a delegation envelope. This is lightweight and always present, even for blind subagent handoffs.
-
-```typescript
-interface DelegationEnvelope {
-  trace_id: string;           // unique ID for this delegation chain
-  hop_chain: string[];        // ordered list of extension IDs in this chain
-  calling_extension: string;  // who is delegating
-  capability?: string;        // named invocable, if Mode 1
-  mode: "invocable" | "subagent" | "pipeline" | "handoff";
-  payload: unknown;           // mode-specific content
-  model_hint?: ModelHint;     // optional override from calling extension
-}
-```
-
-The `trace_id` and `hop_chain` are the minimum viable provenance. They are not displayed to the user in normal operation but are available for debugging, logging, and future tooling. The protocol requires these fields are present — it does not require any tooling be built around them yet.
-
-### 7.1 Delegation Is Opaque By Default
-The orchestrating agent sees the **output** of a delegation, not the internal reasoning chain. What crosses a delegation boundary is the result, not the process. Each hop is responsible for compressing its own output before returning it.
-
-This prevents context bloat in multi-hop chains (e.g. pi-qs → pi-medical → pi-research → pi-medical → pi-qs). pi-research returns an answer. pi-medical reasons on that answer and decides what to return to pi-qs. The conversation history inside pi-research's execution does not propagate upward.
-
----
-
-## 8. Model Selection
-
-### 8.1 Package-Level Declaration
-Each extension declares model preferences in its manifest `config.model` block:
-
-```json
-"model": {
-  "tier": "reasoning",
-  "specific": "claude-opus-4-5"
-}
-```
-
-- If `specific` is set and available, the Host uses it
-- If `specific` is unavailable, the Host falls back to `tier`
-- If neither is set, the Host uses its default for the current session
-
-### 8.2 Tier Vocabulary `[PROVISIONAL]`
-- `"fast"` — cheap, low-latency model. Appropriate for classification, formatting, simple extraction.
-- `"balanced"` — mid-tier. General reasoning and tool use.
-- `"reasoning"` — highest capability. Extended thinking, complex multi-step reasoning.
-
-Tier names are mapped to available models by pi-ai's provider abstraction. Extensions never reference provider-specific model names in the tier field.
-
-### 8.3 Model Selection Is Standardised Via Protocol
-All pi-* extensions use this same `model` block shape. The tier vocabulary is part of the protocol spec. New tiers require a protocol version bump.
-
----
-
-## 9. Protocol Versioning `[OPEN]`
-
-The manifest should declare which version of the pi protocol it targets. This allows the Host to handle extensions built against older protocol versions gracefully.
-
-```json
-"pi": {
-  "protocol": "0.1.0",
-  ...
-}
-```
-
-Version scheme, migration strategy, and backward compatibility guarantees are TBD. This section exists as a placeholder to ensure versioning is not bolted on after the fact.
-
----
-
-## 10. What This Protocol Deliberately Does Not Define
-
-- **Capability vocabulary** — extensions name their own `provides` entries freely. The protocol does not maintain a canonical namespace of capability names. Naming conflicts between community extensions are a human concern, not a protocol concern. If two extensions provide an invocable with identical names, this is a protocol conflict and surfaced as such. If they do similar things with different names, that is acceptable — the agent or the user resolves it.
-
-- **Layer 3 / Documentation Layer** — the protocol does not define how extension documentation is structured, stored, or traversed. A future opt-in extension (pi-kb or similar) may address this. The protocol leaves this slot intentionally unfilled.
-
-- **Specific pipeline implementations** — pi-pe provides these. The protocol only requires that registered pipelines expose themselves via `provides` entries following the invocable schema.
-
-- **Memory and long-term state** — out of scope for core protocol. Future pi-kb extension territory.
+Conformance must be mechanical enough that an agent can stamp out a new node package and the package immediately joins the network without hand-wiring sibling integrations.
