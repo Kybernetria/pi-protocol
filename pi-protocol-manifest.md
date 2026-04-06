@@ -301,6 +301,26 @@ A manifest validator MUST check:
 
 Provide schemas evolve over time. The following rules define breaking vs. non-breaking changes.
 
+### 12.1 Compatibility directions
+
+Schema changes MUST maintain both directions of compatibility during rolling updates where nodes at different versions may coexist:
+
+**Backward compatibility:** Newer nodes can process input from older nodes. This is REQUIRED for rolling updates.
+
+**Forward compatibility:** Older nodes can process input from newer nodes by ignoring unknown fields. This is REQUIRED for graceful degradation.
+
+To maintain both directions:
+
+- Adding optional fields with defaults: Compatible in both directions
+- Removing optional fields: Compatible (older nodes ignore, newer use default)
+- Adding required fields: BREAKS backward compatibility
+- Removing required fields: BREAKS forward compatibility
+- Changing field types: BREAKS both directions unless the type is widened
+
+Implementations SHOULD preserve unknown fields when round-tripping data between nodes to avoid data loss during read-modify-write cycles by older code.
+
+### 12.2 Breaking vs. non-breaking changes
+
 **Non-breaking changes:**
 
 - Adding new optional fields to `outputSchema`
@@ -315,4 +335,16 @@ Provide schemas evolve over time. The following rules define breaking vs. non-br
 - Narrowing an enum (removing allowed values)
 - Changing field optionality from optional to required
 
+### 12.3 Versioning discipline
+
 A node SHOULD increment the provide's `version` when making breaking changes (major version) and when making non-breaking additions (minor version). A node SHOULD document deprecated fields for at least one minor version before removal. Callers SHOULD specify version constraints to avoid unexpected breakage from upstream schema changes.
+
+### 12.4 Schema as Published Language
+
+A provide's input and output schemas constitute a Published Language for that capability. A Published Language:
+
+- MUST be documented with semantic meaning, not just structural types. Field descriptions SHOULD explain domain semantics, not just data types.
+- MUST follow semver for breaking changes (see section 12.2).
+- SHOULD include human-readable descriptions for all fields.
+
+Nodes SHOULD treat their published schemas as contracts with higher stability requirements than internal implementation details.
