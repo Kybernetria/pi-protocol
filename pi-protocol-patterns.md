@@ -225,3 +225,27 @@ Callers invoke the ambassador via `fabric.invoke()` instead of calling external 
 5. **Request shadowing.** The ambassador MAY shadow requests to alternate endpoints for testing new API versions. Shadow results MUST NOT affect the response to the caller.
 
 Centralizing external-service resilience in a dedicated node prevents scattered retry logic, enables consistent observability via provenance, and isolates callers from external service instability. The ambassador reports its own health based on the circuit states of its downstream services.
+
+## 16. Anti-Corruption Layer pattern
+
+When a consumer node depends on a provider node with a different conceptual model, the consumer SHOULD implement an Anti-Corruption Layer (ACL).
+
+1. The ACL is a local adapter within the consumer node. It is not a separate node.
+2. The ACL invokes the provider's provides via `fabric.invoke()`.
+3. The ACL translates provider output into the consumer's internal model before returning it to local code.
+4. The provider's model does not leak into the consumer's codebase beyond the ACL boundary.
+
+This pattern:
+
+- Protects consumer model integrity from provider changes.
+- Makes translation explicit and testable.
+- Allows independent model evolution.
+
+Nodes SHOULD consider an ACL when:
+
+- The provider uses significantly different domain vocabulary.
+- The provider's schema is unstable or evolving rapidly.
+- The consumer's model will outlive the current provider.
+- Multiple providers serve the same semantic purpose and the ACL normalizes their output.
+
+An ACL adds translation overhead. Nodes SHOULD NOT use ACL when the provider's model is well-designed, stable, and semantically compatible. In that case the Conformist relationship (section 17.1) is preferred.
