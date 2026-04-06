@@ -189,3 +189,39 @@ Weak Pi fits for canonical transport:
 - prompt templates as the canonical protocol state store
 
 Skills and prompt templates are useful semantic and operator layers, but they SHOULD NOT replace manifests, registry, and invoke semantics.
+
+## 13. Long-running operation pattern
+
+Some provides involve heavy side effects (downloading packages, running test suites, git operations) that MAY take 30 seconds or more.
+
+1. A long-running provide SHOULD declare advisory timing in its manifest budgets via `expectedDurationMs`.
+2. The fabric SHOULD NOT treat slow execution as a timeout unless the caller's `deadlineMs` is explicitly exceeded.
+3. A long-running handler MAY report incremental progress through the `ProtocolCallContext` if the fabric supports streaming progress events.
+4. The caller SHOULD set an appropriate `deadlineMs` rather than relying on defaults when invoking known slow operations.
+5. If no `deadlineMs` is specified, the fabric SHOULD use the declared `expectedDurationMs` plus a reasonable buffer (recommended: 2x) before timing out.
+6. Progress reporting is advisory. The fabric MUST NOT require it for correctness.
+
+## 14. Graceful degradation pattern
+
+Orchestrator nodes that invoke peer nodes to fulfill their provides MUST handle peer unavailability gracefully.
+
+1. A node SHOULD NOT crash or hang when a peer node is unavailable.
+2. The recommended pattern is: attempt invoke, catch `NOT_FOUND` or timeout, return a partial result with a clear warning.
+3. A degraded result SHOULD include a `warnings` array indicating which peer capabilities were unavailable.
+4. The orchestrator SHOULD document in its manifest which peer capabilities are optional versus required for its provides.
+5. This pattern operationalizes core invariant #3 ("works alone"): an orchestrator node remains functional, albeit degraded, when run in isolation.
+6. Callers MAY inspect `warnings` to decide whether to retry, escalate, or accept the partial result.
+
+## 15. Ambassador pattern
+
+External services (HTTP APIs, databases, LLM providers) are distributed systems even when the protocol runs in-process. An **ambassador** node centralizes resilience logic for external dependencies.
+
+Callers invoke the ambassador via `fabric.invoke()` instead of calling external services directly. The ambassador wraps external API calls and applies cross-cutting resilience policies.
+
+1. **Circuit breaking.** The ambassador SHOULD track circuit state per external service (`closed | open | half-open`). When a service fails repeatedly, the circuit opens and subsequent calls fail fast without reaching the external service.
+2. **Retry with backoff.** The ambassador SHOULD retry transient failures with exponential backoff and jitter.
+3. **Rate limiting.** The ambassador MAY enforce rate limits to avoid overwhelming external services or exceeding quotas.
+4. **Credential rotation.** The ambassador MAY centralize credential management, rotating API keys without caller changes.
+5. **Request shadowing.** The ambassador MAY shadow requests to alternate endpoints for testing new API versions. Shadow results MUST NOT affect the response to the caller.
+
+Centralizing external-service resilience in a dedicated node prevents scattered retry logic, enables consistent observability via provenance, and isolates callers from external service instability. The ambassador reports its own health based on the circuit states of its downstream services.

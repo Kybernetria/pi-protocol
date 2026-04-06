@@ -43,6 +43,7 @@ interface ProvideSpec {
   inputSchema: string | object;
   outputSchema: string | object;
   handler: string;
+  version?: string;
   tags?: string[];
   effects?: string[];
   visibility?: "public" | "internal";
@@ -176,6 +177,13 @@ Recommended common values:
 - `brokerage_order`
 - `shell_exec`
 
+### version
+Optional but RECOMMENDED for public provides.
+
+A semantic version string (e.g., `"1.0.0"`, `"2.1.0"`). Callers MAY specify version constraints in invoke requests (e.g., `"^2.0"`, `">=1.2.0"`). The fabric MUST resolve to a loaded provide satisfying the constraint, or return an error if no match exists.
+
+If `version` is omitted, the provide is considered unversioned and matches any version constraint. Nodes SHOULD increment the version when making breaking changes to input or output schemas.
+
 ### visibility
 Optional.
 
@@ -288,3 +296,23 @@ A manifest validator MUST check:
 3. Keep `purpose` concise.
 4. Use `effects` consistently.
 5. Keep local handler names aligned with provide names unless there is a good reason not to.
+
+## 12. Schema evolution guidance
+
+Provide schemas evolve over time. The following rules define breaking vs. non-breaking changes.
+
+**Non-breaking changes:**
+
+- Adding new optional fields to `outputSchema`
+- Adding new optional fields to `inputSchema`
+- Widening an enum (adding new allowed values)
+
+**Breaking changes:**
+
+- Removing or renaming fields from `outputSchema`
+- Changing the type of any existing field
+- Adding new required fields to `inputSchema`
+- Narrowing an enum (removing allowed values)
+- Changing field optionality from optional to required
+
+A node SHOULD increment the provide's `version` when making breaking changes (major version) and when making non-breaking additions (minor version). A node SHOULD document deprecated fields for at least one minor version before removal. Callers SHOULD specify version constraints to avoid unexpected breakage from upstream schema changes.
