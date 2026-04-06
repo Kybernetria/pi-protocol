@@ -189,3 +189,25 @@ Weak Pi fits for canonical transport:
 - prompt templates as the canonical protocol state store
 
 Skills and prompt templates are useful semantic and operator layers, but they SHOULD NOT replace manifests, registry, and invoke semantics.
+
+## 13. Long-running operation pattern
+
+Some provides involve heavy side effects (downloading packages, running test suites, git operations) that MAY take 30 seconds or more.
+
+1. A long-running provide SHOULD declare advisory timing in its manifest budgets via `expectedDurationMs`.
+2. The fabric SHOULD NOT treat slow execution as a timeout unless the caller's `deadlineMs` is explicitly exceeded.
+3. A long-running handler MAY report incremental progress through the `ProtocolCallContext` if the fabric supports streaming progress events.
+4. The caller SHOULD set an appropriate `deadlineMs` rather than relying on defaults when invoking known slow operations.
+5. If no `deadlineMs` is specified, the fabric SHOULD use the declared `expectedDurationMs` plus a reasonable buffer (recommended: 2x) before timing out.
+6. Progress reporting is advisory. The fabric MUST NOT require it for correctness.
+
+## 14. Graceful degradation pattern
+
+Orchestrator nodes that invoke peer nodes to fulfill their provides MUST handle peer unavailability gracefully.
+
+1. A node SHOULD NOT crash or hang when a peer node is unavailable.
+2. The recommended pattern is: attempt invoke, catch `NOT_FOUND` or timeout, return a partial result with a clear warning.
+3. A degraded result SHOULD include a `warnings` array indicating which peer capabilities were unavailable.
+4. The orchestrator SHOULD document in its manifest which peer capabilities are optional versus required for its provides.
+5. This pattern operationalizes core invariant #3 ("works alone"): an orchestrator node remains functional, albeit degraded, when run in isolation.
+6. Callers MAY inspect `warnings` to decide whether to retry, escalate, or accept the partial result.

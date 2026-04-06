@@ -32,6 +32,26 @@ Recommended implementation:
 const FABRIC_KEY = Symbol.for("pi-protocol.fabric");
 ```
 
+### 2.2.1 Atomicity under concurrent loading
+
+When multiple nodes load simultaneously, a race condition can occur: both check `globalThis[FABRIC_KEY]`, find it absent, and create separate fabrics. Implementations MUST use an atomic check-and-set pattern to prevent this. The recommended approach uses a lazy initializer that executes exactly once:
+
+```ts
+function getOrCreateFabric(): Fabric {
+  const existing = globalThis[FABRIC_KEY];
+  if (existing) return existing;
+
+  const fabric = createFabric();
+  const winner = globalThis[FABRIC_KEY] ??= fabric;
+  if (winner !== fabric) {
+    fabric.dispose?.();
+  }
+  return winner;
+}
+```
+
+If the runtime does not guarantee atomic assignment, implementations SHOULD use a mutex or equivalent synchronization primitive.
+
 ### 2.3 Bootstrap flow
 Bootstrap MUST behave like this:
 
@@ -243,6 +263,30 @@ In v0.1.0 the conservative behavior is preferred:
 
 The fabric SHOULD NOT silently invent a winner in a genuinely ambiguous case.
 
+### 8.3 Circular invocation protection
+
+When Node A invokes Node B, which in turn invokes Node A, infinite recursion can occur. The fabric MUST track active call depth per trace and SHOULD reject invocations that exceed a configurable maximum depth.
+
+**Recommended default:** 16 levels.
+
+When the limit is exceeded, the fabric MUST return an error result with code `EXECUTION_FAILED` and a message indicating depth exhaustion (e.g., `"Maximum call depth exceeded (16)"`).
+
+The `ProtocolCallContext` MUST include depth information:
+
+```ts
+interface ProtocolCallContext {
+  // ... existing fields ...
+
+  /** Current depth in the call chain. 1 is the root invocation. */
+  depth: number;
+
+  /** Maximum allowed depth for this trace. */
+  maxDepth: number;
+}
+```
+
+The fabric MUST increment `depth` on each nested invocation within the same trace. A node MAY inspect `context.depth` to make depth-aware decisions such as limiting recursion earlier for expensive operations.
+
 ## 9. Validation boundaries
 
 The fabric owns validation at these boundaries.
@@ -387,21 +431,33 @@ interface ProtocolFailureEntry {
 
 ## 13. Budget model
 
-Budget support is part of the runtime contract.
+Budgets constrain resource consumption across a call chain. The fabric MUST propagate and enforce budgets consistently.
 
-A caller MAY provide:
+### 13.1 Propagation rules
 
-- remaining USD budget
-- remaining token budget
-- execution deadline
+1. When a node invokes another node, the fabric MUST forward the **remaining** budget (original minus local consumption) to the callee.
+2. The callee observes the reduced budget in `ProtocolCallContext.budget`.
+3. The fabric MUST record cumulative usage per trace, aggregating cost and token reports from all invocations.
 
-A callee MAY return:
+### 13.2 Open-ended invocations
 
-- observed cost
-- observed token usage
-- warnings
+If no budget is provided at the root invocation, no budget enforcement applies. The trace runs open-ended with respect to cost and tokens. Implementations SHOULD still track usage for provenance purposes.
 
-The fabric SHOULD record and propagate these values.
+### 13.3 Default timeout
+
+If no `deadlineMs` is specified at any level in the call chain, the fabric SHOULD apply a process-level default timeout.
+
+**Recommended default:** 120000ms (2 minutes).
+
+Implementations MAY allow this default to be configured at fabric creation time.
+
+### 13.4 Budget exhaustion mid-chain
+
+When a budget is exhausted during a nested invocation:
+
+1. The fabric MUST return a result with code `BUDGET_EXCEEDED` to the **immediate caller**.
+2. The immediate caller MAY handle the error locally (e.g., return a partial result) or propagate it upward.
+3. The fabric MUST record the exhaustion event in the session provenance store (see section 12).
 
 ## 14. Model hints
 
@@ -430,3 +486,45 @@ Strong fits:
 - `session_start`, `session_shutdown`, and reload flows
 
 The protocol does not require Pi core to understand any of these protocol semantics natively.
+
+## 16. Node lifecycle
+
+Nodes transition through distinct lifecycle states. The fabric MUST support graceful transitions.
+
+### 16.1 Graceful shutdown
+
+When a node initiates shutdown:
+
+1. The node SHOULD complete all in-progress handler executions before calling `unregisterNode`.
+2. The fabric SHOULD support a **drain mode**: the node signals intent to shut down, the fabric stops routing new invocations to it, and the node waits for active handlers to complete.
+
+```ts
+interface Fabric {
+  // ... existing methods ...
+
+  /** Signal intent to unregister. Stops new routing but allows in-flight calls to complete. */
+  drainNode(nodeId: string): Promise<void>;
+}
+```
+
+A node in drain mode MUST NOT appear in routing decisions for new invocations. The fabric SHOULD resolve the drain promise when all in-flight handlers for that node have completed.
+
+### 16.2 Health and liveness
+
+The fabric MAY expose a per-node liveness check. If a registered node becomes unresponsive (e.g., handler times out repeatedly), the fabric SHOULD mark it **degraded** rather than silently routing to it.
+
+```ts
+type NodeHealth = "healthy" | "degraded" | "draining" | "unregistered";
+```
+
+Routing rules (section 8) SHOULD prefer healthy nodes over degraded nodes when multiple candidates exist. The fabric MUST NOT route to degraded nodes if healthy alternatives are available.
+
+### 16.3 Hot reload
+
+A node MAY re-register with updated `provides` entries after loading new capabilities. The fabric MUST:
+
+1. Validate the new registration against all schema and uniqueness rules.
+2. Only replace the old registration if validation succeeds.
+3. Reject the update and preserve the existing registration if validation fails.
+
+Re-registration MUST be atomic: consumers observe either the old provides or the new provides, never a partial state.

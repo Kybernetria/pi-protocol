@@ -28,13 +28,16 @@ A domain package that:
 - joins the shared network automatically
 
 ### 1.3 Optional explicit host package
-An optional package that explicitly starts the fabric.
+A host package configures the fabric for a specific operational environment. The batteries-included default creates a fabric with sensible defaults; a host creates a fabric with team-specific configuration.
 
-Useful for:
+1. A host MAY pre-configure fabric options: default timeouts, budget policies, max call depth, retry strategies.
+2. A host MAY attach observability infrastructure: structured logging, metrics collectors, tracing exporters, dashboards.
+3. A host MAY enforce organizational policy: allowed node sets, blocked effect categories, audit requirements.
+4. A host MUST NOT grant itself routing priority or semantic privilege over domain nodes. The host configures the fabric; it does not participate in capability resolution.
 
-- team-wide operational bundles
-- observability-heavy environments
-- debugging and test harnesses
+The host is analogous to a web server configuration: essential for production deployments, unnecessary during local development. Use cases include team-wide operational bundles, observability-heavy environments, CI/CD pipelines, and debugging harnesses.
+
+When no explicit host is present, the batteries-included bootstrap provides a zero-configuration fabric suitable for single-developer and prototyping scenarios.
 
 Not required for batteries-included certification.
 
