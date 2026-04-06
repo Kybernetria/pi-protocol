@@ -189,3 +189,132 @@ Weak Pi fits for canonical transport:
 - prompt templates as the canonical protocol state store
 
 Skills and prompt templates are useful semantic and operator layers, but they SHOULD NOT replace manifests, registry, and invoke semantics.
+
+## 13. Long-running operation pattern
+
+Some provides involve heavy side effects (downloading packages, running test suites, git operations) that MAY take 30 seconds or more.
+
+1. A long-running provide SHOULD declare advisory timing in its manifest budgets via `expectedDurationMs`.
+2. The fabric SHOULD NOT treat slow execution as a timeout unless the caller's `deadlineMs` is explicitly exceeded.
+3. A long-running handler MAY report incremental progress through the `ProtocolCallContext` if the fabric supports streaming progress events.
+4. The caller SHOULD set an appropriate `deadlineMs` rather than relying on defaults when invoking known slow operations.
+5. If no `deadlineMs` is specified, the fabric SHOULD use the declared `expectedDurationMs` plus a reasonable buffer (recommended: 2x) before timing out.
+6. Progress reporting is advisory. The fabric MUST NOT require it for correctness.
+
+## 14. Graceful degradation pattern
+
+Orchestrator nodes that invoke peer nodes to fulfill their provides MUST handle peer unavailability gracefully.
+
+1. A node SHOULD NOT crash or hang when a peer node is unavailable.
+2. The recommended pattern is: attempt invoke, catch `NOT_FOUND` or timeout, return a partial result with a clear warning.
+3. A degraded result SHOULD include a `warnings` array indicating which peer capabilities were unavailable.
+4. The orchestrator SHOULD document in its manifest which peer capabilities are optional versus required for its provides.
+5. This pattern operationalizes core invariant #3 ("works alone"): an orchestrator node remains functional, albeit degraded, when run in isolation.
+6. Callers MAY inspect `warnings` to decide whether to retry, escalate, or accept the partial result.
+
+## 15. Ambassador pattern
+
+External services (HTTP APIs, databases, LLM providers) are distributed systems even when the protocol runs in-process. An **ambassador** node centralizes resilience logic for external dependencies.
+
+Callers invoke the ambassador via `fabric.invoke()` instead of calling external services directly. The ambassador wraps external API calls and applies cross-cutting resilience policies.
+
+1. **Circuit breaking.** The ambassador SHOULD track circuit state per external service (`closed | open | half-open`). When a service fails repeatedly, the circuit opens and subsequent calls fail fast without reaching the external service.
+2. **Retry with backoff.** The ambassador SHOULD retry transient failures with exponential backoff and jitter.
+3. **Rate limiting.** The ambassador MAY enforce rate limits to avoid overwhelming external services or exceeding quotas.
+4. **Credential rotation.** The ambassador MAY centralize credential management, rotating API keys without caller changes.
+5. **Request shadowing.** The ambassador MAY shadow requests to alternate endpoints for testing new API versions. Shadow results MUST NOT affect the response to the caller.
+
+Centralizing external-service resilience in a dedicated node prevents scattered retry logic, enables consistent observability via provenance, and isolates callers from external service instability. The ambassador reports its own health based on the circuit states of its downstream services.
+
+## 16. Anti-Corruption Layer pattern
+
+When a consumer node depends on a provider node with a different conceptual model, the consumer SHOULD implement an Anti-Corruption Layer (ACL).
+
+1. The ACL is a local adapter within the consumer node. It is not a separate node.
+2. The ACL invokes the provider's provides via `fabric.invoke()`.
+3. The ACL translates provider output into the consumer's internal model before returning it to local code.
+4. The provider's model does not leak into the consumer's codebase beyond the ACL boundary.
+
+This pattern:
+
+- Protects consumer model integrity from provider changes.
+- Makes translation explicit and testable.
+- Allows independent model evolution.
+
+Nodes SHOULD consider an ACL when:
+
+- The provider uses significantly different domain vocabulary.
+- The provider's schema is unstable or evolving rapidly.
+- The consumer's model will outlive the current provider.
+- Multiple providers serve the same semantic purpose and the ACL normalizes their output.
+
+An ACL adds translation overhead. Nodes SHOULD NOT use ACL when the provider's model is well-designed, stable, and semantically compatible. In that case the Conformist relationship (section 17.1) is preferred.
+
+## 17. Inter-node relationship types
+
+Node dependencies SHOULD be classified using one of these relationship types. Classification helps developers understand coupling characteristics and evolution expectations.
+
+### 17.1 Low coupling (preferred)
+
+**Separate Ways.** Nodes share no dependencies. Duplication is acceptable when integration cost exceeds the cost of maintaining two implementations.
+
+**Open Host Service + Published Language.** Provider exposes a well-documented, stable API consumed by multiple unknown consumers. The provider's schema constitutes a Published Language (see manifest section 12.4) with high stability requirements.
+
+**Conformist.** Consumer adopts the provider's model wholesale without translation. Appropriate when the provider is stable and well-designed.
+
+### 17.2 Medium coupling (acceptable with justification)
+
+**Anti-Corruption Layer.** Consumer translates the provider's model to its own internal representation. See Pattern 16.
+
+**Customer-Supplier.** Provider accommodates consumer needs through negotiation. Appropriate when both nodes evolve together under the same governance.
+
+### 17.3 High coupling (use with caution)
+
+**Shared Kernel.** Nodes share a mutable model subset, requiring tight coordination on any change. The protocol SDK is a Shared Kernel by design -- it is an exception because it is shared infrastructure, not domain coupling. Domain nodes SHOULD avoid Shared Kernel relationships.
+
+**Partnership.** Nodes co-evolve their models with bidirectional influence. Highest coordination cost. Use only when capabilities are fundamentally intertwined.
+
+Nodes MAY declare their relationship type with other nodes in their manifest via an optional `relationships` field. The fabric MAY use declared relationships to inform routing and provenance annotations.
+
+## 18. Fitness function governance pattern
+
+Fitness functions (runtime section 17) define WHAT is measured. This pattern describes HOW to use them for continuous governance.
+
+### 18.1 Temporal escalation
+
+Fitness violations SHOULD escalate over time if unresolved.
+
+- Initial violation: severity as evaluated.
+- Unresolved at T+5min: escalate `info` to `warn`.
+- Unresolved at T+15min: escalate `warn` to `error`.
+
+Escalation timelines are advisory. Implementations MAY use different intervals. Escalation resets when the fitness function evaluates to `ok` or the node transitions to `draining`.
+
+### 18.2 Fabric lifecycle integration
+
+| Lifecycle Event | Fitness Action |
+|-----------------|----------------|
+| `registerNode` | Evaluate required functions; block registration on `error` |
+| `invoke` (pre) | Evaluate per-invoke functions; MAY reject on `error` |
+| `invoke` (post) | Record budget compliance |
+| `drainNode` | Suspend periodic evaluations |
+| `unregisterNode` | Archive final fitness state |
+| Hot reload | Re-evaluate manifest validity; block reload on `error` |
+
+## 19. Coupling strength and connascence (informative)
+
+Coupling between nodes varies in strength. The connascence framework provides vocabulary for reasoning about coupling quality.
+
+Connascence types, from weakest to strongest:
+
+1. **Name** -- nodes must agree on identifiers (provide names, error codes).
+2. **Type** -- nodes must agree on data types (schema fields, parameter shapes).
+3. **Meaning** -- nodes must agree on value semantics (what status codes or enum values represent).
+4. **Algorithm** -- nodes must agree on algorithms (encoding schemes, hash functions).
+5. **Execution** -- nodes must execute in a specific order (temporal coupling).
+
+**Locality rule:** as distance between nodes increases, use weaker forms of connascence. Between nodes from different authors, prefer Name and Type connascence. Within a single node, stronger forms are acceptable.
+
+Inter-node communication SHOULD rely on Name and Type connascence. Connascence of Meaning requires explicit documentation in both nodes. Connascence of Algorithm requires co-versioning or capability negotiation. Connascence of Execution creates fragile systems and SHOULD be avoided unless essential.
+
+Node designers SHOULD minimize both connascence strength (prefer weaker types) and connascence degree (fewer coupling points) between nodes.

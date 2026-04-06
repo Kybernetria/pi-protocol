@@ -32,6 +32,26 @@ Recommended implementation:
 const FABRIC_KEY = Symbol.for("pi-protocol.fabric");
 ```
 
+### 2.2.1 Atomicity under concurrent loading
+
+When multiple nodes load simultaneously, a race condition can occur: both check `globalThis[FABRIC_KEY]`, find it absent, and create separate fabrics. Implementations MUST use an atomic check-and-set pattern to prevent this. The recommended approach uses a lazy initializer that executes exactly once:
+
+```ts
+function getOrCreateFabric(): Fabric {
+  const existing = globalThis[FABRIC_KEY];
+  if (existing) return existing;
+
+  const fabric = createFabric();
+  const winner = globalThis[FABRIC_KEY] ??= fabric;
+  if (winner !== fabric) {
+    fabric.dispose?.();
+  }
+  return winner;
+}
+```
+
+If the runtime does not guarantee atomic assignment, implementations SHOULD use a mutex or equivalent synchronization primitive.
+
 ### 2.3 Bootstrap flow
 Bootstrap MUST behave like this:
 
@@ -243,6 +263,63 @@ In v0.1.0 the conservative behavior is preferred:
 
 The fabric SHOULD NOT silently invent a winner in a genuinely ambiguous case.
 
+### 7.3 Scatter invocation
+
+The fabric MUST support parallel invocation of multiple nodes with identical input.
+
+```ts
+interface ScatterRequest {
+  targets: string[];
+  input: unknown;
+  budget?: ProtocolBudget;
+  options?: {
+    /** Minimum successful responses required. Default: targets.length (all). */
+    minSuccesses?: number;
+    /** Hard deadline for all responses. */
+    deadlineMs?: number;
+  };
+}
+
+interface ScatterResult {
+  succeeded: Array<{ target: string; output: unknown; elapsedMs: number }>;
+  failed: Array<{ target: string; error: { code: string; message: string }; elapsedMs?: number }>;
+  timedOut: string[];
+  totalElapsedMs: number;
+}
+```
+
+1. The fabric MUST dispatch invocations to all `targets` simultaneously.
+2. Budget is divided equally across targets. Each invocation receives `budget / targets.length`.
+3. Each individual invocation MUST create its own span in provenance.
+4. If `deadlineMs` is specified, the fabric MUST cancel any invocations still pending after the deadline and include those targets in `timedOut`.
+5. If `minSuccesses` is specified, the fabric MAY return early once that threshold is met, cancelling remaining invocations.
+6. The fabric MUST NOT throw if some targets fail. Callers inspect `succeeded`, `failed`, and `timedOut` to determine outcome.
+7. A scatter with zero `targets` MUST return immediately with empty result arrays.
+
+### 8.3 Circular invocation protection
+
+When Node A invokes Node B, which in turn invokes Node A, infinite recursion can occur. The fabric MUST track active call depth per trace and SHOULD reject invocations that exceed a configurable maximum depth.
+
+**Recommended default:** 16 levels.
+
+When the limit is exceeded, the fabric MUST return an error result with code `EXECUTION_FAILED` and a message indicating depth exhaustion (e.g., `"Maximum call depth exceeded (16)"`).
+
+The `ProtocolCallContext` MUST include depth information:
+
+```ts
+interface ProtocolCallContext {
+  // ... existing fields ...
+
+  /** Current depth in the call chain. 1 is the root invocation. */
+  depth: number;
+
+  /** Maximum allowed depth for this trace. */
+  maxDepth: number;
+}
+```
+
+The fabric MUST increment `depth` on each nested invocation within the same trace. A node MAY inspect `context.depth` to make depth-aware decisions such as limiting recursion earlier for expensive operations.
+
 ## 9. Validation boundaries
 
 The fabric owns validation at these boundaries.
@@ -387,21 +464,33 @@ interface ProtocolFailureEntry {
 
 ## 13. Budget model
 
-Budget support is part of the runtime contract.
+Budgets constrain resource consumption across a call chain. The fabric MUST propagate and enforce budgets consistently.
 
-A caller MAY provide:
+### 13.1 Propagation rules
 
-- remaining USD budget
-- remaining token budget
-- execution deadline
+1. When a node invokes another node, the fabric MUST forward the **remaining** budget (original minus local consumption) to the callee.
+2. The callee observes the reduced budget in `ProtocolCallContext.budget`.
+3. The fabric MUST record cumulative usage per trace, aggregating cost and token reports from all invocations.
 
-A callee MAY return:
+### 13.2 Open-ended invocations
 
-- observed cost
-- observed token usage
-- warnings
+If no budget is provided at the root invocation, no budget enforcement applies. The trace runs open-ended with respect to cost and tokens. Implementations SHOULD still track usage for provenance purposes.
 
-The fabric SHOULD record and propagate these values.
+### 13.3 Default timeout
+
+If no `deadlineMs` is specified at any level in the call chain, the fabric SHOULD apply a process-level default timeout.
+
+**Recommended default:** 120000ms (2 minutes).
+
+Implementations MAY allow this default to be configured at fabric creation time.
+
+### 13.4 Budget exhaustion mid-chain
+
+When a budget is exhausted during a nested invocation:
+
+1. The fabric MUST return a result with code `BUDGET_EXCEEDED` to the **immediate caller**.
+2. The immediate caller MAY handle the error locally (e.g., return a partial result) or propagate it upward.
+3. The fabric MUST record the exhaustion event in the session provenance store (see section 12).
 
 ## 14. Model hints
 
@@ -430,3 +519,143 @@ Strong fits:
 - `session_start`, `session_shutdown`, and reload flows
 
 The protocol does not require Pi core to understand any of these protocol semantics natively.
+
+## 16. Node lifecycle
+
+Nodes transition through distinct lifecycle states. The fabric MUST support graceful transitions.
+
+### 16.1 Graceful shutdown
+
+When a node initiates shutdown:
+
+1. The node SHOULD complete all in-progress handler executions before calling `unregisterNode`.
+2. The fabric SHOULD support a **drain mode**: the node signals intent to shut down, the fabric stops routing new invocations to it, and the node waits for active handlers to complete.
+
+```ts
+interface Fabric {
+  // ... existing methods ...
+
+  /** Signal intent to unregister. Stops new routing but allows in-flight calls to complete. */
+  drainNode(nodeId: string): Promise<void>;
+}
+```
+
+A node in drain mode MUST NOT appear in routing decisions for new invocations. The fabric SHOULD resolve the drain promise when all in-flight handlers for that node have completed.
+
+### 16.2 Health
+
+The fabric MAY expose a per-node health state:
+
+```ts
+type NodeHealth = "healthy" | "degraded" | "draining" | "unregistered";
+```
+
+A node SHOULD complete all initialization (loading resources, establishing connections) **before** calling `registerNode`. Registration signals readiness. There is no separate readiness phase because nodes control when they register.
+
+Routing rules (section 8) SHOULD prefer healthy nodes over degraded nodes when multiple candidates exist. The fabric MUST NOT route to degraded nodes if healthy alternatives are available.
+
+### 16.3 Hot reload
+
+A node MAY re-register with updated `provides` entries after loading new capabilities. The fabric MUST:
+
+1. Validate the new registration against all schema and uniqueness rules.
+2. Only replace the old registration if validation succeeds.
+3. Reject the update and preserve the existing registration if validation fails.
+
+Re-registration MUST be atomic: consumers observe either the old provides or the new provides, never a partial state.
+
+## 17. Fitness functions
+
+A fitness function is a quantifiable assessment of a node's ongoing protocol compliance. Unlike one-time validation at registration, fitness functions capture continuous health: budget adherence, temporal freshness, behavioral correctness, and operational quality.
+
+### 17.1 Result shape
+
+Fitness function results MUST use a standard shape for interoperability.
+
+```ts
+interface FitnessResult {
+  functionId: string;
+  nodeId: string;
+  score: number;
+  severity: "ok" | "info" | "warn" | "error";
+  message: string;
+  details?: Record<string, unknown>;
+  evaluatedAt: number;
+}
+```
+
+Implementations SHOULD use consistent score-to-severity mapping:
+
+| Score Range | Severity | Interpretation |
+|-------------|----------|----------------|
+| 0.9 -- 1.0 | `ok` | Fully compliant |
+| 0.7 -- 0.9 | `info` | Minor deviation, no action needed |
+| 0.5 -- 0.7 | `warn` | Notable deviation, review recommended |
+| 0.0 -- 0.5 | `error` | Significant deviation, action required |
+
+The fabric MAY use different thresholds. Thresholds SHOULD be configurable at fabric creation time.
+
+### 17.2 Required fitness functions
+
+Implementations MUST evaluate these functions and MUST act on `error` severity results.
+
+**Manifest validity.** Evaluates whether the manifest remains valid after registration. Checked on registration, hot reload, and periodic sweeps. A node whose manifest becomes invalid after hot reload MUST transition to `degraded` health.
+
+**Budget compliance.** Evaluates whether a node respects budget constraints. Checked per invocation. Repeated budget violations (3 or more in a sliding window) SHOULD trigger health degradation.
+
+**Handler resolution.** Evaluates whether all declared provides have resolvable handlers. A node with unresolvable handlers MUST NOT be registered. If handlers become unresolvable after hot reload, the node MUST transition to `degraded` health.
+
+### 17.3 Recommended fitness functions
+
+Implementations SHOULD evaluate these functions and SHOULD record results in provenance.
+
+**Temporal freshness.** P95 latency vs. declared `expectedDurationMs`. Warn when P95 exceeds 2x expectation. Error when timeout rate exceeds 10%.
+
+**Error rate.** `EXECUTION_FAILED` frequency. Warn when error rate exceeds 5%. Error on 5 or more consecutive failures.
+
+**Schema conformance.** `INVALID_OUTPUT` frequency. Warn on any schema violation. Error when violation rate exceeds 1%.
+
+**Provenance discipline.** Span completion rate (started spans that reach succeeded or failed). Warn when incomplete rate exceeds 5%.
+
+### 17.4 Health state integration
+
+Fitness results SHOULD inform health state transitions (section 16.2).
+
+- `ok` and `info` severity: no health change.
+- `warn` severity: fabric MAY downgrade node to `degraded`.
+- `error` severity: fabric SHOULD downgrade node to `degraded`.
+
+A node in `degraded` health MAY return to `healthy` when subsequent evaluations produce `ok` or `info`. The fabric MUST NOT transition a node directly from `healthy` to `unregistered` based on fitness failures alone.
+
+When multiple candidates exist for routing, the fabric SHOULD prefer nodes with better fitness scores. The fabric MUST NOT route to nodes with `error` fitness on required functions unless no alternatives exist.
+
+### 17.5 Provenance recording
+
+Fitness results SHOULD be recorded via `appendEntry()`.
+
+```ts
+interface FitnessResultEntry {
+  kind: "fitness_result";
+  recordedAt: number;
+  result: FitnessResult;
+}
+```
+
+Implementations SHOULD record all `warn` and `error` results and periodic summaries of `ok` results.
+
+### 17.6 Custom fitness functions
+
+Nodes MAY declare custom fitness functions in their manifests.
+
+```ts
+interface PiProtocolManifest {
+  // ... existing fields ...
+  fitnessFunctions?: Array<{
+    id: string;
+    description: string;
+    frequency: "per-invoke" | "periodic" | "on-demand";
+  }>;
+}
+```
+
+Custom functions extend the required and recommended functions with domain-specific measures. Custom functions MUST NOT override or replace required fitness functions.

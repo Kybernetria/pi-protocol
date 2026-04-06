@@ -28,13 +28,16 @@ A domain package that:
 - joins the shared network automatically
 
 ### 1.3 Optional explicit host package
-An optional package that explicitly starts the fabric.
+A host package configures the fabric for a specific operational environment. The batteries-included default creates a fabric with sensible defaults; a host creates a fabric with team-specific configuration.
 
-Useful for:
+1. A host MAY pre-configure fabric options: default timeouts, budget policies, max call depth, retry strategies.
+2. A host MAY attach observability infrastructure: structured logging, metrics collectors, tracing exporters, dashboards.
+3. A host MAY enforce organizational policy: allowed node sets, blocked effect categories, audit requirements.
+4. A host MUST NOT grant itself routing priority or semantic privilege over domain nodes. The host configures the fabric; it does not participate in capability resolution.
 
-- team-wide operational bundles
-- observability-heavy environments
-- debugging and test harnesses
+The host is analogous to a web server configuration: essential for production deployments, unnecessary during local development. Use cases include team-wide operational bundles, observability-heavy environments, CI/CD pipelines, and debugging harnesses.
+
+When no explicit host is present, the batteries-included bootstrap provides a zero-configuration fabric suitable for single-developer and prototyping scenarios.
 
 Not required for batteries-included certification.
 
@@ -208,3 +211,28 @@ If a team does not want a direct dependency on the protocol SDK, a certified pac
 However, the vendored shim MUST remain behaviorally equivalent to the canonical bootstrap and registration contract.
 
 The recommended path remains using the shared SDK to reduce drift.
+
+## 12. Node granularity guidelines (informative)
+
+Nodes expose one or more provides. How many belongs in a single node?
+
+**Capability count by domain complexity:**
+
+- Complex or novel domains: 1--3 provides. Exploration and rapid change favor small scope.
+- Well-understood domains: 5--7 provides. Stable patterns allow broader scope per node.
+
+**Split triggers (disintegrators):**
+
+- Capabilities change at different rates (slow-moving configuration vs fast-moving execution).
+- Capabilities serve different consumers with conflicting needs.
+- Capabilities require different budget or timeout profiles.
+
+**Keep-together triggers (integrators):**
+
+- Capabilities share mutable internal state (transactional consistency).
+- Capabilities form a multi-step user-facing workflow with coordinated error handling.
+- Capabilities require coordinated lifecycle (start/stop order).
+
+A node with more than 10 provides signals scope creep. Consider splitting by subdomain or extracting stable primitives into a shared foundation node.
+
+Node authors SHOULD favor cohesion (related capabilities together) over artificial decomposition, but recognize when growth or divergence signals a split.

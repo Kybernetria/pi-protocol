@@ -142,6 +142,10 @@ These invariants are mandatory.
 9. The global identity of a provide MUST be `nodeId.provideName`.
 10. Session custom entries MUST be the source of truth for protocol provenance.
 
+### 7.1 Standalone behavior for orchestrator nodes
+
+Invariant #3 applies to orchestrator nodes that depend on invoking peer nodes. An orchestrator node MUST install and register without error even when its peer nodes are absent from the session. When invoked, the node SHOULD return a structured error (e.g., `NOT_FOUND`) rather than crash or hang if a required peer is unavailable. "Usable on its own" means the node installs cleanly, registers its provides, and responds to invocations with either meaningful results or structured errors. It does NOT mean "fully functional without peers." This ensures the fabric can always build a coherent registry regardless of which optional nodes are loaded.
+
 ## 8. Batteries-included model
 
 The protocol adopts batteries-included mode as the default and recommended distribution model.
