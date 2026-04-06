@@ -318,3 +318,83 @@ Connascence types, from weakest to strongest:
 Inter-node communication SHOULD rely on Name and Type connascence. Connascence of Meaning requires explicit documentation in both nodes. Connascence of Algorithm requires co-versioning or capability negotiation. Connascence of Execution creates fragile systems and SHOULD be avoided unless essential.
 
 Node designers SHOULD minimize both connascence strength (prefer weaker types) and connascence degree (fewer coupling points) between nodes.
+
+## 20. Discovery patterns
+
+### 20.1 Capability negotiation
+
+A node that requires a capability at runtime SHOULD use discovery before invocation:
+
+```ts
+// Anti-pattern: hardcoded provide name
+const result = await fabric.invoke({ provide: "pi-listen.vad", ... });
+
+// Preferred: discover then invoke
+const discovery = fabric.discover({ tags: ["audio", "vad"] });
+if (discovery.matches.length === 0) {
+  // Graceful degradation: the capability is not available
+  return fallbackBehavior();
+}
+if (discovery.matches.length === 1) {
+  // Unambiguous: invoke directly
+  return fabric.invoke({ provide: discovery.matches[0].globalId, ... });
+}
+// Ambiguous: use hints or ask the caller
+return fabric.invoke({
+  provide: discovery.matches[0].globalId,
+  target: { tagsAny: ["preferred"] },
+  ...
+});
+```
+
+This pattern decouples the consumer from the provider's exact identity, enabling:
+- Provider replacement without consumer code changes
+- Multiple implementations coexisting (consumer selects at runtime)
+- Graceful degradation when a capability is unavailable
+
+### 20.2 Capability advertisement
+
+Nodes SHOULD declare meaningful tags and descriptions in their manifests:
+
+```json
+{
+  "provides": [
+    {
+      "name": "detectSpeech",
+      "description": "Detect voice activity in audio buffer using WebRTC VAD",
+      "tags": ["audio", "vad", "speech", "detection"],
+      "effects": ["audio_input"],
+      "visibility": "public"
+    }
+  ]
+}
+```
+
+Tags SHOULD be:
+- Lowercase, hyphenated (e.g., `voice-activity-detection` not `VoiceActivityDetection`)
+- Hierarchical where useful (e.g., `audio`, `audio.vad`, `audio.transcription`)
+- Domain-specific rather than implementation-specific (e.g., `vad` not `webrtc-vad`)
+
+Descriptions SHOULD be one sentence explaining what the capability does, not how.
+
+### 20.3 Lazy capability resolution
+
+A node MAY defer discovery until a capability is first needed:
+
+```ts
+let vadProvider: string | null = null;
+
+async function ensureVad(fabric: ProtocolFabric): Promise<string> {
+  if (vadProvider) return vadProvider;
+  const discovery = fabric.discover({ tags: ["vad"] });
+  if (discovery.matches.length !== 1) {
+    throw new Error(
+      `Expected exactly one VAD provider, found ${discovery.matches.length}`
+    );
+  }
+  vadProvider = discovery.matches[0].globalId;
+  return vadProvider;
+}
+```
+
+This avoids the startup cost of discovering all capabilities upfront, at the cost of first-invocation latency.

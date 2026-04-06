@@ -659,3 +659,105 @@ interface PiProtocolManifest {
 ```
 
 Custom functions extend the required and recommended functions with domain-specific measures. Custom functions MUST NOT override or replace required fitness functions.
+
+## 18. Capability discovery
+
+The fabric MUST support capability discovery so that nodes can find provides without knowing their exact identifiers.
+
+### 18.1 Discovery query
+
+```ts
+interface DiscoveryQuery {
+  /** Match provides whose name contains this substring (case-insensitive). */
+  name?: string;
+
+  /** Match provides tagged with ALL of these tags. */
+  tags?: string[];
+
+  /** Match provides tagged with ANY of these tags. */
+  tagsAny?: string[];
+
+  /** Match provides that declare ANY of these effects. */
+  effects?: string[];
+
+  /** Match provides from this specific node. */
+  nodeId?: string;
+
+  /** Exclude provides from these nodes. */
+  excludeNodes?: string[];
+
+  /** Only return public provides (default: true). */
+  publicOnly?: boolean;
+}
+```
+
+### 18.2 Discovery result
+
+```ts
+interface DiscoveryResult {
+  matches: ProtocolProvideSnapshot[];
+  query: DiscoveryQuery;
+  totalProvides: number;
+}
+```
+
+### 18.3 Fabric API addition
+
+```ts
+interface ProtocolFabric {
+  // ... existing methods from section 4 ...
+
+  /** Discover provides matching a query. Returns all matches, not just one. */
+  discover(query: DiscoveryQuery): DiscoveryResult;
+}
+```
+
+### 18.4 Behavior
+
+1. The fabric MUST evaluate the query against all registered provides.
+2. All query fields are optional. An empty query MUST return all public provides.
+3. When multiple fields are specified, the fabric MUST apply AND logic: a provide must match ALL specified fields.
+4. String matching (`name`) MUST be case-insensitive substring matching.
+5. Tag matching (`tags`) MUST require ALL specified tags to be present on the provide.
+6. Tag matching (`tagsAny`) MUST require at least ONE specified tag to be present.
+7. Effect matching (`effects`) MUST require at least ONE specified effect to be present.
+8. The result MUST include `totalProvides` to indicate registry size regardless of filtering.
+9. Discovery MUST NOT create a span or consume budget. It is a metadata query, not an invocation.
+
+### 18.5 Deterministic vs semantic discovery
+
+Discovery as specified above is **deterministic**: exact substring matching, exact tag filtering. This is intentional for v0.1.0.
+
+**Semantic discovery** (e.g., "find something that does voice activity detection" matching a provide tagged `audio` with name `detectSpeech`) is NOT specified. Implementations MAY support semantic discovery as an extension, but MUST support deterministic discovery as the baseline.
+
+Semantic discovery introduces LLM dependency, non-determinism, and cost. These concerns are orthogonal to the protocol and better addressed by higher-level tooling built on top of `fabric.discover()`.
+
+### 18.6 Caching
+
+Discovery results are ephemeral snapshots. The fabric MUST NOT cache discovery results across registration changes. A discovery query executed after a node registers or unregisters MUST reflect the current registry state.
+
+Consumers MAY cache discovery results locally if they handle staleness (e.g., re-query on `NOT_FOUND` during invocation).
+
+### 18.7 Requirement declarations
+
+A node's manifest MAY declare required and optional capabilities:
+
+```ts
+interface PiProtocolManifest {
+  // ... existing fields ...
+  requires?: {
+    hard?: Array<{
+      tags?: string[];
+      name?: string;
+      reason: string;
+    }>;
+    soft?: Array<{
+      tags?: string[];
+      name?: string;
+      reason: string;
+    }>;
+  };
+}
+```
+
+The fabric MAY validate hard requirements at registration time, transitioning the node to `degraded` health if hard requirements are unmet. Soft requirements SHOULD produce `info`-level fitness results when unmet.
