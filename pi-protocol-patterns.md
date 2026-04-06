@@ -300,3 +300,21 @@ Escalation timelines are advisory. Implementations MAY use different intervals. 
 | `drainNode` | Suspend periodic evaluations |
 | `unregisterNode` | Archive final fitness state |
 | Hot reload | Re-evaluate manifest validity; block reload on `error` |
+
+## 19. Coupling strength and connascence (informative)
+
+Coupling between nodes varies in strength. The connascence framework provides vocabulary for reasoning about coupling quality.
+
+Connascence types, from weakest to strongest:
+
+1. **Name** -- nodes must agree on identifiers (provide names, error codes).
+2. **Type** -- nodes must agree on data types (schema fields, parameter shapes).
+3. **Meaning** -- nodes must agree on value semantics (what status codes or enum values represent).
+4. **Algorithm** -- nodes must agree on algorithms (encoding schemes, hash functions).
+5. **Execution** -- nodes must execute in a specific order (temporal coupling).
+
+**Locality rule:** as distance between nodes increases, use weaker forms of connascence. Between nodes from different authors, prefer Name and Type connascence. Within a single node, stronger forms are acceptable.
+
+Inter-node communication SHOULD rely on Name and Type connascence. Connascence of Meaning requires explicit documentation in both nodes. Connascence of Algorithm requires co-versioning or capability negotiation. Connascence of Execution creates fragile systems and SHOULD be avoided unless essential.
+
+Node designers SHOULD minimize both connascence strength (prefer weaker types) and connascence degree (fewer coupling points) between nodes.

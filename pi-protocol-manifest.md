@@ -296,6 +296,20 @@ A manifest validator MUST check:
 3. Keep `purpose` concise.
 4. Use `effects` consistently.
 5. Keep local handler names aligned with provide names unless there is a good reason not to.
+6. Consider declaring an evolution stage to communicate stability expectations (see section 11.1).
+
+### 11.1 Evolution stage (informative)
+
+Nodes mature through lifecycle stages that set consumer expectations. Manifests MAY include an `evolutionStage` field.
+
+| Stage | API Stability | Consumer Strategy | Typical Version |
+|-----------|---------------|-------------------|-----------------|
+| genesis | Experimental, breaking changes expected | ACL recommended to isolate | 0.0.x |
+| custom | Emerging, breaking changes with notice | Pin version, monitor releases | 0.x.x |
+| product | Stable, semver-compliant | Semver range constraints acceptable | 1.x.x+ |
+| commodity | Frozen interface, security patches only | Loose constraints, conformist pattern | 2.x.x+ |
+
+Not all nodes reach commodity. The stage informs consumer decisions about defensive patterns: consumers SHOULD apply ACL when depending on genesis or custom-stage providers, and MAY use conformist for product or commodity providers.
 
 ## 12. Schema evolution guidance
 
