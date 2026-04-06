@@ -249,3 +249,29 @@ Nodes SHOULD consider an ACL when:
 - Multiple providers serve the same semantic purpose and the ACL normalizes their output.
 
 An ACL adds translation overhead. Nodes SHOULD NOT use ACL when the provider's model is well-designed, stable, and semantically compatible. In that case the Conformist relationship (section 17.1) is preferred.
+
+## 17. Inter-node relationship types
+
+Node dependencies SHOULD be classified using one of these relationship types. Classification helps developers understand coupling characteristics and evolution expectations.
+
+### 17.1 Low coupling (preferred)
+
+**Separate Ways.** Nodes share no dependencies. Duplication is acceptable when integration cost exceeds the cost of maintaining two implementations.
+
+**Open Host Service + Published Language.** Provider exposes a well-documented, stable API consumed by multiple unknown consumers. The provider's schema constitutes a Published Language (see manifest section 12.4) with high stability requirements.
+
+**Conformist.** Consumer adopts the provider's model wholesale without translation. Appropriate when the provider is stable and well-designed.
+
+### 17.2 Medium coupling (acceptable with justification)
+
+**Anti-Corruption Layer.** Consumer translates the provider's model to its own internal representation. See Pattern 16.
+
+**Customer-Supplier.** Provider accommodates consumer needs through negotiation. Appropriate when both nodes evolve together under the same governance.
+
+### 17.3 High coupling (use with caution)
+
+**Shared Kernel.** Nodes share a mutable model subset, requiring tight coordination on any change. The protocol SDK is a Shared Kernel by design -- it is an exception because it is shared infrastructure, not domain coupling. Domain nodes SHOULD avoid Shared Kernel relationships.
+
+**Partnership.** Nodes co-evolve their models with bidirectional influence. Highest coordination cost. Use only when capabilities are fundamentally intertwined.
+
+Nodes MAY declare their relationship type with other nodes in their manifest via an optional `relationships` field. The fabric MAY use declared relationships to inform routing and provenance annotations.
