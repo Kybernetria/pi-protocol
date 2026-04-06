@@ -563,3 +563,99 @@ A node MAY re-register with updated `provides` entries after loading new capabil
 3. Reject the update and preserve the existing registration if validation fails.
 
 Re-registration MUST be atomic: consumers observe either the old provides or the new provides, never a partial state.
+
+## 17. Fitness functions
+
+A fitness function is a quantifiable assessment of a node's ongoing protocol compliance. Unlike one-time validation at registration, fitness functions capture continuous health: budget adherence, temporal freshness, behavioral correctness, and operational quality.
+
+### 17.1 Result shape
+
+Fitness function results MUST use a standard shape for interoperability.
+
+```ts
+interface FitnessResult {
+  functionId: string;
+  nodeId: string;
+  score: number;
+  severity: "ok" | "info" | "warn" | "error";
+  message: string;
+  details?: Record<string, unknown>;
+  evaluatedAt: number;
+}
+```
+
+Implementations SHOULD use consistent score-to-severity mapping:
+
+| Score Range | Severity | Interpretation |
+|-------------|----------|----------------|
+| 0.9 -- 1.0 | `ok` | Fully compliant |
+| 0.7 -- 0.9 | `info` | Minor deviation, no action needed |
+| 0.5 -- 0.7 | `warn` | Notable deviation, review recommended |
+| 0.0 -- 0.5 | `error` | Significant deviation, action required |
+
+The fabric MAY use different thresholds. Thresholds SHOULD be configurable at fabric creation time.
+
+### 17.2 Required fitness functions
+
+Implementations MUST evaluate these functions and MUST act on `error` severity results.
+
+**Manifest validity.** Evaluates whether the manifest remains valid after registration. Checked on registration, hot reload, and periodic sweeps. A node whose manifest becomes invalid after hot reload MUST transition to `degraded` health.
+
+**Budget compliance.** Evaluates whether a node respects budget constraints. Checked per invocation. Repeated budget violations (3 or more in a sliding window) SHOULD trigger health degradation.
+
+**Handler resolution.** Evaluates whether all declared provides have resolvable handlers. A node with unresolvable handlers MUST NOT be registered. If handlers become unresolvable after hot reload, the node MUST transition to `degraded` health.
+
+### 17.3 Recommended fitness functions
+
+Implementations SHOULD evaluate these functions and SHOULD record results in provenance.
+
+**Temporal freshness.** P95 latency vs. declared `expectedDurationMs`. Warn when P95 exceeds 2x expectation. Error when timeout rate exceeds 10%.
+
+**Error rate.** `EXECUTION_FAILED` frequency. Warn when error rate exceeds 5%. Error on 5 or more consecutive failures.
+
+**Schema conformance.** `INVALID_OUTPUT` frequency. Warn on any schema violation. Error when violation rate exceeds 1%.
+
+**Provenance discipline.** Span completion rate (started spans that reach succeeded or failed). Warn when incomplete rate exceeds 5%.
+
+### 17.4 Health state integration
+
+Fitness results SHOULD inform health state transitions (section 16.2).
+
+- `ok` and `info` severity: no health change.
+- `warn` severity: fabric MAY downgrade node to `degraded`.
+- `error` severity: fabric SHOULD downgrade node to `degraded`.
+
+A node in `degraded` health MAY return to `healthy` when subsequent evaluations produce `ok` or `info`. The fabric MUST NOT transition a node directly from `healthy` to `unregistered` based on fitness failures alone.
+
+When multiple candidates exist for routing, the fabric SHOULD prefer nodes with better fitness scores. The fabric MUST NOT route to nodes with `error` fitness on required functions unless no alternatives exist.
+
+### 17.5 Provenance recording
+
+Fitness results SHOULD be recorded via `appendEntry()`.
+
+```ts
+interface FitnessResultEntry {
+  kind: "fitness_result";
+  recordedAt: number;
+  result: FitnessResult;
+}
+```
+
+Implementations SHOULD record all `warn` and `error` results and periodic summaries of `ok` results.
+
+### 17.6 Custom fitness functions
+
+Nodes MAY declare custom fitness functions in their manifests.
+
+```ts
+interface PiProtocolManifest {
+  // ... existing fields ...
+  fitnessFunctions?: Array<{
+    id: string;
+    description: string;
+    frequency: "per-invoke" | "periodic" | "on-demand";
+  }>;
+}
+```
+
+Custom functions extend the required and recommended functions with domain-specific measures. Custom functions MUST NOT override or replace required fitness functions.

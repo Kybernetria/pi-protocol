@@ -275,3 +275,28 @@ Node dependencies SHOULD be classified using one of these relationship types. Cl
 **Partnership.** Nodes co-evolve their models with bidirectional influence. Highest coordination cost. Use only when capabilities are fundamentally intertwined.
 
 Nodes MAY declare their relationship type with other nodes in their manifest via an optional `relationships` field. The fabric MAY use declared relationships to inform routing and provenance annotations.
+
+## 18. Fitness function governance pattern
+
+Fitness functions (runtime section 17) define WHAT is measured. This pattern describes HOW to use them for continuous governance.
+
+### 18.1 Temporal escalation
+
+Fitness violations SHOULD escalate over time if unresolved.
+
+- Initial violation: severity as evaluated.
+- Unresolved at T+5min: escalate `info` to `warn`.
+- Unresolved at T+15min: escalate `warn` to `error`.
+
+Escalation timelines are advisory. Implementations MAY use different intervals. Escalation resets when the fitness function evaluates to `ok` or the node transitions to `draining`.
+
+### 18.2 Fabric lifecycle integration
+
+| Lifecycle Event | Fitness Action |
+|-----------------|----------------|
+| `registerNode` | Evaluate required functions; block registration on `error` |
+| `invoke` (pre) | Evaluate per-invoke functions; MAY reject on `error` |
+| `invoke` (post) | Record budget compliance |
+| `drainNode` | Suspend periodic evaluations |
+| `unregisterNode` | Archive final fitness state |
+| Hot reload | Re-evaluate manifest validity; block reload on `error` |
