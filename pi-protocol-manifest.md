@@ -43,6 +43,7 @@ interface ProvideSpec {
   inputSchema: string | object;
   outputSchema: string | object;
   handler: string;
+  version?: string;
   tags?: string[];
   effects?: string[];
   visibility?: "public" | "internal";
@@ -176,6 +177,13 @@ Recommended common values:
 - `brokerage_order`
 - `shell_exec`
 
+### version
+Optional but RECOMMENDED for public provides.
+
+A semantic version string (e.g., `"1.0.0"`, `"2.1.0"`). Callers MAY specify version constraints in invoke requests (e.g., `"^2.0"`, `">=1.2.0"`). The fabric MUST resolve to a loaded provide satisfying the constraint, or return an error if no match exists.
+
+If `version` is omitted, the provide is considered unversioned and matches any version constraint. Nodes SHOULD increment the version when making breaking changes to input or output schemas.
+
 ### visibility
 Optional.
 
@@ -288,3 +296,69 @@ A manifest validator MUST check:
 3. Keep `purpose` concise.
 4. Use `effects` consistently.
 5. Keep local handler names aligned with provide names unless there is a good reason not to.
+6. Consider declaring an evolution stage to communicate stability expectations (see section 11.1).
+
+### 11.1 Evolution stage (informative)
+
+Nodes mature through lifecycle stages that set consumer expectations. Manifests MAY include an `evolutionStage` field.
+
+| Stage | API Stability | Consumer Strategy | Typical Version |
+|-----------|---------------|-------------------|-----------------|
+| genesis | Experimental, breaking changes expected | ACL recommended to isolate | 0.0.x |
+| custom | Emerging, breaking changes with notice | Pin version, monitor releases | 0.x.x |
+| product | Stable, semver-compliant | Semver range constraints acceptable | 1.x.x+ |
+| commodity | Frozen interface, security patches only | Loose constraints, conformist pattern | 2.x.x+ |
+
+Not all nodes reach commodity. The stage informs consumer decisions about defensive patterns: consumers SHOULD apply ACL when depending on genesis or custom-stage providers, and MAY use conformist for product or commodity providers.
+
+## 12. Schema evolution guidance
+
+Provide schemas evolve over time. The following rules define breaking vs. non-breaking changes.
+
+### 12.1 Compatibility directions
+
+Schema changes MUST maintain both directions of compatibility during rolling updates where nodes at different versions may coexist:
+
+**Backward compatibility:** Newer nodes can process input from older nodes. This is REQUIRED for rolling updates.
+
+**Forward compatibility:** Older nodes can process input from newer nodes by ignoring unknown fields. This is REQUIRED for graceful degradation.
+
+To maintain both directions:
+
+- Adding optional fields with defaults: Compatible in both directions
+- Removing optional fields: Compatible (older nodes ignore, newer use default)
+- Adding required fields: BREAKS backward compatibility
+- Removing required fields: BREAKS forward compatibility
+- Changing field types: BREAKS both directions unless the type is widened
+
+Implementations SHOULD preserve unknown fields when round-tripping data between nodes to avoid data loss during read-modify-write cycles by older code.
+
+### 12.2 Breaking vs. non-breaking changes
+
+**Non-breaking changes:**
+
+- Adding new optional fields to `outputSchema`
+- Adding new optional fields to `inputSchema`
+- Widening an enum (adding new allowed values)
+
+**Breaking changes:**
+
+- Removing or renaming fields from `outputSchema`
+- Changing the type of any existing field
+- Adding new required fields to `inputSchema`
+- Narrowing an enum (removing allowed values)
+- Changing field optionality from optional to required
+
+### 12.3 Versioning discipline
+
+A node SHOULD increment the provide's `version` when making breaking changes (major version) and when making non-breaking additions (minor version). A node SHOULD document deprecated fields for at least one minor version before removal. Callers SHOULD specify version constraints to avoid unexpected breakage from upstream schema changes.
+
+### 12.4 Schema as Published Language
+
+A provide's input and output schemas constitute a Published Language for that capability. A Published Language:
+
+- MUST be documented with semantic meaning, not just structural types. Field descriptions SHOULD explain domain semantics, not just data types.
+- MUST follow semver for breaking changes (see section 12.2).
+- SHOULD include human-readable descriptions for all fields.
+
+Nodes SHOULD treat their published schemas as contracts with higher stability requirements than internal implementation details.
