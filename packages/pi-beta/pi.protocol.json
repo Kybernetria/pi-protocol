@@ -1,0 +1,71 @@
+{
+  "protocolVersion": "0.1.0",
+  "nodeId": "pi-beta",
+  "purpose": "Prototype beta node for exercising cross-node invocation and ambiguity handling.",
+  "provides": [
+    {
+      "name": "shared_echo",
+      "description": "Return the provided message with beta metadata.",
+      "handler": "shared_echo",
+      "version": "1.0.0",
+      "inputSchema": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": { "type": "string" }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["message", "nodeId"],
+        "properties": {
+          "message": { "type": "string" },
+          "nodeId": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "call_alpha",
+      "description": "Call pi-alpha through the fabric and wrap the result.",
+      "handler": "call_alpha",
+      "version": "1.0.0",
+      "inputSchema": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": { "type": "string" }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["message", "nodeId", "via"],
+        "properties": {
+          "message": { "type": "string" },
+          "nodeId": { "type": "string" },
+          "via": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "bounce_to_alpha",
+      "description": "Bounces a nested invocation into pi-alpha to test depth protection.",
+      "handler": "bounce_to_alpha",
+      "version": "1.0.0",
+      "inputSchema": {
+        "type": "object",
+        "required": ["remaining"],
+        "properties": {
+          "remaining": { "type": "integer" }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["doneBy", "remaining"],
+        "properties": {
+          "doneBy": { "type": "string" },
+          "remaining": { "type": "integer" }
+        }
+      }
+    }
+  ]
+}

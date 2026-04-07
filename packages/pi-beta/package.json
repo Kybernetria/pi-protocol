@@ -1,0 +1,12 @@
+{
+  "name": "pi-beta",
+  "version": "0.0.0-prototype",
+  "type": "module",
+  "keywords": ["pi-package"],
+  "dependencies": {
+    "@kyvernitria/pi-protocol-sdk": "0.0.0-prototype"
+  },
+  "pi": {
+    "extensions": ["./extensions"]
+  }
+}

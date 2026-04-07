@@ -1,0 +1,14 @@
+{
+  "name": "pi-protocol",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "demo": "tsx scripts/demo.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.6"
+  }
+}

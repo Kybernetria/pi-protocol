@@ -1,0 +1,69 @@
+{
+  "protocolVersion": "0.1.0",
+  "nodeId": "pi-alpha",
+  "purpose": "Prototype alpha node for exercising registration, routing, validation, and recursive calls.",
+  "provides": [
+    {
+      "name": "shared_echo",
+      "description": "Return the provided message with alpha metadata.",
+      "handler": "shared_echo",
+      "version": "1.0.0",
+      "inputSchema": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": { "type": "string" }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["message", "nodeId"],
+        "properties": {
+          "message": { "type": "string" },
+          "nodeId": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "bad_output",
+      "description": "Intentionally returns invalid output to exercise output validation.",
+      "handler": "bad_output",
+      "version": "1.0.0",
+      "inputSchema": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": { "type": "string" }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "bounce_to_beta",
+      "description": "Bounces a nested invocation into pi-beta to test depth protection.",
+      "handler": "bounce_to_beta",
+      "version": "1.0.0",
+      "inputSchema": {
+        "type": "object",
+        "required": ["remaining"],
+        "properties": {
+          "remaining": { "type": "integer" }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["doneBy", "remaining"],
+        "properties": {
+          "doneBy": { "type": "string" },
+          "remaining": { "type": "integer" }
+        }
+      }
+    }
+  ]
+}
