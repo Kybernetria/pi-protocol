@@ -1,4 +1,8 @@
+import { Type } from "@mariozechner/pi-ai";
+
 export const FABRIC_KEY = Symbol.for("pi-protocol.fabric");
+export const PROTOCOL_AGENT_PROJECTION_KEY = Symbol.for("pi-protocol.agent-projection");
+export const PROTOCOL_TOOL_NAME = "protocol";
 
 const DEFAULT_MAX_DEPTH = 16;
 const DEFAULT_TIMEOUT_MS = 120000;
@@ -92,6 +96,26 @@ export interface ProtocolRegistrySnapshot {
   provides: ProtocolProvideSnapshot[];
 }
 
+export interface ProtocolProvideLookup {
+  nodeId: string;
+  provide: string;
+}
+
+export interface ProtocolProvideFilter {
+  nodeId?: string;
+  name?: string;
+  tagsAny?: string[];
+  effectsAny?: string[];
+  visibility?: Visibility;
+}
+
+export interface ProtocolProvideDescription extends ProtocolProvideSnapshot {
+  purpose: string;
+  source?: ProtocolSourceInfo;
+  inputSchema: string | JSONSchemaLite;
+  outputSchema: string | JSONSchemaLite;
+}
+
 export interface ProtocolFailure {
   code: ProtocolErrorCode;
   message: string;
@@ -144,6 +168,128 @@ export interface ProtocolInvokeRequest<TInput = unknown> {
   };
 }
 
+export interface ProtocolDelegationBinding {
+  callerNodeId: string;
+  traceId?: string;
+  parentSpanId?: string;
+  budget?: ProtocolBudget;
+  modelHint?: ModelHint;
+  depth?: number;
+  maxDepth?: number;
+}
+
+export interface ProtocolDelegatedInvokeRequest<TInput = unknown> {
+  provide: string;
+  input: TInput;
+  target?: {
+    nodeId?: string;
+    tagsAny?: string[];
+  };
+  routing?: RoutingMode;
+  modelHint?: ModelHint;
+  budget?: ProtocolBudget;
+  handoff?: {
+    brief?: string;
+    opaque?: boolean;
+  };
+}
+
+export interface ProtocolDelegationSurface {
+  registry(): ProtocolRegistrySnapshot;
+  describeNode(nodeId: string): ProtocolNodeSnapshot | null;
+  describeProvide(lookup: ProtocolProvideLookup): ProtocolProvideDescription | null;
+  findProvides(query?: ProtocolProvideFilter): ProtocolProvideDescription[];
+  invoke<TInput = unknown, TOutput = unknown>(
+    request: ProtocolDelegatedInvokeRequest<TInput>,
+  ): Promise<ProtocolInvokeResult<TOutput>>;
+}
+
+export interface ProtocolToolProvideFilter extends Omit<ProtocolProvideFilter, "visibility"> {
+  visibility?: "public";
+}
+
+export interface ProtocolToolInput {
+  action: ProtocolToolRequest["action"];
+  nodeId?: string;
+  provide?: string;
+  query?: {
+    nodeId?: string;
+    name?: string;
+    tagsAny?: string[];
+    effectsAny?: string[];
+    visibility?: "public";
+  };
+  request?: {
+    provide?: string;
+    input?: unknown;
+    target?: {
+      nodeId?: string;
+      tagsAny?: string[];
+    };
+    routing?: RoutingMode;
+    modelHint?: ModelHint;
+    budget?: ProtocolBudget;
+    handoff?: {
+      brief?: string;
+      opaque?: boolean;
+    };
+  };
+}
+
+export type ProtocolToolRequest =
+  | {
+      action: "registry";
+    }
+  | {
+      action: "describe_node";
+      nodeId: string;
+    }
+  | {
+      action: "describe_provide";
+      nodeId: string;
+      provide: string;
+    }
+  | {
+      action: "find_provides";
+      query?: ProtocolToolProvideFilter;
+    }
+  | {
+      action: "invoke";
+      request: ProtocolDelegatedInvokeRequest;
+    };
+
+export type ProtocolToolResult =
+  | {
+      ok: true;
+      action: "registry";
+      registry: ProtocolRegistrySnapshot;
+    }
+  | {
+      ok: true;
+      action: "describe_node";
+      node: ProtocolNodeSnapshot;
+    }
+  | {
+      ok: true;
+      action: "describe_provide";
+      provide: ProtocolProvideDescription;
+    }
+  | {
+      ok: true;
+      action: "find_provides";
+      results: ProtocolProvideDescription[];
+    }
+  | {
+      ok: true;
+      action: "invoke";
+      result: ProtocolInvokeResult;
+    }
+  | {
+      ok: false;
+      action: ProtocolToolRequest["action"];
+      error: ProtocolFailure;
+    };
+
 interface InternalProtocolInvokeRequest<TInput = unknown> extends ProtocolInvokeRequest<TInput> {
   __depth?: number;
   __maxDepth?: number;
@@ -160,6 +306,18 @@ export interface ProtocolFabricOptions {
   defaultTimeoutMs?: number;
 }
 
+export interface ProtocolAgentProjectionTarget {
+  registerTool?: (tool: unknown) => void;
+  getAllTools?: () => Array<{ name: string }>;
+}
+
+export interface ProtocolAgentProjectionOptions {
+  callerNodeId?: string;
+  toolName?: string;
+  label?: string;
+  description?: string;
+}
+
 export interface ProtocolCallContext<TBudget extends ProtocolBudget = ProtocolBudget> {
   traceId: string;
   spanId: string;
@@ -172,6 +330,7 @@ export interface ProtocolCallContext<TBudget extends ProtocolBudget = ProtocolBu
   budget?: TBudget;
   modelHint?: ModelHint;
   fabric: ProtocolFabric;
+  delegate: ProtocolDelegationSurface;
   pi: Required<Pick<ProtocolSessionPi, "appendEntry">> & Omit<ProtocolSessionPi, "appendEntry">;
 }
 
@@ -199,6 +358,8 @@ export interface ProtocolFabric {
   getRegistry(): ProtocolRegistrySnapshot;
   invoke(req: ProtocolInvokeRequest): Promise<ProtocolInvokeResult>;
   describe(nodeId?: string): ProtocolRegistrySnapshot | ProtocolNodeSnapshot | null;
+  describeProvide(lookup: ProtocolProvideLookup): ProtocolProvideDescription | null;
+  findProvides(query?: ProtocolProvideFilter): ProtocolProvideDescription[];
   dispose?(): void;
 }
 
@@ -227,6 +388,14 @@ interface ValidationFailure {
 
 type ValidationResult = ValidationSuccess | ValidationFailure;
 
+function isResolutionFailure(result: ResolutionResult): result is ResolutionFailure {
+  return result.ok === false;
+}
+
+function isValidationFailure(result: ValidationResult): result is ValidationFailure {
+  return result.ok === false;
+}
+
 interface FailureParams {
   appendEntry: (kind: string, data: unknown) => void;
   traceId: string;
@@ -247,6 +416,11 @@ interface HandlerFabricState {
   depth: number;
   maxDepth: number;
   budget?: ProtocolBudget;
+}
+
+interface ProtocolToolResultDetails {
+  action: ProtocolToolRequest["action"];
+  result: ProtocolToolResult;
 }
 
 export function ensureProtocolFabric(
@@ -329,6 +503,17 @@ export function createProtocolFabric(
     };
   };
 
+  const describeProvide = (lookup: ProtocolProvideLookup): ProtocolProvideDescription | null => {
+    const node = nodes.get(lookup.nodeId);
+    if (!node) return null;
+    const provide = node.manifest.provides.find((item) => item.name === lookup.provide);
+    if (!provide) return null;
+    return toProvideDescription(node, provide);
+  };
+
+  const findProvides = (query: ProtocolProvideFilter = {}): ProtocolProvideDescription[] =>
+    findProvidesInNodes(nodes, query);
+
   const fabric: ProtocolFabric = {
     registerNode(node: RegisteredNode): void {
       const nodeId = node.manifest.nodeId;
@@ -355,6 +540,8 @@ export function createProtocolFabric(
 
     getRegistry,
     describe,
+    describeProvide,
+    findProvides,
 
     async invoke(req: ProtocolInvokeRequest): Promise<ProtocolInvokeResult> {
       const internalReq = req as InternalProtocolInvokeRequest;
@@ -390,7 +577,7 @@ export function createProtocolFabric(
       }
 
       const resolution = resolveTarget(nodes, internalReq);
-      if (!resolution.ok) {
+      if (isResolutionFailure(resolution)) {
         return failure({
           appendEntry,
           traceId,
@@ -405,7 +592,7 @@ export function createProtocolFabric(
       const { node, provide } = resolution;
       const calleeNodeId = node.manifest.nodeId;
       const inputValidation = validateSchema(provide.inputSchema, internalReq.input, "input");
-      if (!inputValidation.ok) {
+      if (isValidationFailure(inputValidation)) {
         return failure({
           appendEntry,
           traceId,
@@ -430,6 +617,15 @@ export function createProtocolFabric(
         startedAt: now,
       });
 
+      const handlerFabric = createHandlerFabric(fabric, {
+        traceId,
+        spanId,
+        callerNodeId: calleeNodeId,
+        depth,
+        maxDepth,
+        budget,
+      });
+
       const ctx: ProtocolCallContext = {
         traceId,
         spanId,
@@ -441,13 +637,15 @@ export function createProtocolFabric(
         maxDepth,
         budget,
         modelHint: internalReq.modelHint,
-        fabric: createHandlerFabric(fabric, {
-          traceId,
-          spanId,
+        fabric: handlerFabric,
+        delegate: createProtocolDelegationSurface(handlerFabric, {
           callerNodeId: calleeNodeId,
+          traceId,
+          parentSpanId: spanId,
+          budget,
+          modelHint: internalReq.modelHint,
           depth,
           maxDepth,
-          budget,
         }),
         pi: {
           appendEntry,
@@ -461,7 +659,7 @@ export function createProtocolFabric(
       try {
         const output = await node.handlers[provide.handler](ctx, internalReq.input);
         const outputValidation = validateSchema(provide.outputSchema, output, "output");
-        if (!outputValidation.ok) {
+        if (isValidationFailure(outputValidation)) {
           return failure({
             appendEntry,
             traceId,
@@ -604,6 +802,339 @@ function toProvideSnapshot(node: RegisteredNode, provide: ProvideSpec): Protocol
     visibility: provide.visibility ?? "public",
     modelHint: provide.modelHint,
   };
+}
+
+function toProvideDescription(node: RegisteredNode, provide: ProvideSpec): ProtocolProvideDescription {
+  return {
+    ...toProvideSnapshot(node, provide),
+    purpose: node.manifest.purpose,
+    source: node.source,
+    inputSchema: provide.inputSchema,
+    outputSchema: provide.outputSchema,
+  };
+}
+
+function findProvidesInNodes(
+  nodes: Map<string, RegisteredNode>,
+  query: ProtocolProvideFilter = {},
+): ProtocolProvideDescription[] {
+  const results: ProtocolProvideDescription[] = [];
+
+  for (const node of nodes.values()) {
+    if (query.nodeId && node.manifest.nodeId !== query.nodeId) continue;
+
+    for (const provide of node.manifest.provides ?? []) {
+      const description = toProvideDescription(node, provide);
+
+      if (query.name && description.name !== query.name) continue;
+      if (query.visibility && description.visibility !== query.visibility) continue;
+      if (query.tagsAny?.length && !query.tagsAny.some((tag) => description.tags?.includes(tag))) continue;
+      if (query.effectsAny?.length && !query.effectsAny.some((effect) => description.effects?.includes(effect))) {
+        continue;
+      }
+
+      results.push(description);
+    }
+  }
+
+  return results;
+}
+
+export function createProtocolDelegationSurface(
+  fabric: ProtocolFabric,
+  binding: ProtocolDelegationBinding,
+): ProtocolDelegationSurface {
+  return {
+    registry(): ProtocolRegistrySnapshot {
+      return fabric.getRegistry();
+    },
+
+    describeNode(nodeId: string): ProtocolNodeSnapshot | null {
+      const described = fabric.describe(nodeId);
+      return described && "nodeId" in described ? described : null;
+    },
+
+    describeProvide(lookup: ProtocolProvideLookup): ProtocolProvideDescription | null {
+      return fabric.describeProvide(lookup);
+    },
+
+    findProvides(query: ProtocolProvideFilter = {}): ProtocolProvideDescription[] {
+      return fabric.findProvides(query);
+    },
+
+    async invoke<TInput = unknown, TOutput = unknown>(
+      request: ProtocolDelegatedInvokeRequest<TInput>,
+    ): Promise<ProtocolInvokeResult<TOutput>> {
+      const internalReq: InternalProtocolInvokeRequest<TInput> = {
+        ...request,
+        callerNodeId: binding.callerNodeId,
+        traceId: binding.traceId,
+        parentSpanId: binding.parentSpanId,
+        budget: request.budget ?? binding.budget,
+        modelHint: request.modelHint ?? binding.modelHint,
+      };
+
+      if (binding.depth !== undefined) {
+        internalReq.__depth = binding.depth + 1;
+      }
+
+      if (binding.maxDepth !== undefined) {
+        internalReq.__maxDepth = binding.maxDepth;
+      }
+
+      return (await fabric.invoke(internalReq)) as ProtocolInvokeResult<TOutput>;
+    },
+  };
+}
+
+export async function handleProtocolToolRequest(
+  surface: ProtocolDelegationSurface,
+  request: ProtocolToolRequest,
+): Promise<ProtocolToolResult> {
+  switch (request.action) {
+    case "registry":
+      return {
+        ok: true,
+        action: "registry",
+        registry: surface.registry(),
+      };
+
+    case "describe_node": {
+      const node = surface.describeNode(request.nodeId);
+      if (!node) {
+        return {
+          ok: false,
+          action: "describe_node",
+          error: {
+            code: "NOT_FOUND",
+            message: `Node ${request.nodeId} is not registered`,
+          },
+        };
+      }
+
+      return {
+        ok: true,
+        action: "describe_node",
+        node,
+      };
+    }
+
+    case "describe_provide": {
+      const provide = surface.describeProvide({
+        nodeId: request.nodeId,
+        provide: request.provide,
+      });
+
+      if (!provide || provide.visibility !== "public") {
+        return {
+          ok: false,
+          action: "describe_provide",
+          error: {
+            code: "NOT_FOUND",
+            message: `Provide ${request.nodeId}.${request.provide} is not publicly available`,
+          },
+        };
+      }
+
+      return {
+        ok: true,
+        action: "describe_provide",
+        provide,
+      };
+    }
+
+    case "find_provides":
+      return {
+        ok: true,
+        action: "find_provides",
+        results: surface.findProvides({
+          ...request.query,
+          visibility: request.query?.visibility ?? "public",
+        }),
+      };
+
+    case "invoke":
+      return {
+        ok: true,
+        action: "invoke",
+        result: await surface.invoke(request.request),
+      };
+  }
+}
+
+export function ensureProtocolAgentProjection(
+  pi: ProtocolAgentProjectionTarget,
+  fabric: ProtocolFabric,
+  options: ProtocolAgentProjectionOptions = {},
+): { toolName: string; registered: boolean } {
+  const globals = globalThis as Record<PropertyKey, unknown>;
+  const toolName = options.toolName?.trim() || PROTOCOL_TOOL_NAME;
+  const existingRegistration = globals[PROTOCOL_AGENT_PROJECTION_KEY] as { toolName?: string } | undefined;
+  const alreadyRegistered =
+    existingRegistration?.toolName === toolName ||
+    !!pi.getAllTools?.().some((tool) => tool.name === toolName);
+
+  if (alreadyRegistered) {
+    globals[PROTOCOL_AGENT_PROJECTION_KEY] = { toolName };
+    return { toolName, registered: false };
+  }
+
+  if (!pi.registerTool) {
+    return { toolName, registered: false };
+  }
+
+  const callerNodeId = options.callerNodeId?.trim() || "pi-chat";
+  const delegate = createProtocolDelegationSurface(fabric, { callerNodeId });
+  pi.registerTool(createProtocolTool(delegate, {
+    toolName,
+    label: options.label,
+    description: options.description,
+  }));
+  globals[PROTOCOL_AGENT_PROJECTION_KEY] = {
+    toolName,
+    callerNodeId,
+  };
+
+  return { toolName, registered: true };
+}
+
+function createProtocolTool(
+  surface: ProtocolDelegationSurface,
+  options: {
+    toolName: string;
+    label?: string;
+    description?: string;
+  },
+) {
+  return {
+    name: options.toolName,
+    label: options.label ?? "Protocol",
+    description:
+      options.description ??
+      "Inspect the Pi Protocol registry and invoke public provides through the shared protocol fabric.",
+    promptSnippet: `${options.toolName}: discover and invoke public Pi Protocol provides through the shared fabric`,
+    promptGuidelines: [
+      "Use this tool to discover Pi Protocol nodes and invoke public provides without needing one tool per provide.",
+      "Prefer deterministic target.nodeId when known. If multiple public providers match and no target is specified, expect ambiguity.",
+      "Treat provides as the canonical contract. Internal implementation may be deterministic or agent-backed.",
+    ],
+    parameters: Type.Object({
+      action: Type.Union([
+        Type.Literal("registry"),
+        Type.Literal("describe_node"),
+        Type.Literal("describe_provide"),
+        Type.Literal("find_provides"),
+        Type.Literal("invoke"),
+      ]),
+      nodeId: Type.Optional(Type.String()),
+      provide: Type.Optional(Type.String()),
+      query: Type.Optional(
+        Type.Object({
+          nodeId: Type.Optional(Type.String()),
+          name: Type.Optional(Type.String()),
+          tagsAny: Type.Optional(Type.Array(Type.String())),
+          effectsAny: Type.Optional(Type.Array(Type.String())),
+          visibility: Type.Optional(Type.Literal("public")),
+        }),
+      ),
+      request: Type.Optional(
+        Type.Object({
+          provide: Type.Optional(Type.String()),
+          input: Type.Optional(Type.Any()),
+          target: Type.Optional(
+            Type.Object({
+              nodeId: Type.Optional(Type.String()),
+              tagsAny: Type.Optional(Type.Array(Type.String())),
+            }),
+          ),
+          routing: Type.Optional(
+            Type.Union([Type.Literal("deterministic"), Type.Literal("best-match")]),
+          ),
+          modelHint: Type.Optional(
+            Type.Object({
+              tier: Type.Optional(
+                Type.Union([Type.Literal("fast"), Type.Literal("balanced"), Type.Literal("reasoning")]),
+              ),
+              specific: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            }),
+          ),
+          budget: Type.Optional(
+            Type.Object({
+              remainingUsd: Type.Optional(Type.Number()),
+              remainingTokens: Type.Optional(Type.Number()),
+              deadlineMs: Type.Optional(Type.Number()),
+            }),
+          ),
+          handoff: Type.Optional(
+            Type.Object({
+              brief: Type.Optional(Type.String()),
+              opaque: Type.Optional(Type.Boolean()),
+            }),
+          ),
+        }),
+      ),
+    }),
+    async execute(_toolCallId: string, input: ProtocolToolInput) {
+      const request = parseProtocolToolInput(input);
+      const result = await handleProtocolToolRequest(surface, request);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+        details: {
+          action: request.action,
+          result,
+        } satisfies ProtocolToolResultDetails,
+      };
+    },
+  };
+}
+
+function parseProtocolToolInput(input: ProtocolToolInput): ProtocolToolRequest {
+  switch (input.action) {
+    case "registry":
+      return { action: "registry" };
+
+    case "describe_node":
+      if (!input.nodeId?.trim()) {
+        throw new Error("protocol tool action describe_node requires nodeId");
+      }
+      return {
+        action: "describe_node",
+        nodeId: input.nodeId,
+      };
+
+    case "describe_provide":
+      if (!input.nodeId?.trim() || !input.provide?.trim()) {
+        throw new Error("protocol tool action describe_provide requires nodeId and provide");
+      }
+      return {
+        action: "describe_provide",
+        nodeId: input.nodeId,
+        provide: input.provide,
+      };
+
+    case "find_provides":
+      return {
+        action: "find_provides",
+        query: input.query,
+      };
+
+    case "invoke":
+      if (!input.request?.provide?.trim()) {
+        throw new Error("protocol tool action invoke requires request.provide");
+      }
+      return {
+        action: "invoke",
+        request: {
+          provide: input.request.provide,
+          input: input.request.input,
+          target: input.request.target,
+          routing: input.request.routing,
+          modelHint: input.request.modelHint,
+          budget: input.request.budget,
+          handoff: input.request.handoff,
+        },
+      };
+  }
 }
 
 function normalizeBudget(

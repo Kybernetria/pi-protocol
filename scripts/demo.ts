@@ -1,15 +1,21 @@
 import activateAlpha from "../packages/pi-alpha/extensions/index.ts";
 import activateBeta from "../packages/pi-beta/extensions/index.ts";
-import { FABRIC_KEY } from "@kyvernitria/pi-protocol-sdk";
+import {
+  FABRIC_KEY,
+  createProtocolDelegationSurface,
+  handleProtocolToolRequest,
+} from "@kyvernitria/pi-protocol-sdk";
 
 function createPiRuntime() {
   const entries = [];
   const listeners = new Map();
   const commands = new Map();
+  const tools = new Map();
 
   return {
     entries,
     commands,
+    tools,
     appendEntry(kind, data) {
       entries.push({ kind, data });
     },
@@ -31,6 +37,12 @@ function createPiRuntime() {
     },
     registerCommand(name, options) {
       commands.set(name, options);
+    },
+    registerTool(tool) {
+      tools.set(tool.name, tool);
+    },
+    getAllTools() {
+      return [...tools.values()].map((tool) => ({ name: tool.name }));
     },
   };
 }
@@ -61,45 +73,85 @@ async function main() {
 
   printSection("register", fabric.getRegistry());
 
-  const invokeResult = await fabric.invoke({
+  const protocolTool = pi.tools.get("protocol");
+  const protocolToolResult = await protocolTool.execute("tool-call-1", {
+    action: "find_provides",
+    query: { name: "shared_echo" },
+  });
+
+  printSection("auto protocol tool", {
+    installed: !!protocolTool,
+    toolNames: [...pi.tools.keys()],
+    resultPreview: protocolToolResult.details,
+  });
+
+  const delegate = createProtocolDelegationSurface(fabric, {
+    callerNodeId: "demo-runner",
+  });
+
+  printSection("delegate surface", {
+    findSharedEcho: delegate.findProvides({ name: "shared_echo", visibility: "public" }),
+    describeBetaCallAlpha: delegate.describeProvide({ nodeId: "pi-beta", provide: "call_alpha" }),
+  });
+
+  printSection(
+    "protocol tool projection",
+    await handleProtocolToolRequest(delegate, {
+      action: "find_provides",
+      query: { name: "shared_echo" },
+    }),
+  );
+
+  const invokeResult = await delegate.invoke({
+    provide: "call_alpha",
+    target: { nodeId: "pi-beta" },
+    input: { message: "hello protocol" },
+  });
+
+  const directInvokeResult = await fabric.invoke({
     callerNodeId: "demo-runner",
     provide: "call_alpha",
     target: { nodeId: "pi-beta" },
     input: { message: "hello protocol" },
   });
-  printSection("invoke", invokeResult);
 
-  const notFound = await fabric.invoke({
-    callerNodeId: "demo-runner",
+  printSection("invoke", {
+    viaDelegate: invokeResult,
+    viaFabric: directInvokeResult,
+  });
+
+  const notFound = await delegate.invoke({
     provide: "missing_provide",
     input: {},
   });
 
-  const ambiguous = await fabric.invoke({
-    callerNodeId: "demo-runner",
+  const ambiguous = await delegate.invoke({
     provide: "shared_echo",
     input: { message: "who answers?" },
   });
 
-  const invalidInput = await fabric.invoke({
-    callerNodeId: "demo-runner",
+  const invalidInput = await delegate.invoke({
     provide: "call_alpha",
     target: { nodeId: "pi-beta" },
     input: { message: 42 },
   });
 
-  const invalidOutput = await fabric.invoke({
-    callerNodeId: "demo-runner",
+  const invalidOutput = await delegate.invoke({
     provide: "bad_output",
     target: { nodeId: "pi-alpha" },
     input: { message: "break output" },
   });
 
-  const depthExceeded = await fabric.invoke({
-    callerNodeId: "demo-runner",
+  const depthExceeded = await delegate.invoke({
     provide: "bounce_to_alpha",
     target: { nodeId: "pi-beta" },
     input: { remaining: 20 },
+  });
+
+  const notFoundViaTool = await handleProtocolToolRequest(delegate, {
+    action: "describe_provide",
+    nodeId: "pi-alpha",
+    provide: "internal_missing",
   });
 
   printSection("error handling", {
@@ -108,6 +160,7 @@ async function main() {
     invalidInput,
     invalidOutput,
     depthExceeded,
+    notFoundViaTool,
   });
 
   printSection(

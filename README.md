@@ -25,7 +25,7 @@ A protocol-certified package is a normal Pi package that ships:
 
 The user should not have to manually install a dedicated protocol host package.
 
-Each certified package ships the same tiny bootstrap pattern. The bootstrap is thin extension glue, not a copy of the full runtime. The shared fabric implementation may live in a normal protocol SDK dependency. The first certified package loaded into a Pi process creates the fabric singleton if needed; later packages reuse it.
+Each certified package ships the same tiny bootstrap pattern. The bootstrap is thin extension glue, not a copy of the full runtime. The shared fabric implementation may live in a normal protocol SDK dependency. The first certified package loaded into a Pi process creates the fabric singleton if needed, ensures the standard agent-facing `protocol` projection is available, and later packages reuse both.
 
 That means:
 
@@ -56,9 +56,10 @@ Read these in order.
 1. `docs/spec/pi-protocol-core.md`
 2. `docs/spec/pi-protocol-manifest.md`
 3. `docs/spec/pi-protocol-runtime.md`
-4. `docs/spec/pi-protocol-ecosystem.md`
-5. `docs/spec/pi-protocol-patterns.md`
-6. `docs/spec/pi-protocol-compliance.md`
+4. `docs/spec/pi-protocol-delegation.md`
+5. `docs/spec/pi-protocol-ecosystem.md`
+6. `docs/spec/pi-protocol-patterns.md`
+7. `docs/spec/pi-protocol-compliance.md`
 
 ## Short definition
 
@@ -67,6 +68,8 @@ Pi Protocol is:
 - a sidecar manifest contract
 - a shared per-process fabric singleton
 - a registration and invoke model for typed callable capabilities
+- a native delegation surface for deterministic code, normal chat orchestration, and recursive agent-backed implementations
+- a batteries-included standard `protocol` projection that any certified package may ensure during bootstrap
 - a provenance model backed by Pi session entries
 - a compliance model for future generated packages
 
@@ -96,7 +99,7 @@ my-node/
       my_provide.output.json
 ```
 
-TypeScript is the preferred default for the SDK and certified package templates because the protocol relies on explicit contracts. Equivalent JavaScript implementations are allowed.
+TypeScript is the preferred default for the SDK and certified package templates because the protocol relies on explicit contracts. The delegation surface and its standard agent projection are also specified with TypeScript-first contracts.
 
 If you tell an agent to build a new Pi Protocol certified package, that package should:
 
@@ -117,6 +120,7 @@ That is the path to seamless interop without inter-node code dependencies.
 - `packages/pi-protocol-sdk/` - minimal shared runtime prototype and typed contract surface
 - `packages/pi-alpha/` - certified node prototype A
 - `packages/pi-beta/` - certified node prototype B
+- `templates/` - starter templates and partials for protocol package generation
 - `scripts/demo.ts` - load/register/invoke demo harness
 
 ## Prototype demo

@@ -6,7 +6,7 @@ export async function shared_echo(ctx, input) {
 }
 
 export async function call_alpha(ctx, input) {
-  const result = await ctx.fabric.invoke({
+  const result = await ctx.delegate.invoke({
     provide: "shared_echo",
     target: { nodeId: "pi-alpha" },
     input,
@@ -33,7 +33,7 @@ export async function bounce_to_alpha(ctx, input) {
     };
   }
 
-  const result = await ctx.fabric.invoke({
+  const result = await ctx.delegate.invoke({
     provide: "bounce_to_beta",
     target: { nodeId: "pi-alpha" },
     input: { remaining: input.remaining - 1 },

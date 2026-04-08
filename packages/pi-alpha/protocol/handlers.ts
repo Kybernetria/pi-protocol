@@ -19,7 +19,7 @@ export async function bounce_to_beta(ctx, input) {
     };
   }
 
-  const result = await ctx.fabric.invoke({
+  const result = await ctx.delegate.invoke({
     provide: "bounce_to_alpha",
     target: { nodeId: "pi-beta" },
     input: { remaining: input.remaining - 1 },

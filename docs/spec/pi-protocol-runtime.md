@@ -62,7 +62,8 @@ Bootstrap MUST behave like this:
 2. if present, reuse it
 3. if absent, create and publish a single shared fabric
 4. bind the current extension to that shared fabric
-5. register the current node automatically during runtime activation
+5. ensure the standard agent-facing protocol projection is available if the host supports tool registration
+6. register the current node automatically during runtime activation
 
 In Pi, registration often belongs in `session_start` rather than raw extension load because provenance recording and other session-bound actions may not be available until the session runtime is initialized.
 
@@ -77,12 +78,17 @@ The bootstrap entrypoint is extension-specific only in its manifest, handlers, a
 
 ```ts
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { ensureProtocolFabric, registerProtocolNode } from "@kyvernitria/pi-protocol-sdk";
+import {
+  ensureProtocolAgentProjection,
+  ensureProtocolFabric,
+  registerProtocolNode,
+} from "@kyvernitria/pi-protocol-sdk";
 import manifest from "../pi.protocol.json";
 import * as handlers from "../protocol/handlers.ts";
 
 export default function (pi: ExtensionAPI) {
   const fabric = ensureProtocolFabric(pi);
+  ensureProtocolAgentProjection(pi, fabric);
 
   pi.on("session_start", async () => {
     if (!fabric.describe(manifest.nodeId)) {
@@ -107,6 +113,8 @@ export default function (pi: ExtensionAPI) {
 
 The exact helper names MAY vary, but the behavior MUST remain equivalent.
 
+The standard `protocol` projection SHOULD be ensured automatically by any certified package that boots the shared runtime so batteries-included normal chat orchestration does not require a separate host install step.
+
 ## 4. Fabric API
 
 The fabric MUST expose at least these capabilities.
@@ -114,12 +122,38 @@ The fabric MUST expose at least these capabilities.
 In the prototype SDK, these contracts are represented directly as exported TypeScript interfaces from `@kyvernitria/pi-protocol-sdk`. Those exported types are the executable source of truth for the prototype runtime shape.
 
 ```ts
+interface ProtocolProvideLookup {
+  nodeId: string;
+  provide: string;
+}
+
+interface ProtocolProvideFilter {
+  nodeId?: string;
+  name?: string;
+  tagsAny?: string[];
+  effectsAny?: string[];
+  visibility?: "public" | "internal";
+}
+
+interface ProtocolProvideDescription extends ProtocolProvideSnapshot {
+  purpose: string;
+  source?: {
+    packageName?: string;
+    packageVersion?: string;
+    extensionPath?: string;
+  };
+  inputSchema: string | JSONSchemaLite;
+  outputSchema: string | JSONSchemaLite;
+}
+
 interface ProtocolFabric {
   registerNode(node: RegisteredNode): void;
   unregisterNode(nodeId: string): void;
   getRegistry(): ProtocolRegistrySnapshot;
   invoke(req: ProtocolInvokeRequest): Promise<ProtocolInvokeResult>;
   describe(nodeId?: string): ProtocolRegistrySnapshot | ProtocolNodeSnapshot | null;
+  describeProvide(lookup: ProtocolProvideLookup): ProtocolProvideDescription | null;
+  findProvides(query?: ProtocolProvideFilter): ProtocolProvideDescription[];
 }
 ```
 
@@ -334,6 +368,7 @@ interface ProtocolCallContext {
   };
   modelHint?: ModelHint;
   fabric: ProtocolFabric;
+  delegate: ProtocolDelegationSurface;
   pi: {
     appendEntry: (kind: string, data: unknown) => void;
     sendMessage?: (message: unknown, options?: unknown) => void;
@@ -343,6 +378,29 @@ interface ProtocolCallContext {
 ```
 
 The exact shape MAY vary slightly across equivalent implementations, but the prototype SDK exports this shape directly and requires the trace, caller, callee, provide identity, and current depth to be available.
+
+The prototype SDK also exposes a bound `delegate` surface on `ProtocolCallContext` so deterministic code and embedded agents can perform recursive protocol delegation without rebuilding caller, trace, and budget context manually.
+
+## 10.1 Native delegation surface
+
+The runtime SHOULD expose a protocol-native delegation surface for deterministic code, normal chat orchestration, and agent-backed implementations.
+
+That surface SHOULD provide at least:
+
+- registry inspection
+- node inspection
+- provide inspection
+- provide discovery
+- bound invoke
+
+In the prototype SDK, this appears as a `ProtocolDelegationSurface` bound to a caller and current trace context.
+
+The normative separation is:
+
+- the fabric and delegation surface are protocol-native runtime capabilities
+- host tools or chat integrations are projections of those capabilities
+
+See `pi-protocol-delegation.md` for the standard delegation and agent-projection contract.
 
 ## 11. Failure model
 

@@ -178,6 +178,19 @@ These are allowed and useful, but they are projections rather than the canonical
 
 The canonical external contract is still `provides` through the fabric. For example, `/protocol-registry` may expose protocol state to an operator without changing protocol semantics.
 
+### 7.1 Standard agent projection
+For agentic runtimes such as Pi normal chat or embedded node-local agents, hosts SHOULD expose one stable projection of the protocol-native delegation surface rather than one separate top-level tool per provide.
+
+In batteries-included Pi environments, any certified package that ensures the shared fabric SHOULD also ensure this projection automatically if the host supports tool registration.
+
+Recommended Pi projection name:
+
+- `protocol`
+
+This keeps the protocol discoverable to agents without inflating the host tool inventory as more certified nodes are installed.
+
+The projection is an access surface to the runtime. It is not a replacement for `provides` as the canonical contract.
+
 ## 8. Session scope and process boundaries
 
 The fabric is process-local.

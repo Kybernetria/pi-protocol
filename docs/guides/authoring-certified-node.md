@@ -7,7 +7,8 @@ It is practical and template-driven. For normative rules, read:
 1. `../spec/pi-protocol-core.md`
 2. `../spec/pi-protocol-manifest.md`
 3. `../spec/pi-protocol-runtime.md`
-4. `../spec/pi-protocol-compliance.md`
+4. `../spec/pi-protocol-delegation.md`
+5. `../spec/pi-protocol-compliance.md`
 
 ## 1. What you are building
 
@@ -139,6 +140,7 @@ export const say_hello: ProtocolHandler<{ name: string }, { message: string }> =
 ```ts
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import {
+  ensureProtocolAgentProjection,
   ensureProtocolFabric,
   registerProtocolNode,
 } from "@kyvernitria/pi-protocol-sdk";
@@ -147,6 +149,7 @@ import * as handlers from "../protocol/handlers.ts";
 
 export default function activate(pi: ExtensionAPI) {
   const fabric = ensureProtocolFabric(pi);
+  ensureProtocolAgentProjection(pi, fabric);
 
   pi.on("session_start", async () => {
     if (!fabric.describe(manifest.nodeId)) {
@@ -173,9 +176,17 @@ Why `session_start`?
 
 Because in Pi, session-bound facilities such as provenance recording may not be ready during raw extension load.
 
+Why ensure the protocol projection during activation?
+
+Because the standard `protocol` tool projection is part of the batteries-included runtime surface. Any certified package may ensure it exists without gaining semantic privilege.
+
 ## 8. Calling another node
 
 Cross-node calls MUST go through the fabric.
+
+For direct deterministic handler code, calling `ctx.fabric.invoke()` remains valid.
+
+For code that may be passed through to an embedded agent or another orchestration layer, prefer the bound delegation surface on `ctx.delegate` so caller, trace, budget, and depth context stay attached automatically.
 
 ```ts
 import type { ProtocolHandler } from "@kyvernitria/pi-protocol-sdk";
@@ -184,8 +195,7 @@ export const ask_other_node: ProtocolHandler<
   { message: string },
   { echoed: string; via: string }
 > = async (ctx, input) => {
-  const result = await ctx.fabric.invoke({
-    callerNodeId: ctx.calleeNodeId,
+  const result = await ctx.delegate.invoke({
     provide: "shared_echo",
     target: { nodeId: "other-node" },
     input,
@@ -215,6 +225,12 @@ Do **not** do this:
 import { something } from "other-certified-node";
 ```
 
+### 8.1 Embedded agent delegation
+
+If a provide is implemented by an embedded agent, pass the bound delegation surface into that local agent workflow instead of inventing a special cross-node escape hatch.
+
+That way recursive calls still use the same protocol-native contract.
+
 ## 9. Optional operator projections
 
 You MAY expose protocol state through Pi-facing surfaces such as:
@@ -225,6 +241,13 @@ You MAY expose protocol state through Pi-facing surfaces such as:
 - prompt templates
 
 But these are projections, not the protocol itself.
+
+Important distinction:
+
+- use `skills/` only for operator-facing reusable workflows
+- keep handler-only prompts in non-discoverable locations such as `protocol/prompts/` or `protocol/instructions/`
+
+Do not generate a `SKILL.md` for every provide by default.
 
 A good example is a debug command like:
 

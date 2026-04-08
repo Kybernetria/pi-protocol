@@ -82,6 +82,33 @@ This does not violate the protocol.
 
 The no-codependency rule applies to cross-node imports, not to local repository structure.
 
+## 6.1 Native delegation pattern for embedded agents
+
+If a node uses an embedded agent to fulfill a provide, that agent SHOULD receive a bound protocol delegation surface rather than a bespoke ad hoc mechanism for calling sibling nodes.
+
+This keeps recursive delegation aligned with:
+
+- trace propagation
+- budget propagation
+- depth protection
+- visibility rules
+- provenance recording
+
+In TypeScript-first SDKs, this commonly appears as a ready-to-use `ctx.delegate` bound to the current node and current span.
+
+## 6.2 Normal chat orchestration pattern
+
+Pi normal chat MAY act as an orchestration layer over the protocol network.
+
+When it does, it SHOULD use one stable projection of the protocol-native delegation surface rather than one tool per provide.
+
+This lets chat:
+
+- inspect the registry
+- discover public provides
+- invoke nodes deterministically
+- remain compatible with a growing protocol ecosystem without tool-list explosion
+
 ## 7. Session-graph-aware pattern
 
 Pi sessions are tree-shaped, not flat chats.

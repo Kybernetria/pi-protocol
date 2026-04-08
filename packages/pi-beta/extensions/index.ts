@@ -1,9 +1,14 @@
-import { ensureProtocolFabric, registerProtocolNode } from "@kyvernitria/pi-protocol-sdk";
+import {
+  ensureProtocolAgentProjection,
+  ensureProtocolFabric,
+  registerProtocolNode,
+} from "@kyvernitria/pi-protocol-sdk";
 import manifest from "../pi.protocol.json" with { type: "json" };
 import * as handlers from "../protocol/handlers.ts";
 
 export default function activate(pi) {
   const fabric = ensureProtocolFabric(pi);
+  ensureProtocolAgentProjection(pi, fabric);
 
   pi.on("session_start", async () => {
     if (!fabric.describe(manifest.nodeId)) {

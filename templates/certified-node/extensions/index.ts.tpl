@@ -1,3 +1,4 @@
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import {
   ensureProtocolAgentProjection,
   ensureProtocolFabric,
@@ -6,7 +7,7 @@ import {
 import manifest from "../pi.protocol.json" with { type: "json" };
 import * as handlers from "../protocol/handlers.ts";
 
-export default function activate(pi) {
+export default function activate(pi: ExtensionAPI) {
   const fabric = ensureProtocolFabric(pi);
   ensureProtocolAgentProjection(pi, fabric);
 
@@ -16,9 +17,9 @@ export default function activate(pi) {
         manifest,
         handlers,
         source: {
-          packageName: "pi-alpha",
-          packageVersion: "0.0.0-prototype"
-        }
+          packageName: "{{packageName}}",
+          packageVersion: "0.1.0",
+        },
       });
     }
   });
@@ -28,13 +29,4 @@ export default function activate(pi) {
       fabric.unregisterNode(manifest.nodeId);
     }
   });
-
-  pi.registerCommand("protocol-registry", {
-    description: "Show the current Pi Protocol registry snapshot",
-    handler: async (_args, ctx) => {
-      ctx.ui.notify(JSON.stringify(fabric.getRegistry(), null, 2), "info");
-    }
-  });
-
-  return fabric;
 }
