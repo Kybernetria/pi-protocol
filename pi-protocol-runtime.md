@@ -563,3 +563,201 @@ A node MAY re-register with updated `provides` entries after loading new capabil
 3. Reject the update and preserve the existing registration if validation fails.
 
 Re-registration MUST be atomic: consumers observe either the old provides or the new provides, never a partial state.
+
+## 17. Fitness functions
+
+A fitness function is a quantifiable assessment of a node's ongoing protocol compliance. Unlike one-time validation at registration, fitness functions capture continuous health: budget adherence, temporal freshness, behavioral correctness, and operational quality.
+
+### 17.1 Result shape
+
+Fitness function results MUST use a standard shape for interoperability.
+
+```ts
+interface FitnessResult {
+  functionId: string;
+  nodeId: string;
+  score: number;
+  severity: "ok" | "info" | "warn" | "error";
+  message: string;
+  details?: Record<string, unknown>;
+  evaluatedAt: number;
+}
+```
+
+Implementations SHOULD use consistent score-to-severity mapping:
+
+| Score Range | Severity | Interpretation |
+|-------------|----------|----------------|
+| 0.9 -- 1.0 | `ok` | Fully compliant |
+| 0.7 -- 0.9 | `info` | Minor deviation, no action needed |
+| 0.5 -- 0.7 | `warn` | Notable deviation, review recommended |
+| 0.0 -- 0.5 | `error` | Significant deviation, action required |
+
+The fabric MAY use different thresholds. Thresholds SHOULD be configurable at fabric creation time.
+
+### 17.2 Required fitness functions
+
+Implementations MUST evaluate these functions and MUST act on `error` severity results.
+
+**Manifest validity.** Evaluates whether the manifest remains valid after registration. Checked on registration, hot reload, and periodic sweeps. A node whose manifest becomes invalid after hot reload MUST transition to `degraded` health.
+
+**Budget compliance.** Evaluates whether a node respects budget constraints. Checked per invocation. Repeated budget violations (3 or more in a sliding window) SHOULD trigger health degradation.
+
+**Handler resolution.** Evaluates whether all declared provides have resolvable handlers. A node with unresolvable handlers MUST NOT be registered. If handlers become unresolvable after hot reload, the node MUST transition to `degraded` health.
+
+### 17.3 Recommended fitness functions
+
+Implementations SHOULD evaluate these functions and SHOULD record results in provenance.
+
+**Temporal freshness.** P95 latency vs. declared `expectedDurationMs`. Warn when P95 exceeds 2x expectation. Error when timeout rate exceeds 10%.
+
+**Error rate.** `EXECUTION_FAILED` frequency. Warn when error rate exceeds 5%. Error on 5 or more consecutive failures.
+
+**Schema conformance.** `INVALID_OUTPUT` frequency. Warn on any schema violation. Error when violation rate exceeds 1%.
+
+**Provenance discipline.** Span completion rate (started spans that reach succeeded or failed). Warn when incomplete rate exceeds 5%.
+
+### 17.4 Health state integration
+
+Fitness results SHOULD inform health state transitions (section 16.2).
+
+- `ok` and `info` severity: no health change.
+- `warn` severity: fabric MAY downgrade node to `degraded`.
+- `error` severity: fabric SHOULD downgrade node to `degraded`.
+
+A node in `degraded` health MAY return to `healthy` when subsequent evaluations produce `ok` or `info`. The fabric MUST NOT transition a node directly from `healthy` to `unregistered` based on fitness failures alone.
+
+When multiple candidates exist for routing, the fabric SHOULD prefer nodes with better fitness scores. The fabric MUST NOT route to nodes with `error` fitness on required functions unless no alternatives exist.
+
+### 17.5 Provenance recording
+
+Fitness results SHOULD be recorded via `appendEntry()`.
+
+```ts
+interface FitnessResultEntry {
+  kind: "fitness_result";
+  recordedAt: number;
+  result: FitnessResult;
+}
+```
+
+Implementations SHOULD record all `warn` and `error` results and periodic summaries of `ok` results.
+
+### 17.6 Custom fitness functions
+
+Nodes MAY declare custom fitness functions in their manifests.
+
+```ts
+interface PiProtocolManifest {
+  // ... existing fields ...
+  fitnessFunctions?: Array<{
+    id: string;
+    description: string;
+    frequency: "per-invoke" | "periodic" | "on-demand";
+  }>;
+}
+```
+
+Custom functions extend the required and recommended functions with domain-specific measures. Custom functions MUST NOT override or replace required fitness functions.
+
+## 18. Capability discovery
+
+The fabric MUST support capability discovery so that nodes can find provides without knowing their exact identifiers.
+
+### 18.1 Discovery query
+
+```ts
+interface DiscoveryQuery {
+  /** Match provides whose name contains this substring (case-insensitive). */
+  name?: string;
+
+  /** Match provides tagged with ALL of these tags. */
+  tags?: string[];
+
+  /** Match provides tagged with ANY of these tags. */
+  tagsAny?: string[];
+
+  /** Match provides that declare ANY of these effects. */
+  effects?: string[];
+
+  /** Match provides from this specific node. */
+  nodeId?: string;
+
+  /** Exclude provides from these nodes. */
+  excludeNodes?: string[];
+
+  /** Only return public provides (default: true). */
+  publicOnly?: boolean;
+}
+```
+
+### 18.2 Discovery result
+
+```ts
+interface DiscoveryResult {
+  matches: ProtocolProvideSnapshot[];
+  query: DiscoveryQuery;
+  totalProvides: number;
+}
+```
+
+### 18.3 Fabric API addition
+
+```ts
+interface ProtocolFabric {
+  // ... existing methods from section 4 ...
+
+  /** Discover provides matching a query. Returns all matches, not just one. */
+  discover(query: DiscoveryQuery): DiscoveryResult;
+}
+```
+
+### 18.4 Behavior
+
+1. The fabric MUST evaluate the query against all registered provides.
+2. All query fields are optional. An empty query MUST return all public provides.
+3. When multiple fields are specified, the fabric MUST apply AND logic: a provide must match ALL specified fields.
+4. String matching (`name`) MUST be case-insensitive substring matching.
+5. Tag matching (`tags`) MUST require ALL specified tags to be present on the provide.
+6. Tag matching (`tagsAny`) MUST require at least ONE specified tag to be present.
+7. Effect matching (`effects`) MUST require at least ONE specified effect to be present.
+8. The result MUST include `totalProvides` to indicate registry size regardless of filtering.
+9. Discovery MUST NOT create a span or consume budget. It is a metadata query, not an invocation.
+
+### 18.5 Deterministic vs semantic discovery
+
+Discovery as specified above is **deterministic**: exact substring matching, exact tag filtering. This is intentional for v0.1.0.
+
+**Semantic discovery** (e.g., "find something that does voice activity detection" matching a provide tagged `audio` with name `detectSpeech`) is NOT specified. Implementations MAY support semantic discovery as an extension, but MUST support deterministic discovery as the baseline.
+
+Semantic discovery introduces LLM dependency, non-determinism, and cost. These concerns are orthogonal to the protocol and better addressed by higher-level tooling built on top of `fabric.discover()`.
+
+### 18.6 Caching
+
+Discovery results are ephemeral snapshots. The fabric MUST NOT cache discovery results across registration changes. A discovery query executed after a node registers or unregisters MUST reflect the current registry state.
+
+Consumers MAY cache discovery results locally if they handle staleness (e.g., re-query on `NOT_FOUND` during invocation).
+
+### 18.7 Requirement declarations
+
+A node's manifest MAY declare required and optional capabilities:
+
+```ts
+interface PiProtocolManifest {
+  // ... existing fields ...
+  requires?: {
+    hard?: Array<{
+      tags?: string[];
+      name?: string;
+      reason: string;
+    }>;
+    soft?: Array<{
+      tags?: string[];
+      name?: string;
+      reason: string;
+    }>;
+  };
+}
+```
+
+The fabric MAY validate hard requirements at registration time, transitioning the node to `degraded` health if hard requirements are unmet. Soft requirements SHOULD produce `info`-level fitness results when unmet.

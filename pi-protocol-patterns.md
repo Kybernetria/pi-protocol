@@ -275,3 +275,126 @@ Node dependencies SHOULD be classified using one of these relationship types. Cl
 **Partnership.** Nodes co-evolve their models with bidirectional influence. Highest coordination cost. Use only when capabilities are fundamentally intertwined.
 
 Nodes MAY declare their relationship type with other nodes in their manifest via an optional `relationships` field. The fabric MAY use declared relationships to inform routing and provenance annotations.
+
+## 18. Fitness function governance pattern
+
+Fitness functions (runtime section 17) define WHAT is measured. This pattern describes HOW to use them for continuous governance.
+
+### 18.1 Temporal escalation
+
+Fitness violations SHOULD escalate over time if unresolved.
+
+- Initial violation: severity as evaluated.
+- Unresolved at T+5min: escalate `info` to `warn`.
+- Unresolved at T+15min: escalate `warn` to `error`.
+
+Escalation timelines are advisory. Implementations MAY use different intervals. Escalation resets when the fitness function evaluates to `ok` or the node transitions to `draining`.
+
+### 18.2 Fabric lifecycle integration
+
+| Lifecycle Event | Fitness Action |
+|-----------------|----------------|
+| `registerNode` | Evaluate required functions; block registration on `error` |
+| `invoke` (pre) | Evaluate per-invoke functions; MAY reject on `error` |
+| `invoke` (post) | Record budget compliance |
+| `drainNode` | Suspend periodic evaluations |
+| `unregisterNode` | Archive final fitness state |
+| Hot reload | Re-evaluate manifest validity; block reload on `error` |
+
+## 19. Coupling strength and connascence (informative)
+
+Coupling between nodes varies in strength. The connascence framework provides vocabulary for reasoning about coupling quality.
+
+Connascence types, from weakest to strongest:
+
+1. **Name** -- nodes must agree on identifiers (provide names, error codes).
+2. **Type** -- nodes must agree on data types (schema fields, parameter shapes).
+3. **Meaning** -- nodes must agree on value semantics (what status codes or enum values represent).
+4. **Algorithm** -- nodes must agree on algorithms (encoding schemes, hash functions).
+5. **Execution** -- nodes must execute in a specific order (temporal coupling).
+
+**Locality rule:** as distance between nodes increases, use weaker forms of connascence. Between nodes from different authors, prefer Name and Type connascence. Within a single node, stronger forms are acceptable.
+
+Inter-node communication SHOULD rely on Name and Type connascence. Connascence of Meaning requires explicit documentation in both nodes. Connascence of Algorithm requires co-versioning or capability negotiation. Connascence of Execution creates fragile systems and SHOULD be avoided unless essential.
+
+Node designers SHOULD minimize both connascence strength (prefer weaker types) and connascence degree (fewer coupling points) between nodes.
+
+## 20. Discovery patterns
+
+### 20.1 Capability negotiation
+
+A node that requires a capability at runtime SHOULD use discovery before invocation:
+
+```ts
+// Anti-pattern: hardcoded provide name
+const result = await fabric.invoke({ provide: "pi-listen.vad", ... });
+
+// Preferred: discover then invoke
+const discovery = fabric.discover({ tags: ["audio", "vad"] });
+if (discovery.matches.length === 0) {
+  // Graceful degradation: the capability is not available
+  return fallbackBehavior();
+}
+if (discovery.matches.length === 1) {
+  // Unambiguous: invoke directly
+  return fabric.invoke({ provide: discovery.matches[0].globalId, ... });
+}
+// Ambiguous: use hints or ask the caller
+return fabric.invoke({
+  provide: discovery.matches[0].globalId,
+  target: { tagsAny: ["preferred"] },
+  ...
+});
+```
+
+This pattern decouples the consumer from the provider's exact identity, enabling:
+- Provider replacement without consumer code changes
+- Multiple implementations coexisting (consumer selects at runtime)
+- Graceful degradation when a capability is unavailable
+
+### 20.2 Capability advertisement
+
+Nodes SHOULD declare meaningful tags and descriptions in their manifests:
+
+```json
+{
+  "provides": [
+    {
+      "name": "detectSpeech",
+      "description": "Detect voice activity in audio buffer using WebRTC VAD",
+      "tags": ["audio", "vad", "speech", "detection"],
+      "effects": ["audio_input"],
+      "visibility": "public"
+    }
+  ]
+}
+```
+
+Tags SHOULD be:
+- Lowercase, hyphenated (e.g., `voice-activity-detection` not `VoiceActivityDetection`)
+- Hierarchical where useful (e.g., `audio`, `audio.vad`, `audio.transcription`)
+- Domain-specific rather than implementation-specific (e.g., `vad` not `webrtc-vad`)
+
+Descriptions SHOULD be one sentence explaining what the capability does, not how.
+
+### 20.3 Lazy capability resolution
+
+A node MAY defer discovery until a capability is first needed:
+
+```ts
+let vadProvider: string | null = null;
+
+async function ensureVad(fabric: ProtocolFabric): Promise<string> {
+  if (vadProvider) return vadProvider;
+  const discovery = fabric.discover({ tags: ["vad"] });
+  if (discovery.matches.length !== 1) {
+    throw new Error(
+      `Expected exactly one VAD provider, found ${discovery.matches.length}`
+    );
+  }
+  vadProvider = discovery.matches[0].globalId;
+  return vadProvider;
+}
+```
+
+This avoids the startup cost of discovering all capabilities upfront, at the cost of first-invocation latency.
