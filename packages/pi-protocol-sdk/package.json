@@ -1,0 +1,9 @@
+{
+  "name": "@kyvernitria/pi-protocol-sdk",
+  "version": "0.0.0-prototype",
+  "type": "module",
+  "exports": "./index.ts",
+  "dependencies": {
+    "@mariozechner/pi-ai": "^0.65.2"
+  }
+}
