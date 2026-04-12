@@ -77,3 +77,6 @@ export {
 export {
   registerProtocolNode,
 } from "./src/bootstrap.js";
+
+// Extensions - optional advanced capabilities (import from ./src/extensions for tree-shaking)
+export * from "./src/extensions/index.js";
