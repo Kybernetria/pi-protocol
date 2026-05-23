@@ -33,6 +33,10 @@ Current capabilities:
 
 - shared fabric singleton through `globalThis` + `Symbol.for`
 - register/unregister protocol nodes
+- node/provide declarations
+- inputSchema/outputSchema fields on provides
+- execution type field on provides
+- handler presence validation during registration
 - basic node/provide validation
 - registry snapshot
 - tiered discovery with `describeNode()` and `describeProvide()`
@@ -70,8 +74,8 @@ Current capabilities:
 
 ## Suggested next modules/steps
 
-1. Input/output schema contracts.
-2. Handler-based invocation.
+1. Handler-based invocation.
+2. Input/output schema validation.
 3. SDK-agent execution behind the same provide contract.
 4. Budget/deadline/cancellation.
 5. Provenance/tracing.

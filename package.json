@@ -6,9 +6,15 @@
     "packages/*"
   ],
   "scripts": {
-    "demo": "tsx scripts/demo.ts"
+    "test:minimal-fabric": "tsx scripts/test-minimal-fabric.ts",
+    "test:minimal-fabric-pi-sdk-adapter": "tsx scripts/test-minimal-fabric-pi-sdk-adapter.ts",
+    "test:minimal-pi-sdk-agent-adapter": "tsx scripts/test-pi-sdk-agent-adapter.ts",
+    "test:minimal-pi-sdk-agent-session-import": "tsx scripts/test-pi-sdk-agent-session-import.ts",
+    "test:minimal-pi-tool-projection": "tsx scripts/test-minimal-pi-tool-projection.ts",
+    "test": "npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:minimal-pi-tool-projection"
   },
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.75.4",
     "@mariozechner/pi-ai": "^0.65.2",
     "tsx": "^4.20.6"
   }

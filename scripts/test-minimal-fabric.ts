@@ -1,31 +1,68 @@
 import assert from "node:assert/strict";
-import { ensureProtocolFabric } from "../packages/pi-protocol-minimal/index.ts";
+import {
+  ensureProtocolFabric,
+  type InvocationProvenanceEvent,
+  type JsonSchemaLite,
+} from "../packages/pi-protocol-minimal/index.ts";
+
+const textInput: JsonSchemaLite = {
+  type: "object",
+  required: ["text"],
+  properties: { text: { type: "string" } },
+};
+
+const textOutput: JsonSchemaLite = {
+  type: "object",
+  required: ["text"],
+  properties: { text: { type: "string" } },
+};
 
 const fabricA = ensureProtocolFabric();
 const fabricB = ensureProtocolFabric();
+const provenanceEvents: InvocationProvenanceEvent[] = [];
 
 assert.equal(fabricA, fabricB, "both callers should get the same fabric");
 
+fabricA.setProvenanceRecorder((event) => {
+  provenanceEvents.push(event);
+});
+
 fabricA.register({
-  nodeId: "alpha",
-  purpose: "Alpha test node",
-  provides: [
-    {
-      name: "echo",
-      description: "Return the input message.",
-    },
-  ],
+  node: {
+    nodeId: "alpha",
+    purpose: "Alpha test node",
+    provides: [
+      {
+        name: "echo",
+        description: "Return the input message.",
+        inputSchema: textInput,
+        outputSchema: textOutput,
+        execution: { type: "handler", handler: "echo" },
+      },
+    ],
+  },
+  handlers: {
+    echo: async (input) => input,
+  },
 });
 
 fabricB.register({
-  nodeId: "beta",
-  purpose: "Beta test node",
-  provides: [
-    {
-      name: "summarize",
-      description: "Summarize the input text.",
-    },
-  ],
+  node: {
+    nodeId: "beta",
+    purpose: "Beta test node",
+    provides: [
+      {
+        name: "summarize",
+        description: "Summarize the input text.",
+        inputSchema: textInput,
+        outputSchema: textOutput,
+        execution: { type: "handler", handler: "summarize" },
+      },
+    ],
+  },
+  handlers: {
+    summarize: async (input) => input,
+  },
 });
 
 assert.equal(fabricA.registry().nodes.length, 2);
@@ -40,11 +77,55 @@ assert.equal(registry.nodes.length, 2);
 assert.equal(registry.provides.length, 2);
 assert.equal(registry.provides[0]?.globalId, "alpha.echo");
 assert.equal(registry.provides[1]?.globalId, "beta.summarize");
+assert.equal(registry.provides[0]?.execution.type, "handler");
 
 assert.equal(fabricA.describeNode("alpha")?.purpose, "Alpha test node");
 assert.equal(fabricA.describeNode("missing"), undefined);
 assert.equal(fabricA.describeProvide("beta", "summarize")?.globalId, "beta.summarize");
 assert.equal(fabricA.describeProvide("beta", "missing"), undefined);
+
+provenanceEvents.length = 0;
+const echoResult = await fabricA.invoke({
+  nodeId: "alpha",
+  provide: "echo",
+  input: { text: "hi" },
+  traceId: "trace-test",
+  spanId: "span-test",
+  parentSpanId: "parent-span-test",
+  callerNodeId: "beta",
+});
+assert.deepEqual(echoResult, {
+  ok: true,
+  nodeId: "alpha",
+  provide: "echo",
+  output: { text: "hi" },
+});
+assert.equal(provenanceEvents.length, 2);
+assert.deepEqual(provenanceEvents[0], {
+  traceId: "trace-test",
+  spanId: "span-test",
+  parentSpanId: "parent-span-test",
+  callerNodeId: "beta",
+  nodeId: "alpha",
+  provide: "echo",
+  status: "started",
+});
+assert.equal(provenanceEvents[1]?.traceId, "trace-test");
+assert.equal(provenanceEvents[1]?.spanId, "span-test");
+assert.equal(provenanceEvents[1]?.parentSpanId, "parent-span-test");
+assert.equal(provenanceEvents[1]?.callerNodeId, "beta");
+assert.equal(provenanceEvents[1]?.nodeId, "alpha");
+assert.equal(provenanceEvents[1]?.provide, "echo");
+assert.equal(provenanceEvents[1]?.status, "succeeded");
+assert.equal(typeof provenanceEvents[1]?.durationMs, "number");
+
+const missingNodeResult = await fabricA.invoke({ nodeId: "missing", provide: "echo", input: {} });
+assert.equal(missingNodeResult.ok, false);
+assert.equal(missingNodeResult.error.code, "NOT_FOUND");
+
+const missingProvideResult = await fabricA.invoke({ nodeId: "alpha", provide: "missing", input: {} });
+assert.equal(missingProvideResult.ok, false);
+assert.equal(missingProvideResult.error.code, "NOT_FOUND");
 
 fabricA.unregister("alpha");
 
@@ -54,9 +135,20 @@ assert.equal(fabricB.registry().nodes.length, 1);
 assert.throws(
   () =>
     fabricB.register({
-      nodeId: "bad node",
-      purpose: "Invalid node ID",
-      provides: [{ name: "ok", description: "ok" }],
+      node: {
+        nodeId: "bad node",
+        purpose: "Invalid node ID",
+        provides: [
+          {
+            name: "ok",
+            description: "ok",
+            inputSchema: {},
+            outputSchema: {},
+            execution: { type: "handler", handler: "ok" },
+          },
+        ],
+      },
+      handlers: { ok: async (input) => input },
     }),
   /nodeId must use/,
 );
@@ -64,14 +156,165 @@ assert.throws(
 assert.throws(
   () =>
     fabricB.register({
-      nodeId: "gamma",
-      purpose: "Duplicate provide test",
-      provides: [
-        { name: "echo", description: "First echo." },
-        { name: "echo", description: "Second echo." },
-      ],
+      node: {
+        nodeId: "gamma",
+        purpose: "Duplicate provide test",
+        provides: [
+          {
+            name: "echo",
+            description: "First echo.",
+            inputSchema: {},
+            outputSchema: {},
+            execution: { type: "handler", handler: "echo" },
+          },
+          {
+            name: "echo",
+            description: "Second echo.",
+            inputSchema: {},
+            outputSchema: {},
+            execution: { type: "handler", handler: "echo" },
+          },
+        ],
+      },
+      handlers: { echo: async (input) => input },
     }),
   /Duplicate provide name/,
 );
+
+assert.throws(
+  () =>
+    fabricB.register({
+      node: {
+        nodeId: "delta",
+        purpose: "Missing handler test",
+        provides: [
+          {
+            name: "missing_handler",
+            description: "Declares a handler that was not registered.",
+            inputSchema: {},
+            outputSchema: {},
+            execution: { type: "handler", handler: "missing" },
+          },
+        ],
+      },
+      handlers: {},
+    }),
+  /Missing handler/,
+);
+
+fabricB.register({
+  node: {
+    nodeId: "epsilon",
+    purpose: "Throwing handler test",
+    provides: [
+      {
+        name: "fail",
+        description: "Always throws.",
+        inputSchema: {},
+        outputSchema: {},
+        execution: { type: "handler", handler: "fail" },
+      },
+    ],
+  },
+  handlers: {
+    fail: async () => {
+      throw new Error("boom");
+    },
+  },
+});
+
+provenanceEvents.length = 0;
+const thrownResult = await fabricB.invoke({ nodeId: "epsilon", provide: "fail", input: {} });
+assert.equal(thrownResult.ok, false);
+assert.equal(thrownResult.error.code, "EXECUTION_FAILED");
+assert.equal(thrownResult.error.message, "boom");
+assert.equal(provenanceEvents.length, 2);
+assert.equal(provenanceEvents[0]?.nodeId, "epsilon");
+assert.equal(provenanceEvents[0]?.provide, "fail");
+assert.equal(provenanceEvents[0]?.status, "started");
+assert.ok(provenanceEvents[0]?.traceId.startsWith("trace_"));
+assert.ok(provenanceEvents[0]?.spanId.startsWith("span_"));
+assert.equal(provenanceEvents[1]?.traceId, provenanceEvents[0]?.traceId);
+assert.equal(provenanceEvents[1]?.spanId, provenanceEvents[0]?.spanId);
+assert.equal(provenanceEvents[1]?.nodeId, "epsilon");
+assert.equal(provenanceEvents[1]?.provide, "fail");
+assert.equal(provenanceEvents[1]?.status, "failed");
+assert.equal(typeof provenanceEvents[1]?.durationMs, "number");
+
+assert.throws(
+  () =>
+    fabricB.register({
+      node: {
+        nodeId: "zeta",
+        purpose: "Missing agent test",
+        provides: [
+          {
+            name: "plan",
+            description: "Declares an agent that was not registered.",
+            inputSchema: {},
+            outputSchema: {},
+            execution: { type: "agent", agent: "planner" },
+          },
+        ],
+      },
+    }),
+  /Missing agent/,
+);
+
+fabricB.register({
+  node: {
+    nodeId: "eta",
+    purpose: "Agent execution test",
+    provides: [
+      {
+        name: "plan",
+        description: "Runs an agent-backed planner.",
+        inputSchema: textInput,
+        outputSchema: textOutput,
+        execution: { type: "agent", agent: "planner" },
+      },
+    ],
+  },
+  agentExecutors: {
+    planner: async (input) => input,
+  },
+});
+
+assert.equal(fabricB.describeProvide("eta", "plan")?.globalId, "eta.plan");
+assert.equal(fabricB.describeProvide("eta", "plan")?.execution.type, "agent");
+
+const agentResult = await fabricB.invoke({ nodeId: "eta", provide: "plan", input: { text: "agent hi" } });
+assert.deepEqual(agentResult, {
+  ok: true,
+  nodeId: "eta",
+  provide: "plan",
+  output: { text: "agent hi" },
+});
+
+fabricB.register({
+  node: {
+    nodeId: "theta",
+    purpose: "Throwing agent test",
+    provides: [
+      {
+        name: "fail",
+        description: "Agent executor always throws.",
+        inputSchema: {},
+        outputSchema: {},
+        execution: { type: "agent", agent: "failer" },
+      },
+    ],
+  },
+  agentExecutors: {
+    failer: async () => {
+      throw new Error("agent boom");
+    },
+  },
+});
+
+const thrownAgentResult = await fabricB.invoke({ nodeId: "theta", provide: "fail", input: {} });
+assert.equal(thrownAgentResult.ok, false);
+assert.equal(thrownAgentResult.error.code, "EXECUTION_FAILED");
+assert.equal(thrownAgentResult.error.message, "agent boom");
 
 console.log("minimal shared fabric works");

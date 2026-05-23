@@ -1,0 +1,17 @@
+{
+  "name": "@kyvernitria/pi-protocol-pi-sdk",
+  "version": "0.0.0-prototype",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./agent-session": "./agent-session.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  }
+}

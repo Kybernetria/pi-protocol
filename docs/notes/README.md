@@ -1,9 +1,11 @@
 # Notes
 
-Working notes, prototype observations, and open questions belong here.
+Notes here are short and temporary for the active minimal rebuild.
 
-Useful files:
+Current useful files:
 
-- `prototype-findings.md` - what the current two-package prototype validated in real Pi
+- `minimal-protocol-plan.md` - current minimal rebuild plan
+- `agent-continuation-prompts/` - prompt-by-prompt implementation checkpoints
+- `project-control.md` and `protocol-change-checklist.md` - local process notes
 
-The normative protocol specification lives in `../spec/`.
+Legacy/prototype notes were moved to `../../../pi-protocol-legacy/docs/notes/`.
