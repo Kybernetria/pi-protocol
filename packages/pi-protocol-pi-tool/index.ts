@@ -103,7 +103,8 @@ export function registerProtocolTool(
   options: ProtocolToolOptions = {},
 ): { toolName: string; registered: boolean } {
   const toolName = options.toolName?.trim() || DEFAULT_PROTOCOL_TOOL_NAME;
-  const alreadyRegistered = pi.getAllTools?.().some((tool) => tool.name === toolName) ?? false;
+  const visibleTools = safeGetAllTools(pi);
+  const alreadyRegistered = visibleTools?.some((tool) => tool.name === toolName) ?? false;
   if (alreadyRegistered) {
     return { toolName, registered: false };
   }
@@ -148,6 +149,17 @@ export async function handleProtocolToolInput(
   }
 }
 
+function safeGetAllTools(pi: ProtocolToolRegistrationTarget): Array<{ name: string }> | undefined {
+  try {
+    return pi.getAllTools?.();
+  } catch {
+    // Pi action methods such as getAllTools() are unavailable during extension
+    // loading. registerTool() itself is valid there, so skip duplicate detection
+    // until the runtime is bound.
+    return undefined;
+  }
+}
+
 function toInvokeRequest(request: Partial<InvokeRequest> | undefined): InvokeRequest {
   if (!request) {
     throw new Error("protocol action invoke requires request");
@@ -171,5 +183,36 @@ function requireText(value: string | undefined, message: string): string {
 }
 
 function formatProtocolToolResult(result: unknown): string {
+  if (isSuccessfulInvokeToolResult(result)) {
+    return formatProvideOutput(result.result.output);
+  }
+
   return JSON.stringify(result, null, 2);
+}
+
+function isSuccessfulInvokeToolResult(
+  result: unknown,
+): result is { ok: true; action: "invoke"; result: { ok: true; output: unknown } } {
+  return (
+    isPlainObject(result) &&
+    result.ok === true &&
+    result.action === "invoke" &&
+    isPlainObject(result.result) &&
+    result.result.ok === true &&
+    "output" in result.result
+  );
+}
+
+function formatProvideOutput(output: unknown): string {
+  if (typeof output === "string") return output;
+  if (isTextObject(output)) return output.text;
+  return JSON.stringify(output, null, 2);
+}
+
+function isTextObject(value: unknown): value is { text: string } {
+  return isPlainObject(value) && typeof value.text === "string" && Object.keys(value).length === 1;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

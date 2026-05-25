@@ -7,7 +7,7 @@ import type {
   ProtocolNode,
   ProvenanceRecorder,
 } from "./types.ts";
-import { validateRegistration } from "./validation.ts";
+import { validateJsonSchemaLite, validateRegistration } from "./validation.ts";
 
 // Symbol.for gives us a process-wide key. Any package using this same key
 // can find the same fabric through globalThis.
@@ -106,6 +106,15 @@ export function ensureProtocolFabric(): ProtocolFabric {
         };
       }
 
+      const inputError = validateJsonSchemaLite(provide.inputSchema, request.input, "input");
+      if (inputError) {
+        await recordProvenance(provenanceRecorder, { ...provenance, status: "failed", durationMs: durationMs() });
+        return {
+          ok: false,
+          error: { code: "INVALID_INPUT", message: inputError },
+        };
+      }
+
       const executor =
         provide.execution.type === "handler"
           ? registered.handlers[provide.execution.handler]
@@ -113,6 +122,15 @@ export function ensureProtocolFabric(): ProtocolFabric {
 
       try {
         const output = await executor(request.input);
+        const outputError = validateJsonSchemaLite(provide.outputSchema, output, "output");
+        if (outputError) {
+          await recordProvenance(provenanceRecorder, { ...provenance, status: "failed", durationMs: durationMs() });
+          return {
+            ok: false,
+            error: { code: "INVALID_OUTPUT", message: outputError },
+          };
+        }
+
         await recordProvenance(provenanceRecorder, { ...provenance, status: "succeeded", durationMs: durationMs() });
 
         return {

@@ -1,4 +1,4 @@
-import type { ProtocolAgentExecutor, ProtocolHandler, ProvideSpec, RegisterNodeInput } from "./types.ts";
+import type { JsonSchemaLite, ProtocolAgentExecutor, ProtocolHandler, ProvideSpec, RegisterNodeInput } from "./types.ts";
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 
@@ -45,10 +45,83 @@ function validateExecution(
   }
 }
 
+export function validateJsonSchemaLite(schema: JsonSchemaLite, value: unknown, path = "value"): string | undefined {
+  if (schema.enum && !schema.enum.some((item) => deepEqual(item, value))) {
+    return `${path} must be one of ${JSON.stringify(schema.enum)}`;
+  }
+
+  if (schema.type && !matchesType(schema.type, value)) {
+    return `${path} must be ${schema.type}`;
+  }
+
+  if (schema.type === "object" || schema.required || schema.properties) {
+    if (!isPlainObject(value)) {
+      return `${path} must be object`;
+    }
+
+    for (const requiredKey of schema.required ?? []) {
+      if (!(requiredKey in value)) {
+        return `${path}.${requiredKey} is required`;
+      }
+    }
+
+    for (const [key, propertySchema] of Object.entries(schema.properties ?? {})) {
+      if (key in value) {
+        const error = validateJsonSchemaLite(propertySchema, value[key], `${path}.${key}`);
+        if (error) return error;
+      }
+    }
+  }
+
+  if (schema.type === "array" || schema.items) {
+    if (!Array.isArray(value)) {
+      return `${path} must be array`;
+    }
+
+    if (schema.items) {
+      for (const [index, item] of value.entries()) {
+        const error = validateJsonSchemaLite(schema.items, item, `${path}[${index}]`);
+        if (error) return error;
+      }
+    }
+  }
+
+  return undefined;
+}
+
 function assertNonEmpty(field: string, value: string): void {
   if (!value.trim()) {
     throw new Error(`${field} must not be empty`);
   }
+}
+
+function matchesType(type: JsonSchemaLite["type"], value: unknown): boolean {
+  switch (type) {
+    case "string":
+      return typeof value === "string";
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "integer":
+      return Number.isInteger(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "object":
+      return isPlainObject(value);
+    case "array":
+      return Array.isArray(value);
+    case "null":
+      return value === null;
+    case undefined:
+      return true;
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function deepEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function assertValidName(field: string, value: string): void {

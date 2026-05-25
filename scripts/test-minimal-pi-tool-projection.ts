@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { ensureProtocolFabric, type JsonSchemaLite } from "../packages/pi-protocol-minimal/index.ts";
+import protocolToolExtension from "../packages/pi-protocol-pi-tool/extension.ts";
 import { registerProtocolTool, type ProtocolToolLike } from "../packages/pi-protocol-pi-tool/index.ts";
 
 const textSchema: JsonSchemaLite = {
@@ -57,6 +58,10 @@ const secondRegistration = registerProtocolTool(pi, fabric);
 assert.deepEqual(secondRegistration, { toolName: "protocol", registered: false });
 assert.equal(pi.countTool("protocol"), 1);
 
+const extensionPi = createPiRuntime();
+protocolToolExtension(extensionPi as never);
+assert.equal(extensionPi.countTool("protocol"), 1, "extension entrypoint should register the protocol tool");
+
 const tool = pi.getTool("protocol");
 assert.ok(tool, "protocol tool should be registered");
 assert.equal(tool.name, "protocol");
@@ -97,11 +102,30 @@ const invokeResult = await tool.execute("call-4", {
     callerNodeId: "pi-chat",
   },
 });
-assert.ok(invokeResult.content[0]?.text.includes('"ok": true'));
-assert.ok(invokeResult.content[0]?.text.includes('"text": "hello via tool"'));
+assert.equal(invokeResult.content[0]?.text, "hello via tool");
+assert.deepEqual(invokeResult.details, {
+  ok: true,
+  action: "invoke",
+  result: {
+    ok: true,
+    nodeId: "alpha_tool_projection",
+    provide: "echo",
+    output: { text: "hello via tool" },
+  },
+});
+
+const invalidInvokeResult = await tool.execute("call-5", {
+  action: "invoke",
+  request: {
+    nodeId: "alpha_tool_projection",
+    provide: "echo",
+    input: { text: 123 },
+  },
+});
+assert.ok(invalidInvokeResult.content[0]?.text.includes('"INVALID_INPUT"'));
 
 await assert.rejects(
-  () => tool.execute("call-5", { action: "describe_node" }),
+  () => tool.execute("call-6", { action: "describe_node" }),
   /requires nodeId/,
 );
 

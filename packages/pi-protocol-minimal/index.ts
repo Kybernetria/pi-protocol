@@ -2,6 +2,7 @@ export { ensureProtocolFabric } from "./fabric.ts";
 
 export type {
   ExecutionSpec,
+  InvokeErrorCode,
   InvokeRequest,
   InvokeResult,
   InvocationProvenanceEvent,

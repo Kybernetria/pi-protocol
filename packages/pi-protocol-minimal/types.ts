@@ -75,9 +75,11 @@ export interface InvokeRequest {
   callerNodeId?: string;
 }
 
+export type InvokeErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "INVALID_OUTPUT" | "EXECUTION_FAILED";
+
 export type InvokeResult =
   | { ok: true; nodeId: string; provide: string; output: unknown }
-  | { ok: false; error: { code: "NOT_FOUND" | "EXECUTION_FAILED"; message: string } };
+  | { ok: false; error: { code: InvokeErrorCode; message: string } };
 
 export interface ProtocolFabric {
   setProvenanceRecorder(recorder?: ProvenanceRecorder): void;

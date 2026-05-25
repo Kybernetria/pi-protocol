@@ -11,7 +11,8 @@
     "test:minimal-pi-sdk-agent-adapter": "tsx scripts/test-pi-sdk-agent-adapter.ts",
     "test:minimal-pi-sdk-agent-session-import": "tsx scripts/test-pi-sdk-agent-session-import.ts",
     "test:minimal-pi-tool-projection": "tsx scripts/test-minimal-pi-tool-projection.ts",
-    "test": "npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:minimal-pi-tool-projection"
+    "test:minimal-protocol-test-nodes": "tsx scripts/test-minimal-protocol-test-nodes.ts",
+    "test": "npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:minimal-pi-tool-projection && npm run test:minimal-protocol-test-nodes"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.75.4",

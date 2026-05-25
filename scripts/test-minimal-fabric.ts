@@ -123,6 +123,15 @@ const missingNodeResult = await fabricA.invoke({ nodeId: "missing", provide: "ec
 assert.equal(missingNodeResult.ok, false);
 assert.equal(missingNodeResult.error.code, "NOT_FOUND");
 
+provenanceEvents.length = 0;
+const invalidInputResult = await fabricA.invoke({ nodeId: "alpha", provide: "echo", input: { text: 42 } });
+assert.equal(invalidInputResult.ok, false);
+assert.equal(invalidInputResult.error.code, "INVALID_INPUT");
+assert.match(invalidInputResult.error.message, /input\.text must be string/);
+assert.equal(provenanceEvents.length, 2);
+assert.equal(provenanceEvents[0]?.status, "started");
+assert.equal(provenanceEvents[1]?.status, "failed");
+
 const missingProvideResult = await fabricA.invoke({ nodeId: "alpha", provide: "missing", input: {} });
 assert.equal(missingProvideResult.ok, false);
 assert.equal(missingProvideResult.error.code, "NOT_FOUND");
@@ -316,5 +325,42 @@ const thrownAgentResult = await fabricB.invoke({ nodeId: "theta", provide: "fail
 assert.equal(thrownAgentResult.ok, false);
 assert.equal(thrownAgentResult.error.code, "EXECUTION_FAILED");
 assert.equal(thrownAgentResult.error.message, "agent boom");
+
+let invalidOutputHandlerCalls = 0;
+fabricB.register({
+  node: {
+    nodeId: "iota",
+    purpose: "Invalid output test",
+    provides: [
+      {
+        name: "bad_output",
+        description: "Returns output that violates its schema.",
+        inputSchema: textInput,
+        outputSchema: textOutput,
+        execution: { type: "handler", handler: "bad_output" },
+      },
+    ],
+  },
+  handlers: {
+    bad_output: async () => {
+      invalidOutputHandlerCalls += 1;
+      return { text: 123 };
+    },
+  },
+});
+
+provenanceEvents.length = 0;
+const invalidOutputResult = await fabricB.invoke({
+  nodeId: "iota",
+  provide: "bad_output",
+  input: { text: "valid input" },
+});
+assert.equal(invalidOutputResult.ok, false);
+assert.equal(invalidOutputResult.error.code, "INVALID_OUTPUT");
+assert.match(invalidOutputResult.error.message, /output\.text must be string/);
+assert.equal(invalidOutputHandlerCalls, 1);
+assert.equal(provenanceEvents.length, 2);
+assert.equal(provenanceEvents[0]?.status, "started");
+assert.equal(provenanceEvents[1]?.status, "failed");
 
 console.log("minimal shared fabric works");
