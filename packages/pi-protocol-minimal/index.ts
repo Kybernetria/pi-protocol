@@ -1,4 +1,5 @@
 export { ensureProtocolFabric } from "./fabric.ts";
+export { executeProvide } from "./execution.ts";
 
 export type {
   ExecutionSpec,

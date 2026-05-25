@@ -75,7 +75,10 @@ const registryDetails = registryResult.details as {
 assert.equal(registryDetails.action, "registry");
 assert.ok(registryDetails.registry.nodes.some((node) => node.nodeId === "alpha_tool_projection"));
 assert.ok(registryDetails.registry.provides.some((provide) => provide.globalId === "alpha_tool_projection.echo"));
-assert.ok(registryResult.content[0]?.text.includes("alpha_tool_projection.echo"));
+assert.ok(registryResult.content[0]?.text.includes("protocol registry"));
+assert.ok(registryResult.content[0]?.text.includes("alpha_tool_projection"));
+assert.ok(registryResult.content[0]?.text.includes("echo"));
+assert.ok(!registryResult.content[0]?.text.includes("inputSchema"), "registry tool content should stay compact");
 
 const nodeResult = await tool.execute("call-2", {
   action: "describe_node",

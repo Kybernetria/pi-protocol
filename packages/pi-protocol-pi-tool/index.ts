@@ -1,5 +1,5 @@
 import { Type } from "@mariozechner/pi-ai";
-import type { InvokeRequest, ProtocolFabric } from "../pi-protocol-minimal/index.ts";
+import type { InvokeRequest, ProtocolFabric, RegistrySnapshot } from "../pi-protocol-minimal/index.ts";
 
 export const DEFAULT_PROTOCOL_TOOL_NAME = "protocol";
 
@@ -187,7 +187,33 @@ function formatProtocolToolResult(result: unknown): string {
     return formatProvideOutput(result.result.output);
   }
 
+  if (isRegistryToolResult(result)) {
+    return formatRegistrySummary(result.registry);
+  }
+
   return JSON.stringify(result, null, 2);
+}
+
+function isRegistryToolResult(result: unknown): result is { ok: true; action: "registry"; registry: RegistrySnapshot } {
+  return isPlainObject(result) && result.ok === true && result.action === "registry" && isPlainObject(result.registry);
+}
+
+function formatRegistrySummary(registry: RegistrySnapshot): string {
+  const lines = [
+    `protocol registry`,
+    `nodes: ${registry.nodes.length}`,
+    `provides: ${registry.provides.length}`,
+    "",
+    "nodes:",
+  ];
+
+  for (const node of registry.nodes) {
+    const provides = node.provides.map((provide) => provide.name).join(", ");
+    lines.push(`- ${node.nodeId}: ${node.purpose} (${provides || "no provides"})`);
+  }
+
+  lines.push("", "next: describe_node -> describe_provide -> invoke");
+  return lines.join("\n");
 }
 
 function isSuccessfulInvokeToolResult(

@@ -7,7 +7,8 @@ import type {
   ProtocolNode,
   ProvenanceRecorder,
 } from "./types.ts";
-import { validateJsonSchemaLite, validateRegistration } from "./validation.ts";
+import { executeProvide } from "./execution.ts";
+import { validateRegistration } from "./validation.ts";
 
 // Symbol.for gives us a process-wide key. Any package using this same key
 // can find the same fabric through globalThis.
@@ -106,49 +107,19 @@ export function ensureProtocolFabric(): ProtocolFabric {
         };
       }
 
-      const inputError = validateJsonSchemaLite(provide.inputSchema, request.input, "input");
-      if (inputError) {
-        await recordProvenance(provenanceRecorder, { ...provenance, status: "failed", durationMs: durationMs() });
-        return {
-          ok: false,
-          error: { code: "INVALID_INPUT", message: inputError },
-        };
-      }
+      const result = await executeProvide({
+        request,
+        provide,
+        handlers: registered.handlers,
+        agentExecutors: registered.agentExecutors,
+      });
+      await recordProvenance(provenanceRecorder, {
+        ...provenance,
+        status: result.ok ? "succeeded" : "failed",
+        durationMs: durationMs(),
+      });
 
-      const executor =
-        provide.execution.type === "handler"
-          ? registered.handlers[provide.execution.handler]
-          : registered.agentExecutors[provide.execution.agent];
-
-      try {
-        const output = await executor(request.input);
-        const outputError = validateJsonSchemaLite(provide.outputSchema, output, "output");
-        if (outputError) {
-          await recordProvenance(provenanceRecorder, { ...provenance, status: "failed", durationMs: durationMs() });
-          return {
-            ok: false,
-            error: { code: "INVALID_OUTPUT", message: outputError },
-          };
-        }
-
-        await recordProvenance(provenanceRecorder, { ...provenance, status: "succeeded", durationMs: durationMs() });
-
-        return {
-          ok: true,
-          nodeId: request.nodeId,
-          provide: request.provide,
-          output,
-        };
-      } catch (error) {
-        await recordProvenance(provenanceRecorder, { ...provenance, status: "failed", durationMs: durationMs() });
-        return {
-          ok: false,
-          error: {
-            code: "EXECUTION_FAILED",
-            message: error instanceof Error ? error.message : String(error),
-          },
-        };
-      }
+      return result;
     },
   };
 
