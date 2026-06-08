@@ -84,6 +84,14 @@ export function createProtocolTool(fabric: ProtocolFabric, options: ProtocolTool
           spanId: Type.Optional(Type.String()),
           parentSpanId: Type.Optional(Type.String()),
           callerNodeId: Type.Optional(Type.String()),
+          session: Type.Optional(
+            Type.Object({
+              id: Type.Optional(Type.String()),
+              mode: Type.Optional(
+                Type.Union([Type.Literal("ephemeral"), Type.Literal("continue"), Type.Literal("end")]),
+              ),
+            }),
+          ),
         }),
       ),
     }),
@@ -173,6 +181,7 @@ function toInvokeRequest(request: Partial<InvokeRequest> | undefined): InvokeReq
     spanId: request.spanId,
     parentSpanId: request.parentSpanId,
     callerNodeId: request.callerNodeId,
+    session: request.session,
   };
 }
 

@@ -12,7 +12,28 @@ export type ExecutionSpec =
   | { type: "agent"; agent: string };
 
 export type ProtocolHandler = (input: unknown) => unknown | Promise<unknown>;
-export type ProtocolAgentExecutor = (input: unknown) => unknown | Promise<unknown>;
+
+export type InvocationSessionMode = "ephemeral" | "continue" | "end";
+
+export interface InvocationSessionControl {
+  id?: string;
+  mode?: InvocationSessionMode;
+}
+
+export interface ProtocolInvocationContext {
+  nodeId: string;
+  provide: string;
+  traceId?: string;
+  spanId?: string;
+  parentSpanId?: string;
+  callerNodeId?: string;
+  session?: InvocationSessionControl;
+}
+
+export type ProtocolAgentExecutor = (
+  input: unknown,
+  context?: ProtocolInvocationContext,
+) => unknown | Promise<unknown>;
 
 export type InvocationStatus = "started" | "succeeded" | "failed";
 
@@ -73,6 +94,7 @@ export interface InvokeRequest {
   spanId?: string;
   parentSpanId?: string;
   callerNodeId?: string;
+  session?: InvocationSessionControl;
 }
 
 export type InvokeErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "INVALID_OUTPUT" | "EXECUTION_FAILED";

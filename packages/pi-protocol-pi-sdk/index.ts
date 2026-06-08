@@ -1,4 +1,4 @@
-import type { ProtocolAgentExecutor } from "../pi-protocol-minimal/index.ts";
+import type { ProtocolAgentExecutor, ProtocolInvocationContext } from "../pi-protocol-minimal/index.ts";
 
 /**
  * Pi SDK adapter boundary.
@@ -36,8 +36,12 @@ export interface CreatePiSdkAgentExecutorOptions {
 export function createPiSdkAgentExecutor(
   options: CreatePiSdkAgentExecutorOptions,
 ): ProtocolAgentExecutor {
-  return async (input) => {
-    const session = await options.createSession();
+  const sessions = new Map<string, PiSdkAgentSessionLike>();
+
+  return async (input, context) => {
+    const sessionMode = context?.session?.mode ?? "ephemeral";
+    const sessionKey = getSessionKey(context);
+    const session = sessionKey ? await getOrCreateSession(sessions, sessionKey, options) : await options.createSession();
     let text = "";
     const unsubscribe = session.subscribe((event) => {
       if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
@@ -50,9 +54,38 @@ export function createPiSdkAgentExecutor(
       return options.toOutput ? options.toOutput(text, input) : text;
     } finally {
       unsubscribe();
-      session.dispose();
+      if (sessionMode !== "continue") {
+        session.dispose();
+        if (sessionKey) sessions.delete(sessionKey);
+      }
     }
   };
+}
+
+async function getOrCreateSession(
+  sessions: Map<string, PiSdkAgentSessionLike>,
+  sessionKey: string,
+  options: CreatePiSdkAgentExecutorOptions,
+): Promise<PiSdkAgentSessionLike> {
+  const existing = sessions.get(sessionKey);
+  if (existing) return existing;
+
+  const created = await options.createSession();
+  sessions.set(sessionKey, created);
+  return created;
+}
+
+function getSessionKey(context: ProtocolInvocationContext | undefined): string | undefined {
+  const session = context?.session;
+  const mode = session?.mode ?? "ephemeral";
+  if (mode === "ephemeral") return undefined;
+
+  const id = session?.id?.trim();
+  if (!id) {
+    throw new Error(`session.id is required when session.mode is ${mode}`);
+  }
+
+  return [context?.nodeId, context?.provide, context?.callerNodeId ?? "anonymous", id].join(":");
 }
 
 function toPrompt(options: CreatePiSdkAgentExecutorOptions, input: unknown): string {

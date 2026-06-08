@@ -98,4 +98,59 @@ assert.deepEqual(result, {
 assert.deepEqual(fake.prompts, ['Plan {"goal":"ship protocol"}']);
 assert.equal(fake.disposed, true);
 
+const statefulFakes: ReturnType<typeof createFakeSession>[] = [];
+fabric.register({
+  node: {
+    nodeId: "sdk_stateful_adapter_test",
+    purpose: "Verify fabric session metadata reaches the Pi SDK adapter seam.",
+    provides: [
+      {
+        name: "chat",
+        description: "Continue a stateful SDK-style agent session.",
+        inputSchema: { type: "string" },
+        outputSchema: { type: "string" },
+        execution: { type: "agent", agent: "chat" },
+      },
+    ],
+  },
+  agentExecutors: {
+    chat: createPiSdkAgentExecutor({
+      createSession: () => {
+        const fake = createFakeSession();
+        statefulFakes.push(fake);
+        return fake.session;
+      },
+    }),
+  },
+});
+
+await fabric.invoke({
+  nodeId: "sdk_stateful_adapter_test",
+  provide: "chat",
+  input: "first",
+  callerNodeId: "agent_a",
+  session: { id: "thread_1", mode: "continue" },
+});
+await fabric.invoke({
+  nodeId: "sdk_stateful_adapter_test",
+  provide: "chat",
+  input: "second",
+  callerNodeId: "agent_a",
+  session: { id: "thread_1", mode: "continue" },
+});
+assert.equal(statefulFakes.length, 1);
+assert.deepEqual(statefulFakes[0].prompts, ["first", "second"]);
+assert.equal(statefulFakes[0].disposed, false);
+
+await fabric.invoke({
+  nodeId: "sdk_stateful_adapter_test",
+  provide: "chat",
+  input: "done",
+  callerNodeId: "agent_a",
+  session: { id: "thread_1", mode: "end" },
+});
+assert.equal(statefulFakes.length, 1);
+assert.deepEqual(statefulFakes[0].prompts, ["first", "second", "done"]);
+assert.equal(statefulFakes[0].disposed, true);
+
 console.log("minimal fabric invokes pi sdk adapter executor");

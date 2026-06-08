@@ -23,10 +23,8 @@ export async function executeProvide(input: ExecuteProvideInput): Promise<Invoke
     };
   }
 
-  const executor = resolveExecutor(input);
-
   try {
-    const output = await executor(input.request.input);
+    const output = await executeImplementation(input);
     const outputError = validateJsonSchemaLite(input.provide.outputSchema, output, "output");
     if (outputError) {
       return {
@@ -52,8 +50,18 @@ export async function executeProvide(input: ExecuteProvideInput): Promise<Invoke
   }
 }
 
-function resolveExecutor(input: ExecuteProvideInput): ProtocolHandler | ProtocolAgentExecutor {
-  return input.provide.execution.type === "handler"
-    ? input.handlers[input.provide.execution.handler]
-    : input.agentExecutors[input.provide.execution.agent];
+function executeImplementation(input: ExecuteProvideInput): unknown | Promise<unknown> {
+  if (input.provide.execution.type === "handler") {
+    return input.handlers[input.provide.execution.handler](input.request.input);
+  }
+
+  return input.agentExecutors[input.provide.execution.agent](input.request.input, {
+    nodeId: input.request.nodeId,
+    provide: input.request.provide,
+    traceId: input.request.traceId,
+    spanId: input.request.spanId,
+    parentSpanId: input.request.parentSpanId,
+    callerNodeId: input.request.callerNodeId,
+    session: input.request.session,
+  });
 }

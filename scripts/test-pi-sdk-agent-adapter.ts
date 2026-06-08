@@ -72,4 +72,59 @@ assert.deepEqual(failingFake.prompts, ["fail please"]);
 assert.equal(failingFake.unsubscribed, true);
 assert.equal(failingFake.disposed, true);
 
+const statefulFakes: ReturnType<typeof createFakeSession>[] = [];
+const statefulExecutor = createPiSdkAgentExecutor({
+  createSession: () => {
+    const fake = createFakeSession();
+    statefulFakes.push(fake);
+    return fake.session;
+  },
+});
+
+await statefulExecutor("first", {
+  nodeId: "agent_b",
+  provide: "chat",
+  callerNodeId: "agent_a",
+  session: { id: "thread_1", mode: "continue" },
+});
+await statefulExecutor("second", {
+  nodeId: "agent_b",
+  provide: "chat",
+  callerNodeId: "agent_a",
+  session: { id: "thread_1", mode: "continue" },
+});
+assert.equal(statefulFakes.length, 1);
+assert.deepEqual(statefulFakes[0].prompts, ["first", "second"]);
+assert.equal(statefulFakes[0].disposed, false);
+
+await statefulExecutor("done", {
+  nodeId: "agent_b",
+  provide: "chat",
+  callerNodeId: "agent_a",
+  session: { id: "thread_1", mode: "end" },
+});
+assert.equal(statefulFakes.length, 1);
+assert.deepEqual(statefulFakes[0].prompts, ["first", "second", "done"]);
+assert.equal(statefulFakes[0].disposed, true);
+
+await statefulExecutor("new thread", {
+  nodeId: "agent_b",
+  provide: "chat",
+  callerNodeId: "agent_a",
+  session: { id: "thread_1", mode: "continue" },
+});
+assert.equal(statefulFakes.length, 2);
+assert.deepEqual(statefulFakes[1].prompts, ["new thread"]);
+
+await assert.rejects(
+  () =>
+    statefulExecutor("missing id", {
+      nodeId: "agent_b",
+      provide: "chat",
+      callerNodeId: "agent_a",
+      session: { mode: "continue" },
+    }),
+  /session\.id is required/,
+);
+
 console.log("pi sdk agent adapter works");
