@@ -238,12 +238,10 @@ function formatProtocolToolCallDisplay(input: ProtocolToolInput, theme: Protocol
 
   const request = input.request;
   const target = formatTarget(request?.nodeId, request?.provide);
-  const lines = [title + theme.fg("accent", "invoke ") + theme.fg("muted", target)];
-  lines.push(`caller: ${formatValue(request?.callerNodeId, "anonymous")}`);
+  const caller = formatValue(request?.callerNodeId, "anonymous");
+  const lines = [title + theme.fg("accent", "invoke ") + `${caller} → ` + theme.fg("muted", target)];
   lines.push(`session: ${formatSession(request?.session)}`);
-
-  const trace = formatTrace(request);
-  if (trace) lines.push(trace);
+  lines.push(...formatTraceLines(request));
 
   return lines.join("\n");
 }
@@ -264,12 +262,8 @@ function formatProtocolToolResultDisplay(
   const request = input?.request;
   const invokeResult = details.result;
   const status = invokeResult.ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
-  const lines = [`${status} protocol invoke ${theme.fg("muted", formatTarget(request?.nodeId, request?.provide))}`];
-  lines.push(`caller: ${formatValue(request?.callerNodeId, "anonymous")}`);
-  lines.push(`session: ${formatSession(request?.session)}`);
-
-  const trace = formatTrace(request);
-  if (trace) lines.push(trace);
+  const outcome = invokeResult.ok ? "returned" : "failed";
+  const lines = [`${status} ${theme.fg("muted", formatTarget(request?.nodeId, request?.provide))} ${outcome}`];
 
   const output = result.content.map((item) => item.text).join("\n");
   if (output) lines.push("", output);
@@ -299,6 +293,14 @@ function formatTrace(request: Partial<InvokeRequest> | undefined): string | unde
     request?.spanId ? `span=${request.spanId}` : undefined,
   ].filter(Boolean);
   return parts.length ? parts.join(" ") : undefined;
+}
+
+function formatTraceLines(request: Partial<InvokeRequest> | undefined): string[] {
+  return [
+    request?.traceId ? `trace: ${request.traceId}` : undefined,
+    request?.parentSpanId ? `parent: ${request.parentSpanId}` : undefined,
+    request?.spanId ? `span: ${request.spanId}` : undefined,
+  ].filter((line): line is string => typeof line === "string");
 }
 
 function formatValue(value: string | undefined, fallback: string): string {

@@ -138,20 +138,19 @@ const invokeRenderInput = {
   },
 };
 const invokeCallLines = tool.renderCall?.(invokeRenderInput, testTheme) as { render(width: number): string[] };
-assert.ok(invokeCallLines.render(120).join("\n").includes("protocol invoke alpha_tool_projection.echo"));
-assert.ok(invokeCallLines.render(120).join("\n").includes("caller: pi-chat"));
+assert.ok(invokeCallLines.render(120).join("\n").includes("protocol invoke pi-chat → alpha_tool_projection.echo"));
 assert.ok(invokeCallLines.render(120).join("\n").includes("session: agent-b (continue)"));
-assert.ok(invokeCallLines.render(120).join("\n").includes("trace=trace-tool-test"));
-assert.ok(invokeCallLines.render(120).join("\n").includes("parent=span-parent-test"));
-assert.ok(invokeCallLines.render(120).join("\n").includes("span=span-tool-test"));
+assert.ok(invokeCallLines.render(120).join("\n").includes("trace: trace-tool-test"));
+assert.ok(invokeCallLines.render(120).join("\n").includes("parent: span-parent-test"));
+assert.ok(invokeCallLines.render(120).join("\n").includes("span: span-tool-test"));
 
 const invokeResultLines = tool.renderResult?.(invokeResult, {}, testTheme, { args: invokeRenderInput }) as {
   render(width: number): string[];
 };
 const invokeResultText = invokeResultLines.render(120).join("\n");
-assert.ok(invokeResultText.includes("✓ protocol invoke alpha_tool_projection.echo"));
-assert.ok(invokeResultText.includes("caller: pi-chat"));
-assert.ok(invokeResultText.includes("session: agent-b (continue)"));
+assert.ok(invokeResultText.includes("✓ alpha_tool_projection.echo returned"));
+assert.ok(!invokeResultText.includes("caller: pi-chat"));
+assert.ok(!invokeResultText.includes("session: agent-b (continue)"));
 assert.ok(invokeResultText.includes("hello via tool"));
 
 const invalidInvokeResult = await tool.execute("call-5", {
