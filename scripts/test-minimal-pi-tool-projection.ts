@@ -65,6 +65,13 @@ assert.equal(extensionPi.countTool("protocol"), 1, "extension entrypoint should 
 const tool = pi.getTool("protocol");
 assert.ok(tool, "protocol tool should be registered");
 assert.equal(tool.name, "protocol");
+assert.equal(typeof tool.renderCall, "function");
+assert.equal(typeof tool.renderResult, "function");
+
+const testTheme = {
+  fg: (_color: string, text: string) => text,
+  bold: (text: string) => text,
+};
 
 const registryResult = await tool.execute("call-1", { action: "registry" });
 const registryDetails = registryResult.details as {
@@ -116,6 +123,36 @@ assert.deepEqual(invokeResult.details, {
     output: { text: "hello via tool" },
   },
 });
+
+const invokeRenderInput = {
+  action: "invoke" as const,
+  request: {
+    nodeId: "alpha_tool_projection",
+    provide: "echo",
+    input: { text: "hello via tool" },
+    traceId: "trace-tool-test",
+    parentSpanId: "span-parent-test",
+    spanId: "span-tool-test",
+    callerNodeId: "pi-chat",
+    session: { id: "agent-b", mode: "continue" as const },
+  },
+};
+const invokeCallLines = tool.renderCall?.(invokeRenderInput, testTheme) as { render(width: number): string[] };
+assert.ok(invokeCallLines.render(120).join("\n").includes("protocol invoke alpha_tool_projection.echo"));
+assert.ok(invokeCallLines.render(120).join("\n").includes("caller: pi-chat"));
+assert.ok(invokeCallLines.render(120).join("\n").includes("session: agent-b (continue)"));
+assert.ok(invokeCallLines.render(120).join("\n").includes("trace=trace-tool-test"));
+assert.ok(invokeCallLines.render(120).join("\n").includes("parent=span-parent-test"));
+assert.ok(invokeCallLines.render(120).join("\n").includes("span=span-tool-test"));
+
+const invokeResultLines = tool.renderResult?.(invokeResult, {}, testTheme, { args: invokeRenderInput }) as {
+  render(width: number): string[];
+};
+const invokeResultText = invokeResultLines.render(120).join("\n");
+assert.ok(invokeResultText.includes("✓ protocol invoke alpha_tool_projection.echo"));
+assert.ok(invokeResultText.includes("caller: pi-chat"));
+assert.ok(invokeResultText.includes("session: agent-b (continue)"));
+assert.ok(invokeResultText.includes("hello via tool"));
 
 const invalidInvokeResult = await tool.execute("call-5", {
   action: "invoke",

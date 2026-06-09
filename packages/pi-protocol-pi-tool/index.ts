@@ -30,6 +30,18 @@ export interface ProtocolToolLike {
   promptGuidelines: string[];
   parameters: unknown;
   execute(toolCallId: string, input: ProtocolToolInput): Promise<ProtocolToolExecutionResult>;
+  renderCall?: (args: ProtocolToolInput, theme: ProtocolToolThemeLike) => unknown;
+  renderResult?: (
+    result: ProtocolToolExecutionResult,
+    options: { expanded?: boolean; isPartial?: boolean },
+    theme: ProtocolToolThemeLike,
+    context?: { args?: ProtocolToolInput },
+  ) => unknown;
+}
+
+export interface ProtocolToolThemeLike {
+  fg(color: string, text: string): string;
+  bold(text: string): string;
 }
 
 export interface ProtocolToolRegistrationTarget {
@@ -101,6 +113,12 @@ export function createProtocolTool(fabric: ProtocolFabric, options: ProtocolTool
         content: [{ type: "text", text: formatProtocolToolResult(result) }],
         details: result,
       };
+    },
+    renderCall(args, theme) {
+      return createTextComponent(formatProtocolToolCallDisplay(args, theme));
+    },
+    renderResult(result, { expanded, isPartial }, theme, context) {
+      return createTextComponent(formatProtocolToolResultDisplay(result, context?.args, theme, { expanded, isPartial }));
     },
   };
 }
@@ -191,6 +209,15 @@ function requireText(value: string | undefined, message: string): string {
   return trimmed;
 }
 
+function createTextComponent(text: string): { render(width: number): string[]; invalidate(): void } {
+  return {
+    render(width) {
+      return text.split("\n").map((line) => (line.length > width ? line.slice(0, Math.max(0, width - 1)) + "…" : line));
+    },
+    invalidate() {},
+  };
+}
+
 function formatProtocolToolResult(result: unknown): string {
   if (isSuccessfulInvokeToolResult(result)) {
     return formatProvideOutput(result.result.output);
@@ -201,6 +228,82 @@ function formatProtocolToolResult(result: unknown): string {
   }
 
   return JSON.stringify(result, null, 2);
+}
+
+function formatProtocolToolCallDisplay(input: ProtocolToolInput, theme: ProtocolToolThemeLike): string {
+  const title = theme.fg("toolTitle", theme.bold("protocol "));
+  if (input.action !== "invoke") {
+    return title + theme.fg("muted", input.action);
+  }
+
+  const request = input.request;
+  const target = formatTarget(request?.nodeId, request?.provide);
+  const lines = [title + theme.fg("accent", "invoke ") + theme.fg("muted", target)];
+  lines.push(`caller: ${formatValue(request?.callerNodeId, "anonymous")}`);
+  lines.push(`session: ${formatSession(request?.session)}`);
+
+  const trace = formatTrace(request);
+  if (trace) lines.push(trace);
+
+  return lines.join("\n");
+}
+
+function formatProtocolToolResultDisplay(
+  result: ProtocolToolExecutionResult,
+  input: ProtocolToolInput | undefined,
+  theme: ProtocolToolThemeLike,
+  options: { expanded?: boolean; isPartial?: boolean },
+): string {
+  if (options.isPartial) return theme.fg("warning", "protocol running...");
+
+  const details = result.details;
+  if (!isInvokeToolResult(details)) {
+    return result.content.map((item) => item.text).join("\n");
+  }
+
+  const request = input?.request;
+  const invokeResult = details.result;
+  const status = invokeResult.ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
+  const lines = [`${status} protocol invoke ${theme.fg("muted", formatTarget(request?.nodeId, request?.provide))}`];
+  lines.push(`caller: ${formatValue(request?.callerNodeId, "anonymous")}`);
+  lines.push(`session: ${formatSession(request?.session)}`);
+
+  const trace = formatTrace(request);
+  if (trace) lines.push(trace);
+
+  const output = result.content.map((item) => item.text).join("\n");
+  if (output) lines.push("", output);
+  if (options.expanded) lines.push("", JSON.stringify(details, null, 2));
+
+  return lines.join("\n");
+}
+
+function isInvokeToolResult(result: unknown): result is { ok: true; action: "invoke"; result: { ok: boolean } } {
+  return isPlainObject(result) && result.ok === true && result.action === "invoke" && isPlainObject(result.result);
+}
+
+function formatTarget(nodeId: string | undefined, provide: string | undefined): string {
+  return `${formatValue(nodeId, "<node?>")}.${formatValue(provide, "<provide?>")}`;
+}
+
+function formatSession(session: InvokeRequest["session"] | undefined): string {
+  const mode = session?.mode ?? "ephemeral";
+  const id = session?.id?.trim();
+  return id ? `${id} (${mode})` : mode;
+}
+
+function formatTrace(request: Partial<InvokeRequest> | undefined): string | undefined {
+  const parts = [
+    request?.traceId ? `trace=${request.traceId}` : undefined,
+    request?.parentSpanId ? `parent=${request.parentSpanId}` : undefined,
+    request?.spanId ? `span=${request.spanId}` : undefined,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" ") : undefined;
+}
+
+function formatValue(value: string | undefined, fallback: string): string {
+  const trimmed = value?.trim();
+  return trimmed || fallback;
 }
 
 function isRegistryToolResult(result: unknown): result is { ok: true; action: "registry"; registry: RegistrySnapshot } {
