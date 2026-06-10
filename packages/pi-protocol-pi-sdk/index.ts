@@ -1,5 +1,7 @@
 import type { ProtocolAgentExecutor, ProtocolInvocationContext } from "../pi-protocol-minimal/index.ts";
 
+const PI_SDK_AGENT_SESSION_CACHE_KEY = Symbol.for("pi-protocol.pi-sdk.agent-session-cache");
+
 /**
  * Pi SDK adapter boundary.
  *
@@ -36,7 +38,7 @@ export interface CreatePiSdkAgentExecutorOptions {
 export function createPiSdkAgentExecutor(
   options: CreatePiSdkAgentExecutorOptions,
 ): ProtocolAgentExecutor {
-  const sessions = new Map<string, PiSdkAgentSessionLike>();
+  const sessions = ensurePiSdkAgentSessionCache();
 
   return async (input, context) => {
     const sessionMode = context?.session?.mode ?? "ephemeral";
@@ -60,6 +62,16 @@ export function createPiSdkAgentExecutor(
       }
     }
   };
+}
+
+function ensurePiSdkAgentSessionCache(): Map<string, PiSdkAgentSessionLike> {
+  const globals = globalThis as Record<PropertyKey, unknown>;
+  const existing = globals[PI_SDK_AGENT_SESSION_CACHE_KEY] as Map<string, PiSdkAgentSessionLike> | undefined;
+  if (existing) return existing;
+
+  const created = new Map<string, PiSdkAgentSessionLike>();
+  globals[PI_SDK_AGENT_SESSION_CACHE_KEY] = created;
+  return created;
 }
 
 async function getOrCreateSession(

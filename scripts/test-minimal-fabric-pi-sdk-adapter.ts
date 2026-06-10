@@ -124,33 +124,68 @@ fabric.register({
   },
 });
 
-await fabric.invoke({
+const firstStatefulResult = await fabric.invoke({
   nodeId: "sdk_stateful_adapter_test",
   provide: "chat",
   input: "first",
   callerNodeId: "agent_a",
   session: { id: "thread_1", mode: "continue" },
 });
-await fabric.invoke({
+const secondStatefulResult = await fabric.invoke({
   nodeId: "sdk_stateful_adapter_test",
   provide: "chat",
   input: "second",
   callerNodeId: "agent_a",
   session: { id: "thread_1", mode: "continue" },
 });
+assert.deepEqual(firstStatefulResult, {
+  ok: true,
+  nodeId: "sdk_stateful_adapter_test",
+  provide: "chat",
+  output: "planned: first",
+});
+assert.deepEqual(secondStatefulResult, {
+  ok: true,
+  nodeId: "sdk_stateful_adapter_test",
+  provide: "chat",
+  output: "planned: second",
+});
 assert.equal(statefulFakes.length, 1);
 assert.deepEqual(statefulFakes[0].prompts, ["first", "second"]);
 assert.equal(statefulFakes[0].disposed, false);
 
-await fabric.invoke({
+const endStatefulResult = await fabric.invoke({
   nodeId: "sdk_stateful_adapter_test",
   provide: "chat",
   input: "done",
   callerNodeId: "agent_a",
   session: { id: "thread_1", mode: "end" },
 });
+assert.deepEqual(endStatefulResult, {
+  ok: true,
+  nodeId: "sdk_stateful_adapter_test",
+  provide: "chat",
+  output: "planned: done",
+});
 assert.equal(statefulFakes.length, 1);
 assert.deepEqual(statefulFakes[0].prompts, ["first", "second", "done"]);
 assert.equal(statefulFakes[0].disposed, true);
+
+const afterEndResult = await fabric.invoke({
+  nodeId: "sdk_stateful_adapter_test",
+  provide: "chat",
+  input: "new thread",
+  callerNodeId: "agent_a",
+  session: { id: "thread_1", mode: "continue" },
+});
+assert.deepEqual(afterEndResult, {
+  ok: true,
+  nodeId: "sdk_stateful_adapter_test",
+  provide: "chat",
+  output: "planned: new thread",
+});
+assert.equal(statefulFakes.length, 2);
+assert.deepEqual(statefulFakes[1].prompts, ["new thread"]);
+assert.equal(statefulFakes[1].disposed, false);
 
 console.log("minimal fabric invokes pi sdk adapter executor");
