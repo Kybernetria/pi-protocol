@@ -111,6 +111,8 @@ assert.deepEqual(provenanceEvents[0], {
   provide: "echo",
   session: { id: "session-test", mode: "continue" },
   status: "started",
+  inputPreview: '{"text":"hi"}',
+  inputTruncated: false,
 });
 assert.equal(provenanceEvents[1]?.traceId, "trace-test");
 assert.equal(provenanceEvents[1]?.spanId, "span-test");
@@ -120,6 +122,10 @@ assert.equal(provenanceEvents[1]?.nodeId, "alpha");
 assert.equal(provenanceEvents[1]?.provide, "echo");
 assert.deepEqual(provenanceEvents[1]?.session, { id: "session-test", mode: "continue" });
 assert.equal(provenanceEvents[1]?.status, "succeeded");
+assert.equal(provenanceEvents[1]?.inputPreview, '{"text":"hi"}');
+assert.equal(provenanceEvents[1]?.inputTruncated, false);
+assert.equal(provenanceEvents[1]?.outputPreview, '{"text":"hi"}');
+assert.equal(provenanceEvents[1]?.outputTruncated, false);
 assert.equal(typeof provenanceEvents[1]?.durationMs, "number");
 
 provenanceEvents.length = 0;
@@ -128,6 +134,8 @@ assert.equal(missingNodeResult.ok, false);
 assert.equal(missingNodeResult.error.code, "NOT_FOUND");
 assert.equal(provenanceEvents[1]?.status, "failed");
 assert.deepEqual(provenanceEvents[1]?.error, missingNodeResult.error);
+assert.equal(provenanceEvents[1]?.inputPreview, "{}");
+assert.equal(provenanceEvents[1]?.inputTruncated, false);
 
 provenanceEvents.length = 0;
 const invalidInputResult = await fabricA.invoke({ nodeId: "alpha", provide: "echo", input: { text: 42 } });
@@ -138,6 +146,8 @@ assert.equal(provenanceEvents.length, 2);
 assert.equal(provenanceEvents[0]?.status, "started");
 assert.equal(provenanceEvents[1]?.status, "failed");
 assert.deepEqual(provenanceEvents[1]?.error, invalidInputResult.error);
+assert.equal(provenanceEvents[1]?.inputPreview, '{"text":42}');
+assert.equal(provenanceEvents[1]?.inputTruncated, false);
 
 const missingProvideResult = await fabricA.invoke({ nodeId: "alpha", provide: "missing", input: {} });
 assert.equal(missingProvideResult.ok, false);

@@ -47,6 +47,10 @@ export interface InvocationProvenanceEvent {
   session?: InvocationSessionControl;
   status: InvocationStatus;
   durationMs?: number;
+  inputPreview?: string;
+  inputTruncated?: boolean;
+  outputPreview?: string;
+  outputTruncated?: boolean;
   error?: { code: InvokeErrorCode; message: string };
 }
 

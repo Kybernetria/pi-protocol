@@ -75,6 +75,17 @@ interface ProtocolToolProvenanceMultiplexer {
   subscribe(listener: ProvenanceSubscriber): () => void;
 }
 
+interface ProtocolTraceDetails {
+  events: InvocationProvenanceEvent[];
+}
+
+interface ProtocolInvokeToolDetails {
+  ok: true;
+  action: "invoke";
+  result: unknown;
+  trace?: ProtocolTraceDetails;
+}
+
 /**
  * Pi tool projection boundary.
  *
@@ -127,8 +138,8 @@ export function createProtocolTool(fabric: ProtocolFabric, options: ProtocolTool
         }),
       ),
     }),
-    async execute(_toolCallId, input) {
-      const result = await handleProtocolToolInput(fabric, input);
+    async execute(_toolCallId, input, _signal, onUpdate) {
+      const result = await handleProtocolToolInput(fabric, input, onUpdate);
       return {
         content: [{ type: "text", text: formatProtocolToolResult(result) }],
         details: result,
@@ -162,6 +173,7 @@ export function registerProtocolTool(
 export async function handleProtocolToolInput(
   fabric: ProtocolFabric,
   input: ProtocolToolInput,
+  onUpdate?: ProtocolToolUpdateCallback,
 ): Promise<unknown> {
   switch (input.action) {
     case "registry":
@@ -190,7 +202,7 @@ export async function handleProtocolToolInput(
 
     case "invoke": {
       const request = toInvokeRequest(input.request);
-      return { ok: true, action: "invoke", result: await fabric.invoke(request) };
+      return invokeWithTraceUpdates(fabric, request, onUpdate);
     }
   }
 }
@@ -235,6 +247,31 @@ function ensureProtocolToolProvenanceMultiplexer(fabric: ProtocolFabric): Protoc
   return multiplexer;
 }
 
+async function invokeWithTraceUpdates(
+  fabric: ProtocolFabric,
+  request: InvokeRequest,
+  onUpdate: ProtocolToolUpdateCallback | undefined,
+): Promise<ProtocolInvokeToolDetails> {
+  const traceId = request.traceId;
+  const events: InvocationProvenanceEvent[] = [];
+  const multiplexer = ensureProtocolToolProvenanceMultiplexer(fabric);
+  const unsubscribe = multiplexer.subscribe((event) => {
+    if (traceId && event.traceId !== traceId) return;
+    events.push(event);
+    onUpdate?.({
+      content: [{ type: "text", text: "protocol trace updating..." }],
+      details: { ok: true, action: "invoke", result: { ok: true }, trace: { events: [...events] } },
+    });
+  });
+
+  try {
+    const result = await fabric.invoke(request);
+    return { ok: true, action: "invoke", result, trace: { events: [...events] } };
+  } finally {
+    unsubscribe();
+  }
+}
+
 function toInvokeRequest(request: Partial<InvokeRequest> | undefined): InvokeRequest {
   if (!request) {
     throw new Error("protocol action invoke requires request");
@@ -244,7 +281,7 @@ function toInvokeRequest(request: Partial<InvokeRequest> | undefined): InvokeReq
     nodeId: requireText(request.nodeId, "protocol action invoke requires request.nodeId"),
     provide: requireText(request.provide, "protocol action invoke requires request.provide"),
     input: request.input,
-    traceId: request.traceId,
+    traceId: request.traceId ?? createProtocolToolId("trace"),
     spanId: request.spanId,
     parentSpanId: request.parentSpanId,
     callerNodeId: request.callerNodeId,
@@ -256,6 +293,10 @@ function requireText(value: string | undefined, message: string): string {
   const trimmed = value?.trim();
   if (!trimmed) throw new Error(message);
   return trimmed;
+}
+
+function createProtocolToolId(prefix: string): string {
+  return `${prefix}_${globalThis.crypto.randomUUID()}`;
 }
 
 function createTextComponent(text: string): { render(width: number): string[]; invalidate(): void } {
@@ -301,28 +342,138 @@ function formatProtocolToolResultDisplay(
   theme: ProtocolToolThemeLike,
   options: { expanded?: boolean; isPartial?: boolean },
 ): string {
-  if (options.isPartial) return theme.fg("warning", "protocol running...");
-
   const details = result.details;
+  if (options.isPartial && !isInvokeToolResult(details)) return theme.fg("warning", "protocol running...");
+
   if (!isInvokeToolResult(details)) {
     return result.content.map((item) => item.text).join("\n");
   }
 
   const request = input?.request;
-  const invokeResult = details.result;
-  const status = invokeResult.ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
-  const outcome = invokeResult.ok ? "returned" : "failed";
-  const lines = [`${status} ${theme.fg("muted", formatTarget(request?.nodeId, request?.provide))} ${outcome}`];
+  const lines = formatProtocolTrace(details.trace, theme, options);
 
-  const output = result.content.map((item) => item.text).join("\n");
-  if (output) lines.push("", output);
-  if (options.expanded) lines.push("", JSON.stringify(details, null, 2));
+  if (!options.isPartial) {
+    const invokeResult = details.result;
+    const status = invokeResult.ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
+    const outcome = invokeResult.ok ? "returned" : "failed";
+    if (lines.length > 0) lines.push("");
+    lines.push(`${status} ${theme.fg("muted", formatTarget(request?.nodeId, request?.provide))} ${outcome}`);
+
+    const output = result.content.map((item) => item.text).join("\n");
+    if (output) lines.push("", output);
+  }
 
   return lines.join("\n");
 }
 
-function isInvokeToolResult(result: unknown): result is { ok: true; action: "invoke"; result: { ok: boolean } } {
+function isInvokeToolResult(
+  result: unknown,
+): result is { ok: true; action: "invoke"; result: { ok: boolean }; trace?: ProtocolTraceDetails } {
   return isPlainObject(result) && result.ok === true && result.action === "invoke" && isPlainObject(result.result);
+}
+
+function formatProtocolTrace(
+  trace: ProtocolTraceDetails | undefined,
+  theme: ProtocolToolThemeLike,
+  options: { expanded?: boolean; isPartial?: boolean },
+): string[] {
+  if (!trace || trace.events.length === 0) return [];
+
+  const latestEvents = latestEventBySpan(trace.events);
+  const lines = [theme.fg("toolTitle", theme.bold("protocol trace"))];
+  const spanIds = new Set(latestEvents.map((event) => event.spanId));
+  const roots = latestEvents.filter((event) => !event.parentSpanId || !spanIds.has(event.parentSpanId));
+  const childrenByParent = groupEventsByParent(latestEvents);
+
+  for (const root of roots) {
+    appendTraceEventLines(lines, root, childrenByParent, theme, options, 0);
+  }
+
+  return lines;
+}
+
+function latestEventBySpan(events: InvocationProvenanceEvent[]): InvocationProvenanceEvent[] {
+  const latest = new Map<string, InvocationProvenanceEvent>();
+  for (const event of events) latest.set(event.spanId, event);
+  return [...latest.values()];
+}
+
+function groupEventsByParent(events: InvocationProvenanceEvent[]): Map<string, InvocationProvenanceEvent[]> {
+  const grouped = new Map<string, InvocationProvenanceEvent[]>();
+  for (const event of events) {
+    if (!event.parentSpanId) continue;
+    const siblings = grouped.get(event.parentSpanId) ?? [];
+    siblings.push(event);
+    grouped.set(event.parentSpanId, siblings);
+  }
+  return grouped;
+}
+
+function appendTraceEventLines(
+  lines: string[],
+  event: InvocationProvenanceEvent,
+  childrenByParent: Map<string, InvocationProvenanceEvent[]>,
+  theme: ProtocolToolThemeLike,
+  options: { expanded?: boolean; isPartial?: boolean },
+  depth: number,
+): void {
+  lines.push(...formatTraceEventLines(event, theme, options, depth));
+  for (const child of childrenByParent.get(event.spanId) ?? []) {
+    appendTraceEventLines(lines, child, childrenByParent, theme, options, depth + 1);
+  }
+}
+
+function formatTraceEventLines(
+  event: InvocationProvenanceEvent,
+  theme: ProtocolToolThemeLike,
+  options: { expanded?: boolean; isPartial?: boolean },
+  depth: number,
+): string[] {
+  const indent = "  ".repeat(depth);
+  const icon = event.status === "failed" ? theme.fg("error", "✗") : event.status === "succeeded" ? theme.fg("success", "✓") : theme.fg("warning", "↗");
+  const caller = formatValue(event.callerNodeId, "anonymous");
+  const target = formatTarget(event.nodeId, event.provide);
+  const session = formatTraceSession(event.session);
+  const duration = typeof event.durationMs === "number" ? ` ${event.durationMs}ms` : "";
+  const status = event.status === "started" ? "" : event.status === "succeeded" ? duration : ` failed${duration}`;
+  const preview = !options.expanded && event.outputPreview ? ` — ${formatOneLinePreview(event.outputPreview, event.outputTruncated)}` : "";
+  const lines = [`${indent}${icon} ${caller} → ${theme.fg("muted", target)}${session}${status}${preview}`];
+
+  if (event.error) {
+    lines.push(`${indent}  ${theme.fg("error", `error: ${event.error.code} ${event.error.message}`)}`);
+  }
+
+  if (options.expanded) {
+    if (event.inputPreview) {
+      lines.push(`${indent}  ${theme.fg("muted", "input:")}`);
+      lines.push(...indentPreviewLines(event.inputPreview, `${indent}    `, event.inputTruncated));
+    }
+    if (event.outputPreview) {
+      lines.push(`${indent}  ${theme.fg("muted", "output:")}`);
+      lines.push(...indentPreviewLines(event.outputPreview, `${indent}    `, event.outputTruncated));
+    }
+  }
+
+  return lines;
+}
+
+function formatOneLinePreview(preview: string, truncated: boolean | undefined): string {
+  const oneLine = preview.replace(/\s+/g, " ").trim();
+  const clipped = oneLine.length > 120 ? `${oneLine.slice(0, 120)}…` : oneLine;
+  return truncated && !clipped.endsWith("…") ? `${clipped}…` : clipped;
+}
+
+function indentPreviewLines(preview: string, indent: string, truncated: boolean | undefined): string[] {
+  const lines = preview.split("\n").map((line) => `${indent}${line}`);
+  if (truncated) lines.push(`${indent}…`);
+  return lines;
+}
+
+function formatTraceSession(session: InvokeRequest["session"] | undefined): string {
+  if (!session) return "";
+  const mode = session.mode ?? "ephemeral";
+  const id = session.id?.trim();
+  return id ? ` [${id} ${mode}]` : ` [${mode}]`;
 }
 
 function formatTarget(nodeId: string | undefined, provide: string | undefined): string {

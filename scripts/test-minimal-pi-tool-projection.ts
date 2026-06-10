@@ -113,16 +113,36 @@ const invokeResult = await tool.execute("call-4", {
   },
 });
 assert.equal(invokeResult.content[0]?.text, "hello via tool");
-assert.deepEqual(invokeResult.details, {
+const invokeDetails = invokeResult.details as {
+  ok: true;
+  action: "invoke";
+  result: { ok: true; nodeId: string; provide: string; output: unknown };
+  trace: {
+    events: Array<{
+      status: string;
+      traceId: string;
+      spanId: string;
+      durationMs?: number;
+      inputPreview?: string;
+      outputPreview?: string;
+    }>;
+  };
+};
+assert.deepEqual(invokeDetails.result, {
   ok: true,
-  action: "invoke",
-  result: {
-    ok: true,
-    nodeId: "alpha_tool_projection",
-    provide: "echo",
-    output: { text: "hello via tool" },
-  },
+  nodeId: "alpha_tool_projection",
+  provide: "echo",
+  output: { text: "hello via tool" },
 });
+assert.equal(invokeDetails.trace.events.length, 2);
+assert.equal(invokeDetails.trace.events[0]?.status, "started");
+assert.equal(invokeDetails.trace.events[0]?.traceId, "trace-tool-test");
+assert.equal(invokeDetails.trace.events[0]?.spanId, "span-tool-test");
+assert.equal(invokeDetails.trace.events[0]?.inputPreview, '{"text":"hello via tool"}');
+assert.equal(invokeDetails.trace.events[1]?.status, "succeeded");
+assert.equal(invokeDetails.trace.events[1]?.inputPreview, '{"text":"hello via tool"}');
+assert.equal(invokeDetails.trace.events[1]?.outputPreview, '{"text":"hello via tool"}');
+assert.equal(typeof invokeDetails.trace.events[1]?.durationMs, "number");
 
 const invokeRenderInput = {
   action: "invoke" as const,
@@ -148,10 +168,116 @@ const invokeResultLines = tool.renderResult?.(invokeResult, {}, testTheme, { arg
   render(width: number): string[];
 };
 const invokeResultText = invokeResultLines.render(120).join("\n");
+assert.ok(invokeResultText.includes("✓ alpha_tool_projection.echo"));
+assert.ok(invokeResultText.includes("— {\"text\":\"hello via tool\"}"));
 assert.ok(invokeResultText.includes("✓ alpha_tool_projection.echo returned"));
 assert.ok(!invokeResultText.includes("caller: pi-chat"));
 assert.ok(!invokeResultText.includes("session: agent-b (continue)"));
+assert.ok(!invokeResultText.includes('"trace"'));
 assert.ok(invokeResultText.includes("hello via tool"));
+
+const partialUpdates: Array<typeof invokeResult> = [];
+const streamingInvokeResult = await tool.execute(
+  "call-5-streaming",
+  {
+    action: "invoke",
+    request: {
+      nodeId: "alpha_tool_projection",
+      provide: "echo",
+      input: { text: "hello streaming trace" },
+      traceId: "trace-streaming-test",
+      spanId: "span-streaming-test",
+      callerNodeId: "pi-chat",
+      session: { id: "streaming-session", mode: "continue" },
+    },
+  },
+  undefined,
+  (partial) => partialUpdates.push(partial as typeof invokeResult),
+);
+assert.equal(streamingInvokeResult.content[0]?.text, "hello streaming trace");
+assert.ok(partialUpdates.length >= 1);
+const partialTraceLines = tool.renderResult?.(partialUpdates[0]!, { isPartial: true }, testTheme, {
+  args: {
+    action: "invoke",
+    request: {
+      nodeId: "alpha_tool_projection",
+      provide: "echo",
+      traceId: "trace-streaming-test",
+      spanId: "span-streaming-test",
+      callerNodeId: "pi-chat",
+      session: { id: "streaming-session", mode: "continue" },
+    },
+  },
+}) as { render(width: number): string[] };
+const partialTraceText = partialTraceLines.render(120).join("\n");
+assert.ok(partialTraceText.includes("protocol trace"));
+assert.ok(partialTraceText.includes("↗ pi-chat → alpha_tool_projection.echo [streaming-session continue]"));
+assert.ok(!partialTraceText.includes("hello streaming trace"), "partial collapsed trace should not show input preview");
+
+const orphanParentTraceLines = tool.renderResult?.(
+  {
+    content: [{ type: "text", text: "orphan parent output" }],
+    details: {
+      ok: true,
+      action: "invoke",
+      result: { ok: true, nodeId: "alpha_tool_projection", provide: "echo", output: { text: "orphan parent output" } },
+      trace: {
+        events: [
+          {
+            traceId: "trace-orphan-parent-test",
+            parentSpanId: "missing-parent-span",
+            spanId: "span-orphan-child",
+            callerNodeId: "pi-chat",
+            nodeId: "alpha_tool_projection",
+            provide: "echo",
+            status: "succeeded",
+            durationMs: 12,
+            inputPreview: "nested input",
+            outputPreview: "nested output",
+          },
+        ],
+      },
+    },
+  },
+  {},
+  testTheme,
+  { args: invokeRenderInput },
+) as { render(width: number): string[] };
+const orphanParentTraceText = orphanParentTraceLines.render(120).join("\n");
+assert.ok(orphanParentTraceText.includes("protocol trace"));
+assert.ok(orphanParentTraceText.includes("✓ pi-chat → alpha_tool_projection.echo 12ms — nested output"));
+const expandedOrphanParentTraceLines = tool.renderResult?.(
+  {
+    content: [{ type: "text", text: "orphan parent output" }],
+    details: {
+      ok: true,
+      action: "invoke",
+      result: { ok: true, nodeId: "alpha_tool_projection", provide: "echo", output: { text: "orphan parent output" } },
+      trace: {
+        events: [
+          {
+            traceId: "trace-orphan-parent-test",
+            parentSpanId: "missing-parent-span",
+            spanId: "span-orphan-child",
+            callerNodeId: "pi-chat",
+            nodeId: "alpha_tool_projection",
+            provide: "echo",
+            status: "succeeded",
+            durationMs: 12,
+            inputPreview: "nested input",
+            outputPreview: "nested output",
+          },
+        ],
+      },
+    },
+  },
+  { expanded: true },
+  testTheme,
+  { args: invokeRenderInput },
+) as { render(width: number): string[] };
+const expandedOrphanParentTraceText = expandedOrphanParentTraceLines.render(120).join("\n");
+assert.ok(expandedOrphanParentTraceText.includes("input:\n    nested input"));
+assert.ok(expandedOrphanParentTraceText.includes("output:\n    nested output"));
 
 const invalidInvokeResult = await tool.execute("call-5", {
   action: "invoke",
