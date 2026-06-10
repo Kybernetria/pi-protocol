@@ -93,6 +93,7 @@ const echoResult = await fabricA.invoke({
   spanId: "span-test",
   parentSpanId: "parent-span-test",
   callerNodeId: "beta",
+  session: { id: "session-test", mode: "continue" },
 });
 assert.deepEqual(echoResult, {
   ok: true,
@@ -108,6 +109,7 @@ assert.deepEqual(provenanceEvents[0], {
   callerNodeId: "beta",
   nodeId: "alpha",
   provide: "echo",
+  session: { id: "session-test", mode: "continue" },
   status: "started",
 });
 assert.equal(provenanceEvents[1]?.traceId, "trace-test");
@@ -116,12 +118,16 @@ assert.equal(provenanceEvents[1]?.parentSpanId, "parent-span-test");
 assert.equal(provenanceEvents[1]?.callerNodeId, "beta");
 assert.equal(provenanceEvents[1]?.nodeId, "alpha");
 assert.equal(provenanceEvents[1]?.provide, "echo");
+assert.deepEqual(provenanceEvents[1]?.session, { id: "session-test", mode: "continue" });
 assert.equal(provenanceEvents[1]?.status, "succeeded");
 assert.equal(typeof provenanceEvents[1]?.durationMs, "number");
 
+provenanceEvents.length = 0;
 const missingNodeResult = await fabricA.invoke({ nodeId: "missing", provide: "echo", input: {} });
 assert.equal(missingNodeResult.ok, false);
 assert.equal(missingNodeResult.error.code, "NOT_FOUND");
+assert.equal(provenanceEvents[1]?.status, "failed");
+assert.deepEqual(provenanceEvents[1]?.error, missingNodeResult.error);
 
 provenanceEvents.length = 0;
 const invalidInputResult = await fabricA.invoke({ nodeId: "alpha", provide: "echo", input: { text: 42 } });
@@ -131,6 +137,7 @@ assert.match(invalidInputResult.error.message, /input\.text must be string/);
 assert.equal(provenanceEvents.length, 2);
 assert.equal(provenanceEvents[0]?.status, "started");
 assert.equal(provenanceEvents[1]?.status, "failed");
+assert.deepEqual(provenanceEvents[1]?.error, invalidInputResult.error);
 
 const missingProvideResult = await fabricA.invoke({ nodeId: "alpha", provide: "missing", input: {} });
 assert.equal(missingProvideResult.ok, false);

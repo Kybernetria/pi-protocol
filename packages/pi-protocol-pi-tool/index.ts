@@ -1,5 +1,10 @@
 import { Type } from "@mariozechner/pi-ai";
-import type { InvokeRequest, ProtocolFabric, RegistrySnapshot } from "../pi-protocol-minimal/index.ts";
+import type {
+  InvocationProvenanceEvent,
+  InvokeRequest,
+  ProtocolFabric,
+  RegistrySnapshot,
+} from "../pi-protocol-minimal/index.ts";
 
 export const DEFAULT_PROTOCOL_TOOL_NAME = "protocol";
 
@@ -22,6 +27,8 @@ export interface ProtocolToolExecutionResult {
   details: unknown;
 }
 
+export type ProtocolToolUpdateCallback = (partial: ProtocolToolExecutionResult) => void;
+
 export interface ProtocolToolLike {
   name: string;
   label: string;
@@ -29,7 +36,12 @@ export interface ProtocolToolLike {
   promptSnippet: string;
   promptGuidelines: string[];
   parameters: unknown;
-  execute(toolCallId: string, input: ProtocolToolInput): Promise<ProtocolToolExecutionResult>;
+  execute(
+    toolCallId: string,
+    input: ProtocolToolInput,
+    signal?: AbortSignal,
+    onUpdate?: ProtocolToolUpdateCallback,
+  ): Promise<ProtocolToolExecutionResult>;
   renderCall?: (args: ProtocolToolInput, theme: ProtocolToolThemeLike) => unknown;
   renderResult?: (
     result: ProtocolToolExecutionResult,
@@ -53,6 +65,14 @@ export interface ProtocolToolOptions {
   toolName?: string;
   label?: string;
   description?: string;
+}
+
+type ProvenanceSubscriber = (event: InvocationProvenanceEvent) => void;
+
+const PROTOCOL_TOOL_PROVENANCE_MULTIPLEXER_KEY = Symbol.for("pi-protocol.pi-tool.provenance-multiplexer");
+
+interface ProtocolToolProvenanceMultiplexer {
+  subscribe(listener: ProvenanceSubscriber): () => void;
 }
 
 /**
@@ -184,6 +204,35 @@ function safeGetAllTools(pi: ProtocolToolRegistrationTarget): Array<{ name: stri
     // until the runtime is bound.
     return undefined;
   }
+}
+
+function ensureProtocolToolProvenanceMultiplexer(fabric: ProtocolFabric): ProtocolToolProvenanceMultiplexer {
+  const globals = globalThis as Record<PropertyKey, unknown>;
+  const existing = globals[PROTOCOL_TOOL_PROVENANCE_MULTIPLEXER_KEY] as
+    | ProtocolToolProvenanceMultiplexer
+    | undefined;
+  if (existing) return existing;
+
+  const subscribers = new Set<ProvenanceSubscriber>();
+  const multiplexer: ProtocolToolProvenanceMultiplexer = {
+    subscribe(listener) {
+      subscribers.add(listener);
+      return () => subscribers.delete(listener);
+    },
+  };
+
+  fabric.setProvenanceRecorder(async (event) => {
+    for (const subscriber of [...subscribers]) {
+      try {
+        subscriber(event);
+      } catch {
+        // Provenance display is observational; subscriber failures must not affect invocation.
+      }
+    }
+  });
+
+  globals[PROTOCOL_TOOL_PROVENANCE_MULTIPLEXER_KEY] = multiplexer;
+  return multiplexer;
 }
 
 function toInvokeRequest(request: Partial<InvokeRequest> | undefined): InvokeRequest {

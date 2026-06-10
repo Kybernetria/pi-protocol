@@ -44,8 +44,10 @@ export interface InvocationProvenanceEvent {
   callerNodeId?: string;
   nodeId: string;
   provide: string;
+  session?: InvocationSessionControl;
   status: InvocationStatus;
   durationMs?: number;
+  error?: { code: InvokeErrorCode; message: string };
 }
 
 export type ProvenanceRecorder = (event: InvocationProvenanceEvent) => void | Promise<void>;

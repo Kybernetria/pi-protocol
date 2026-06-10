@@ -91,19 +91,21 @@ export function ensureProtocolFabric(): ProtocolFabric {
       const durationMs = () => Date.now() - startedAt;
       const registered = nodes.get(request.nodeId);
       if (!registered) {
-        await recordProvenance(provenanceRecorder, { ...provenance, status: "failed", durationMs: durationMs() });
+        const error = { code: "NOT_FOUND" as const, message: `Node not found: ${request.nodeId}` };
+        await recordProvenance(provenanceRecorder, { ...provenance, status: "failed", durationMs: durationMs(), error });
         return {
           ok: false,
-          error: { code: "NOT_FOUND", message: `Node not found: ${request.nodeId}` },
+          error,
         };
       }
 
       const provide = registered.node.provides.find((item) => item.name === request.provide);
       if (!provide) {
-        await recordProvenance(provenanceRecorder, { ...provenance, status: "failed", durationMs: durationMs() });
+        const error = { code: "NOT_FOUND" as const, message: `Provide not found: ${request.nodeId}.${request.provide}` };
+        await recordProvenance(provenanceRecorder, { ...provenance, status: "failed", durationMs: durationMs(), error });
         return {
           ok: false,
-          error: { code: "NOT_FOUND", message: `Provide not found: ${request.nodeId}.${request.provide}` },
+          error,
         };
       }
 
@@ -117,6 +119,7 @@ export function ensureProtocolFabric(): ProtocolFabric {
         ...provenance,
         status: result.ok ? "succeeded" : "failed",
         durationMs: durationMs(),
+        error: result.ok ? undefined : result.error,
       });
 
       return result;
@@ -131,10 +134,11 @@ function createInvocationProvenance(request: InvokeRequest): Omit<InvocationProv
   return {
     traceId: request.traceId ?? createId("trace"),
     spanId: request.spanId ?? createId("span"),
-    parentSpanId: request.parentSpanId,
-    callerNodeId: request.callerNodeId,
+    ...(request.parentSpanId ? { parentSpanId: request.parentSpanId } : {}),
+    ...(request.callerNodeId ? { callerNodeId: request.callerNodeId } : {}),
     nodeId: request.nodeId,
     provide: request.provide,
+    ...(request.session ? { session: request.session } : {}),
   };
 }
 
