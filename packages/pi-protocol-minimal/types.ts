@@ -11,7 +11,51 @@ export type ExecutionSpec =
   | { type: "handler"; handler: string }
   | { type: "agent"; agent: string };
 
-export type ProtocolHandler = (input: unknown) => unknown | Promise<unknown>;
+export type ProtocolSettingSpec =
+  | {
+      type: "string";
+      label?: string;
+      description?: string;
+      default?: string;
+      enum?: string[];
+    }
+  | {
+      type: "boolean";
+      label?: string;
+      description?: string;
+      default?: boolean;
+    }
+  | {
+      type: "number" | "integer";
+      label?: string;
+      description?: string;
+      default?: number;
+      minimum?: number;
+      maximum?: number;
+    };
+
+export interface ProtocolAgentInstructionSpec {
+  text: string;
+  mode?: "append" | "replace";
+}
+
+export interface ProtocolAgentSpec {
+  description?: string;
+  systemPrompt?: ProtocolAgentInstructionSpec;
+  modelHint?: {
+    tier?: "fast" | "balanced" | "reasoning";
+    specific?: string;
+  };
+}
+
+export interface ProtocolUiSpec {
+  agentColors?: Record<string, string>;
+}
+
+export type ProtocolHandler = (
+  input: unknown,
+  context?: ProtocolInvocationContext,
+) => unknown | Promise<unknown>;
 
 export type InvocationSessionMode = "ephemeral" | "continue" | "end";
 
@@ -19,6 +63,32 @@ export interface InvocationSessionControl {
   id?: string;
   mode?: InvocationSessionMode;
 }
+
+export type ProtocolRuntimeEvent =
+  | {
+      type: "executor_input_snapshot";
+      traceId: string;
+      spanId: string;
+      inputPreview: string;
+      inputTruncated?: boolean;
+    }
+  | {
+      type: "executor_output_delta";
+      traceId: string;
+      spanId: string;
+      textDelta: string;
+    }
+  | {
+      type: "executor_output_snapshot";
+      traceId: string;
+      spanId: string;
+      outputPreview: string;
+      outputTruncated?: boolean;
+    };
+
+export type ProtocolRuntimeEventEmitter = (event: ProtocolRuntimeEvent) => void | Promise<void>;
+
+export type ProtocolRuntimeEventRecorder = ProtocolRuntimeEventEmitter;
 
 export interface ProtocolInvocationContext {
   nodeId: string;
@@ -28,6 +98,7 @@ export interface ProtocolInvocationContext {
   parentSpanId?: string;
   callerNodeId?: string;
   session?: InvocationSessionControl;
+  emitRuntimeEvent?: ProtocolRuntimeEventEmitter;
 }
 
 export type ProtocolAgentExecutor = (
@@ -62,6 +133,13 @@ export interface ProtocolNode {
   nodeId: string;
   purpose: string;
   provides: ProvideSpec[];
+  protocolVersion?: string;
+  packageId?: string;
+  version?: string;
+  tags?: string[];
+  settings?: Record<string, ProtocolSettingSpec>;
+  ui?: ProtocolUiSpec;
+  agents?: Record<string, ProtocolAgentSpec>;
 }
 
 // A provide is one callable/discoverable capability inside a node.
@@ -72,6 +150,9 @@ export interface ProvideSpec {
   inputSchema: JsonSchemaLite;
   outputSchema: JsonSchemaLite;
   execution: ExecutionSpec;
+  version?: string;
+  tags?: string[];
+  effects?: string[];
 }
 
 export interface RegisterNodeInput {
@@ -82,6 +163,11 @@ export interface RegisterNodeInput {
 
 // A provide snapshot is what discovery returns when a provide is viewed
 // outside its node. It adds ownership information.
+export interface PiProtocolManifest extends Omit<ProtocolNode, "provides"> {
+  protocolVersion: string;
+  provides: ProvideSpec[];
+}
+
 export interface ProvideSnapshot extends ProvideSpec {
   nodeId: string;
   globalId: string;
@@ -109,8 +195,13 @@ export type InvokeResult =
   | { ok: true; nodeId: string; provide: string; output: unknown }
   | { ok: false; error: { code: InvokeErrorCode; message: string } };
 
+export type RecorderUnsubscribe = () => void;
+
 export interface ProtocolFabric {
   setProvenanceRecorder(recorder?: ProvenanceRecorder): void;
+  subscribeProvenanceRecorder(recorder: ProvenanceRecorder): RecorderUnsubscribe;
+  setRuntimeEventRecorder(recorder?: ProtocolRuntimeEventRecorder): void;
+  subscribeRuntimeEventRecorder(recorder: ProtocolRuntimeEventRecorder): RecorderUnsubscribe;
   register(input: RegisterNodeInput): void;
   unregister(nodeId: string): void;
   registry(): RegistrySnapshot;

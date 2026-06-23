@@ -12,11 +12,15 @@
     "test:minimal-pi-sdk-agent-session-import": "tsx scripts/test-pi-sdk-agent-session-import.ts",
     "test:minimal-pi-tool-projection": "tsx scripts/test-minimal-pi-tool-projection.ts",
     "test:minimal-protocol-test-nodes": "tsx scripts/test-minimal-protocol-test-nodes.ts",
-    "test": "npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:minimal-pi-tool-projection && npm run test:minimal-protocol-test-nodes"
+    "test:protocol-project-review-agent": "tsx scripts/test-protocol-project-review-agent.ts",
+    "test:pi-ng": "tsx scripts/test-pi-ng.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck && npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:minimal-pi-tool-projection && npm run test:minimal-protocol-test-nodes && npm run test:protocol-project-review-agent && npm run test:pi-ng"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.75.4",
     "@mariozechner/pi-ai": "^0.65.2",
-    "tsx": "^4.20.6"
+    "tsx": "^4.20.6",
+    "typescript": "^5.8.3"
   }
 }

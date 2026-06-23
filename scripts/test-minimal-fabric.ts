@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import {
+  createProtocolFabric,
   ensureProtocolFabric,
   type InvocationProvenanceEvent,
   type JsonSchemaLite,
+  type ProtocolRuntimeEvent,
 } from "../packages/pi-protocol-minimal/index.ts";
 
 const textInput: JsonSchemaLite = {
@@ -17,14 +19,180 @@ const textOutput: JsonSchemaLite = {
   properties: { text: { type: "string" } },
 };
 
+const isolatedFabric = createProtocolFabric();
+const isolatedProvenanceEvents: InvocationProvenanceEvent[] = [];
+const unsubscribeIsolatedProvenance = isolatedFabric.subscribeProvenanceRecorder((event) => {
+  isolatedProvenanceEvents.push(event);
+});
+const isolatedNode = {
+  nodeId: "isolated",
+  purpose: "Verify isolated fabric factory and immutable discovery snapshots.",
+  provides: [
+    {
+      name: "echo",
+      description: "Return the input.",
+      inputSchema: textInput,
+      outputSchema: textOutput,
+      execution: { type: "handler" as const, handler: "echo" },
+    },
+  ],
+};
+const isolatedHandlers = { echo: async (input: unknown) => input };
+isolatedFabric.register({
+  node: isolatedNode,
+  handlers: isolatedHandlers,
+});
+isolatedNode.provides[0]!.description = "mutated after registration";
+isolatedHandlers.echo = async () => ({ text: "mutated handler" });
+const isolatedPostMutationResult = await isolatedFabric.invoke({
+  nodeId: "isolated",
+  provide: "echo",
+  input: { text: "original behavior" },
+});
+assert.deepEqual(isolatedPostMutationResult, {
+  ok: true,
+  nodeId: "isolated",
+  provide: "echo",
+  output: { text: "original behavior" },
+});
+const isolatedRegistry = isolatedFabric.registry();
+assert.throws(() => isolatedRegistry.nodes.push({ nodeId: "mutated", purpose: "bad", provides: [] }), TypeError);
+assert.throws(() => {
+  isolatedRegistry.nodes[0]!.provides[0]!.description = "mutated";
+}, TypeError);
+assert.equal(isolatedFabric.describeProvide("isolated", "echo")?.description, "Return the input.");
+const isolatedNodeSnapshot = isolatedFabric.describeNode("isolated");
+assert.ok(isolatedNodeSnapshot);
+assert.throws(() => {
+  isolatedNodeSnapshot.provides[0]!.description = "mutated direct node snapshot";
+}, TypeError);
+const isolatedProvideSnapshot = isolatedFabric.describeProvide("isolated", "echo");
+assert.ok(isolatedProvideSnapshot);
+assert.throws(() => {
+  isolatedProvideSnapshot.description = "mutated direct provide snapshot";
+}, TypeError);
+isolatedProvenanceEvents.length = 0;
+await isolatedFabric.invoke({ nodeId: "isolated", provide: "echo", input: { text: "hi" } });
+assert.equal(isolatedProvenanceEvents.length, 2);
+unsubscribeIsolatedProvenance();
+await isolatedFabric.invoke({ nodeId: "isolated", provide: "echo", input: { text: "again" } });
+assert.equal(isolatedProvenanceEvents.length, 2);
+
+let isolatedGoodProvenanceRecorderCalls = 0;
+isolatedFabric.setProvenanceRecorder(() => {
+  throw new Error("ignored provenance recorder failure");
+});
+const unsubscribeFailingProvenanceSubscriber = isolatedFabric.subscribeProvenanceRecorder(() => {
+  throw new Error("ignored provenance subscriber failure");
+});
+const unsubscribeGoodProvenanceSubscriber = isolatedFabric.subscribeProvenanceRecorder(() => {
+  isolatedGoodProvenanceRecorderCalls += 1;
+});
+const isolatedRecorderFailureResult = await isolatedFabric.invoke({
+  nodeId: "isolated",
+  provide: "echo",
+  input: { text: "recorder failures are observational" },
+});
+assert.equal(isolatedRecorderFailureResult.ok, true);
+assert.equal(isolatedGoodProvenanceRecorderCalls, 2);
+unsubscribeFailingProvenanceSubscriber();
+unsubscribeGoodProvenanceSubscriber();
+isolatedFabric.setProvenanceRecorder(undefined);
+
+const isolatedAgentExecutors = { passthrough: async (input: unknown) => input };
+isolatedFabric.register({
+  node: {
+    nodeId: "isolated_agent_map",
+    purpose: "Verify registered agent executor maps are copied at registration.",
+    provides: [
+      {
+        name: "pass",
+        description: "Return the input through an agent executor.",
+        inputSchema: textInput,
+        outputSchema: textOutput,
+        execution: { type: "agent", agent: "passthrough" },
+      },
+    ],
+  },
+  agentExecutors: isolatedAgentExecutors,
+});
+isolatedAgentExecutors.passthrough = async () => ({ text: "mutated agent executor" });
+const isolatedAgentMapMutationResult = await isolatedFabric.invoke({
+  nodeId: "isolated_agent_map",
+  provide: "pass",
+  input: { text: "original agent behavior" },
+});
+assert.deepEqual(isolatedAgentMapMutationResult, {
+  ok: true,
+  nodeId: "isolated_agent_map",
+  provide: "pass",
+  output: { text: "original agent behavior" },
+});
+
+const isolatedRuntimeEvents: ProtocolRuntimeEvent[] = [];
+isolatedFabric.setRuntimeEventRecorder(() => {
+  throw new Error("ignored runtime recorder failure");
+});
+const unsubscribeFailingRuntimeSubscriber = isolatedFabric.subscribeRuntimeEventRecorder(() => {
+  throw new Error("ignored runtime subscriber failure");
+});
+const unsubscribeGoodRuntimeSubscriber = isolatedFabric.subscribeRuntimeEventRecorder((event) => {
+  isolatedRuntimeEvents.push(event);
+});
+isolatedFabric.register({
+  node: {
+    nodeId: "isolated_runtime",
+    purpose: "Verify runtime event subscribers and recorder failure isolation.",
+    provides: [
+      {
+        name: "stream",
+        description: "Emits one generic runtime event.",
+        inputSchema: textInput,
+        outputSchema: textOutput,
+        execution: { type: "agent", agent: "streamer" },
+      },
+    ],
+  },
+  agentExecutors: {
+    streamer: async (input, context) => {
+      const traceId = context?.traceId;
+      const spanId = context?.spanId;
+      if (!traceId || !spanId) throw new Error("expected trace/span ids");
+      await context.emitRuntimeEvent?.({ type: "executor_output_delta", traceId, spanId, textDelta: "delta" });
+      return input;
+    },
+  },
+});
+const isolatedRuntimeResult = await isolatedFabric.invoke({
+  nodeId: "isolated_runtime",
+  provide: "stream",
+  input: { text: "runtime" },
+});
+assert.equal(isolatedRuntimeResult.ok, true);
+assert.equal(isolatedRuntimeEvents.length, 1);
+unsubscribeFailingRuntimeSubscriber();
+unsubscribeGoodRuntimeSubscriber();
+await isolatedFabric.invoke({ nodeId: "isolated_runtime", provide: "stream", input: { text: "runtime again" } });
+assert.equal(isolatedRuntimeEvents.length, 1);
+isolatedFabric.setRuntimeEventRecorder(undefined);
+
+const legacyGlobalFabric = { registry: () => ({ nodes: [], provides: [] }) };
+(globalThis as Record<PropertyKey, unknown>)[Symbol.for("pi-protocol.minimal.fabric")] = legacyGlobalFabric;
+
 const fabricA = ensureProtocolFabric();
 const fabricB = ensureProtocolFabric();
 const provenanceEvents: InvocationProvenanceEvent[] = [];
+const runtimeEvents: ProtocolRuntimeEvent[] = [];
 
+assert.notEqual(fabricA, legacyGlobalFabric, "incompatible legacy global fabric should be replaced");
 assert.equal(fabricA, fabricB, "both callers should get the same fabric");
 
 fabricA.setProvenanceRecorder((event) => {
   provenanceEvents.push(event);
+});
+
+fabricA.setRuntimeEventRecorder((event) => {
+  runtimeEvents.push(event);
 });
 
 fabricA.register({
@@ -316,6 +484,62 @@ assert.deepEqual(agentResult, {
   provide: "plan",
   output: { text: "agent hi" },
 });
+
+fabricB.register({
+  node: {
+    nodeId: "eta_runtime",
+    purpose: "Agent runtime event test",
+    provides: [
+      {
+        name: "stream",
+        description: "Emits runtime output events while running.",
+        inputSchema: textInput,
+        outputSchema: textOutput,
+        execution: { type: "agent", agent: "streamer" },
+      },
+    ],
+  },
+  agentExecutors: {
+    streamer: async (input, context) => {
+      assert.ok(context?.emitRuntimeEvent, "agent executor should receive runtime event emitter");
+      assert.ok(context.traceId?.startsWith("trace_"), "context should include resolved trace id");
+      assert.ok(context.spanId?.startsWith("span_"), "context should include resolved span id");
+      const traceId = context.traceId;
+      const spanId = context.spanId;
+      if (!traceId || !spanId) throw new Error("expected resolved runtime trace/span ids");
+      await context.emitRuntimeEvent({
+        type: "executor_output_delta",
+        traceId,
+        spanId,
+        textDelta: "streamed ",
+      });
+      await context.emitRuntimeEvent({
+        type: "executor_output_snapshot",
+        traceId,
+        spanId,
+        outputPreview: "streamed output",
+        outputTruncated: false,
+      });
+      return input;
+    },
+  },
+});
+
+runtimeEvents.length = 0;
+const runtimeAgentResult = await fabricB.invoke({ nodeId: "eta_runtime", provide: "stream", input: { text: "runtime hi" } });
+assert.deepEqual(runtimeAgentResult, {
+  ok: true,
+  nodeId: "eta_runtime",
+  provide: "stream",
+  output: { text: "runtime hi" },
+});
+assert.equal(runtimeEvents.length, 2);
+assert.equal(runtimeEvents[0]?.type, "executor_output_delta");
+assert.equal(runtimeEvents[0]?.textDelta, "streamed ");
+assert.equal(runtimeEvents[1]?.type, "executor_output_snapshot");
+assert.equal(runtimeEvents[1]?.outputPreview, "streamed output");
+assert.equal(runtimeEvents[1]?.traceId, runtimeEvents[0]?.traceId);
+assert.equal(runtimeEvents[1]?.spanId, runtimeEvents[0]?.spanId);
 
 fabricB.register({
   node: {

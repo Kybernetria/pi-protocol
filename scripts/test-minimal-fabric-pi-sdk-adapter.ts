@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { ensureProtocolFabric, type JsonSchemaLite } from "../packages/pi-protocol-minimal/index.ts";
+import {
+  ensureProtocolFabric,
+  type JsonSchemaLite,
+  type ProtocolRuntimeEvent,
+} from "../packages/pi-protocol-minimal/index.ts";
 import {
   createPiSdkAgentExecutor,
   type PiSdkAgentSessionEventLike,
@@ -57,6 +61,11 @@ function createFakeSession() {
 
 const fake = createFakeSession();
 const fabric = ensureProtocolFabric();
+const runtimeEvents: ProtocolRuntimeEvent[] = [];
+
+fabric.setRuntimeEventRecorder((event) => {
+  runtimeEvents.push(event);
+});
 
 fabric.register({
   node: {
@@ -83,10 +92,13 @@ fabric.register({
 
 assert.equal(fabric.describeProvide("sdk_adapter_test", "plan")?.execution.type, "agent");
 
+runtimeEvents.length = 0;
 const result = await fabric.invoke({
   nodeId: "sdk_adapter_test",
   provide: "plan",
   input: { goal: "ship protocol" },
+  traceId: "trace-sdk-runtime-test",
+  spanId: "span-sdk-runtime-test",
 });
 
 assert.deepEqual(result, {
@@ -97,6 +109,34 @@ assert.deepEqual(result, {
 });
 assert.deepEqual(fake.prompts, ['Plan {"goal":"ship protocol"}']);
 assert.equal(fake.disposed, true);
+assert.deepEqual(runtimeEvents, [
+  {
+    type: "executor_input_snapshot",
+    traceId: "trace-sdk-runtime-test",
+    spanId: "span-sdk-runtime-test",
+    inputPreview: 'Plan {"goal":"ship protocol"}',
+    inputTruncated: false,
+  },
+  {
+    type: "executor_output_delta",
+    traceId: "trace-sdk-runtime-test",
+    spanId: "span-sdk-runtime-test",
+    textDelta: "planned: ",
+  },
+  {
+    type: "executor_output_delta",
+    traceId: "trace-sdk-runtime-test",
+    spanId: "span-sdk-runtime-test",
+    textDelta: 'Plan {"goal":"ship protocol"}',
+  },
+  {
+    type: "executor_output_snapshot",
+    traceId: "trace-sdk-runtime-test",
+    spanId: "span-sdk-runtime-test",
+    outputPreview: 'planned: Plan {"goal":"ship protocol"}',
+    outputTruncated: false,
+  },
+]);
 
 const statefulFakes: ReturnType<typeof createFakeSession>[] = [];
 fabric.register({

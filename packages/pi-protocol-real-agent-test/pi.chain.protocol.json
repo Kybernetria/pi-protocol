@@ -1,0 +1,97 @@
+{
+  "protocolVersion": "0.2.0",
+  "nodeId": "real_agent_chain",
+  "packageId": "@kyvernitria/pi-protocol-real-agent-test",
+  "version": "0.0.0-prototype",
+  "purpose": "Real Pi SDK-backed nested A -> B -> C protocol chain test node.",
+  "agents": {
+    "agent_b_draft": {
+      "description": "Agent B drafting role for the real ABC smoke chain.",
+      "systemPrompt": {
+        "text": "You are Agent B in a nested protocol chain. Produce concise drafts and explicit requests for Agent C when asked.",
+        "mode": "append"
+      }
+    },
+    "agent_c": {
+      "description": "Agent C review role for the real ABC smoke chain.",
+      "systemPrompt": {
+        "text": "You are Agent C in a nested protocol chain. Review Agent B's work for risks, edge cases, missing checks, and quality issues. Do not roleplay.",
+        "mode": "append"
+      }
+    },
+    "agent_b_synthesis": {
+      "description": "Agent B synthesis role for the real ABC smoke chain.",
+      "systemPrompt": {
+        "text": "You are Agent B in a nested protocol chain. Synthesize prior work into the final answer requested by Agent A, without extra preamble.",
+        "mode": "append"
+      }
+    }
+  },
+  "ui": {
+    "agentColors": {
+      "root_agent": "accent",
+      "agent_a": "accent",
+      "agent_b": "warning",
+      "agent_c": "success",
+      "pi-chat": "accent"
+    }
+  },
+  "provides": [
+    {
+      "name": "start",
+      "description": "Orchestrate real Agent B draft, real Agent C review, and real Agent B synthesis through protocol calls.",
+      "inputSchema": {
+        "type": "string"
+      },
+      "outputSchema": {
+        "type": "string"
+      },
+      "execution": {
+        "type": "handler",
+        "handler": "start"
+      }
+    },
+    {
+      "name": "draft_b",
+      "description": "Ask real Agent B to draft an answer and a request for Agent C.",
+      "inputSchema": {
+        "type": "string"
+      },
+      "outputSchema": {
+        "type": "string"
+      },
+      "execution": {
+        "type": "agent",
+        "agent": "agent_b_draft"
+      }
+    },
+    {
+      "name": "ask_c",
+      "description": "Ask real Agent C for risk and edge-case review.",
+      "inputSchema": {
+        "type": "string"
+      },
+      "outputSchema": {
+        "type": "string"
+      },
+      "execution": {
+        "type": "agent",
+        "agent": "agent_c"
+      }
+    },
+    {
+      "name": "synthesize_b",
+      "description": "Ask real Agent B to synthesize B's draft and C's review into the final answer for A.",
+      "inputSchema": {
+        "type": "string"
+      },
+      "outputSchema": {
+        "type": "string"
+      },
+      "execution": {
+        "type": "agent",
+        "agent": "agent_b_synthesis"
+      }
+    }
+  ]
+}

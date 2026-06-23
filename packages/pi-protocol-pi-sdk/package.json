@@ -6,6 +6,9 @@
     ".": "./index.ts",
     "./agent-session": "./agent-session.ts"
   },
+  "dependencies": {
+    "@kyvernitria/pi-protocol-minimal": "0.0.0-prototype"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },

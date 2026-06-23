@@ -1,0 +1,106 @@
+import type { InvokeRequest, ProtocolFabric, ProtocolNode, ProvideSnapshot, ProvideSpec } from "@kyvernitria/pi-protocol-minimal";
+import { requireText } from "./helpers.ts";
+import { invokeWithTraceUpdates } from "./trace.ts";
+import type { ProtocolToolInput, ProtocolToolUpdateCallback } from "./types.ts";
+
+export async function handleProtocolToolInput(
+  fabric: ProtocolFabric,
+  input: ProtocolToolInput,
+  onUpdate?: ProtocolToolUpdateCallback,
+): Promise<unknown> {
+  switch (input.action) {
+    case "registry":
+      return { ok: true, action: "registry", registry: fabric.registry() };
+
+    case "describe_node": {
+      const nodeId = requireText(input.nodeId, "protocol action describe_node requires nodeId");
+      const node = fabric.describeNode(nodeId);
+      return node
+        ? { ok: true, action: "describe_node", node: summarizeNode(node) }
+        : { ok: false, action: "describe_node", error: { code: "NOT_FOUND", message: `Node not found: ${nodeId}` } };
+    }
+
+    case "describe_provide": {
+      const nodeId = requireText(input.nodeId, "protocol action describe_provide requires nodeId");
+      const provideName = requireText(input.provide, "protocol action describe_provide requires provide");
+      const provide = fabric.describeProvide(nodeId, provideName);
+      return provide
+        ? { ok: true, action: "describe_provide", provide: summarizeProvideSnapshot(provide) }
+        : {
+            ok: false,
+            action: "describe_provide",
+            error: { code: "NOT_FOUND", message: `Provide not found: ${nodeId}.${provideName}` },
+          };
+    }
+
+    case "invoke": {
+      const request = toInvokeRequest(input);
+      return invokeWithTraceUpdates(fabric, request, onUpdate);
+    }
+  }
+}
+
+function summarizeNode(node: ProtocolNode): unknown {
+  return {
+    nodeId: node.nodeId,
+    purpose: node.purpose,
+    packageId: node.packageId,
+    version: node.version,
+    provides: node.provides.map(summarizeProvide),
+    agents: node.agents
+      ? Object.fromEntries(
+          Object.entries(node.agents).map(([name, agent]) => [name, { description: agent.description }]),
+        )
+      : undefined,
+    next: "describe_provide -> invoke",
+  };
+}
+
+function summarizeProvide(provide: ProvideSpec): unknown {
+  return {
+    name: provide.name,
+    description: provide.description,
+    input: summarizeSchema(provide.inputSchema),
+    output: summarizeSchema(provide.outputSchema),
+    execution: provide.execution.type,
+  };
+}
+
+function summarizeProvideSnapshot(provide: ProvideSnapshot): unknown {
+  return {
+    nodeId: provide.nodeId,
+    globalId: provide.globalId,
+    name: provide.name,
+    description: provide.description,
+    effects: provide.effects,
+    input: summarizeSchema(provide.inputSchema),
+    output: summarizeSchema(provide.outputSchema),
+    execution: provide.execution.type,
+    invoke: { action: "invoke", nodeId: provide.nodeId, provide: provide.name, input: "..." },
+  };
+}
+
+function summarizeSchema(schema: ProvideSpec["inputSchema"]): string {
+  if (schema.type === "object") {
+    const required = new Set(schema.required ?? []);
+    const props = Object.keys(schema.properties ?? {}).map((name) => `${name}${required.has(name) ? "" : "?"}`);
+    return props.length > 0 ? `object { ${props.join(", ")} }` : "object";
+  }
+  if (schema.type === "array") return `array<${summarizeSchema(schema.items ?? {})}>`;
+  if (schema.enum) return `enum(${schema.enum.map(String).join(" | ")})`;
+  return schema.type ?? "unknown";
+}
+
+function toInvokeRequest(input: ProtocolToolInput): InvokeRequest {
+  const request = input.request;
+  return {
+    nodeId: requireText(request?.nodeId ?? input.nodeId, "protocol action invoke requires nodeId"),
+    provide: requireText(request?.provide ?? input.provide, "protocol action invoke requires provide"),
+    input: request && "input" in request ? request.input : input.input,
+    traceId: request?.traceId,
+    spanId: request?.spanId,
+    parentSpanId: request?.parentSpanId,
+    callerNodeId: request?.callerNodeId,
+    session: request?.session,
+  };
+}

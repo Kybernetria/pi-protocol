@@ -1,17 +1,21 @@
 import type {
   InvokeRequest,
+  InvocationProvenanceEvent,
   InvokeResult,
   ProtocolAgentExecutor,
   ProtocolHandler,
+  ProtocolRuntimeEventEmitter,
   ProvideSpec,
 } from "./types.ts";
 import { validateJsonSchemaLite } from "./validation.ts";
 
 export interface ExecuteProvideInput {
   request: InvokeRequest;
+  provenance: Omit<InvocationProvenanceEvent, "status" | "durationMs">;
   provide: ProvideSpec;
   handlers: Record<string, ProtocolHandler>;
   agentExecutors: Record<string, ProtocolAgentExecutor>;
+  emitRuntimeEvent?: ProtocolRuntimeEventEmitter;
 }
 
 export async function executeProvide(input: ExecuteProvideInput): Promise<InvokeResult> {
@@ -51,17 +55,20 @@ export async function executeProvide(input: ExecuteProvideInput): Promise<Invoke
 }
 
 function executeImplementation(input: ExecuteProvideInput): unknown | Promise<unknown> {
-  if (input.provide.execution.type === "handler") {
-    return input.handlers[input.provide.execution.handler](input.request.input);
-  }
-
-  return input.agentExecutors[input.provide.execution.agent](input.request.input, {
+  const context = {
     nodeId: input.request.nodeId,
     provide: input.request.provide,
-    traceId: input.request.traceId,
-    spanId: input.request.spanId,
-    parentSpanId: input.request.parentSpanId,
-    callerNodeId: input.request.callerNodeId,
+    traceId: input.provenance.traceId,
+    spanId: input.provenance.spanId,
+    parentSpanId: input.provenance.parentSpanId,
+    callerNodeId: input.provenance.callerNodeId,
     session: input.request.session,
-  });
+    emitRuntimeEvent: input.emitRuntimeEvent,
+  };
+
+  if (input.provide.execution.type === "handler") {
+    return input.handlers[input.provide.execution.handler](input.request.input, context);
+  }
+
+  return input.agentExecutors[input.provide.execution.agent](input.request.input, context);
 }

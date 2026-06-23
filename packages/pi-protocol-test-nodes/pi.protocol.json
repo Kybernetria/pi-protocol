@@ -1,0 +1,45 @@
+{
+  "protocolVersion": "0.2.0",
+  "nodeId": "test_handler",
+  "packageId": "@kyvernitria/pi-protocol-test-nodes",
+  "version": "0.0.0-prototype",
+  "purpose": "Minimal handler-backed protocol test node.",
+  "ui": {
+    "agentColors": {
+      "root_agent": "accent",
+      "pi-chat": "accent"
+    }
+  },
+  "provides": [
+    {
+      "name": "convert",
+      "description": "Return 456 when input text is 123; otherwise return error.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "execution": {
+        "type": "handler",
+        "handler": "convert"
+      }
+    }
+  ]
+}

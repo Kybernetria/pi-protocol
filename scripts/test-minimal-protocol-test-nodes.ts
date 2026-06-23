@@ -8,11 +8,13 @@ const fabric = ensureProtocolFabric();
 const registry = fabric.registry();
 
 assert.ok(registry.nodes.some((node) => node.nodeId === "test_handler"));
-assert.ok(registry.nodes.some((node) => node.nodeId === "test_agent"));
+assert.ok(!registry.nodes.some((node) => node.nodeId === "test_agent"));
+assert.ok(!registry.nodes.some((node) => node.nodeId === "test_chain"));
 assert.ok(registry.provides.some((provide) => provide.globalId === "test_handler.convert"));
-assert.ok(registry.provides.some((provide) => provide.globalId === "test_agent.respond"));
+assert.ok(!registry.provides.some((provide) => provide.execution.type === "agent"), "test nodes should not expose fake agent-backed provides");
 assert.equal(fabric.describeProvide("test_handler", "convert")?.execution.type, "handler");
-assert.equal(fabric.describeProvide("test_agent", "respond")?.execution.type, "agent");
+assert.equal(fabric.describeProvide("test_agent", "respond"), undefined);
+assert.equal(fabric.describeProvide("test_chain", "start"), undefined);
 
 const handlerMatch = await fabric.invoke({
   nodeId: "test_handler",
@@ -36,18 +38,6 @@ assert.deepEqual(handlerFallback, {
   nodeId: "test_handler",
   provide: "convert",
   output: { text: "error" },
-});
-
-const agentResult = await fabric.invoke({
-  nodeId: "test_agent",
-  provide: "respond",
-  input: { text: "hello" },
-});
-assert.deepEqual(agentResult, {
-  ok: true,
-  nodeId: "test_agent",
-  provide: "respond",
-  output: { text: "agent:hello" },
 });
 
 const invalidInput = await fabric.invoke({

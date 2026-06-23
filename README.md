@@ -1,33 +1,79 @@
 # Pi Protocol
 
-Status: minimal rebuild workspace.
+Small in-process protocol seam for Pi packages/extensions/agents.
 
-This repo now keeps the clean protocol rebuild separate from the older prototype runtime. Legacy/prototype material has been moved to the sibling directory:
+`pi-protocol` lets packages declare capabilities, discover other capabilities, and invoke them through one shared fabric instead of coupling directly to each other.
 
-```text
-../pi-protocol-legacy/
+## Packages
+
+- `@kyvernitria/pi-protocol-minimal` - generic fabric, manifest registration, types
+- `@kyvernitria/pi-protocol-pi-sdk` - adapter for Pi SDK `AgentSession` executors
+- `@kyvernitria/pi-protocol-pi-tool` - Pi tool projection named `protocol`
+
+The core stays generic TypeScript. Pi-specific code belongs in adapter packages.
+
+## Compatible package contract
+
+A compatible package:
+
+1. ships a `pi.protocol.json` manifest
+2. registers it from its Pi extension with `ensureProtocolFabric()` + `registerProtocolManifest()`
+3. declares each provide with canonical `execution`
+4. communicates through `registry`, `describeNode`, `describeProvide`, and `invoke`
+
+Minimal provide shape:
+
+```json
+{
+  "name": "review_task",
+  "description": "Review a task.",
+  "execution": { "type": "agent", "agent": "project_reviewer" },
+  "inputSchema": { "type": "string" },
+  "outputSchema": { "type": "string" }
+}
 ```
 
-## Current source of truth
+Use `"type": "handler"` for normal functions and `"type": "agent"` for agent executors. Top-level manifest `handler` / `agent` shorthand is not supported.
 
-The active minimal build is:
+## Public API
 
-```text
-packages/pi-protocol-minimal/   # generic protocol fabric, types, validation
-packages/pi-protocol-pi-sdk/    # Pi SDK agent executor adapter
-packages/pi-protocol-pi-tool/   # single Pi tool projection named protocol
+### `@kyvernitria/pi-protocol-minimal`
+
+```ts
+createProtocolFabric
+ensureProtocolFabric
+registerProtocolManifest
+protocolNodeFromManifest
 ```
 
-The protocol core should stay generic TypeScript. Pi-specific code belongs in adapter packages.
+Core public types include `PiProtocolManifest`, `ProtocolFabric`, `ProtocolNode`, `ProvideSpec`, `ProtocolHandler`, `ProtocolAgentExecutor`, `InvokeRequest`, `InvokeResult`, `RegistrySnapshot`, and `ProvideSnapshot`.
 
-## Current tests
+### `@kyvernitria/pi-protocol-pi-sdk`
+
+```ts
+createPiSdkAgentExecutor
+```
+
+### `@kyvernitria/pi-protocol-pi-sdk/agent-session`
+
+```ts
+createPiSdkAgentSessionFactory
+createDefaultPiSdkAgentExecutor
+createPiSdkAgentExecutorsFromManifest
+```
+
+### `@kyvernitria/pi-protocol-pi-tool`
+
+```ts
+createProtocolTool
+registerProtocolTool
+handleProtocolToolInput
+```
+
+## Test
 
 ```bash
 npm test
 ```
 
-Focused scripts live in `scripts/` and cover the minimal fabric plus Pi-facing adapters.
-
-## Legacy material
-
-Older reference nodes, rich SDK/runtime experiments, specs, guides, templates, and old prototype tests now live under `../pi-protocol-legacy/` so they can be mined intentionally without competing with the minimal rebuild as the source of truth.
+Legacy prototype material lives outside this repo at `../pi-protocol-legacy/`.

@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
-import { ensureProtocolFabric, type JsonSchemaLite } from "../packages/pi-protocol-minimal/index.ts";
+import {
+  createProtocolFabric,
+  ensureProtocolFabric,
+  registerProtocolManifest,
+  type JsonSchemaLite,
+  type PiProtocolManifest,
+} from "../packages/pi-protocol-minimal/index.ts";
 import protocolToolExtension from "../packages/pi-protocol-pi-tool/extension.ts";
-import { registerProtocolTool, type ProtocolToolLike } from "../packages/pi-protocol-pi-tool/index.ts";
+import { createProtocolTool, registerProtocolTool, type ProtocolToolLike } from "../packages/pi-protocol-pi-tool/index.ts";
 
 const textSchema: JsonSchemaLite = {
   type: "object",
@@ -176,6 +182,61 @@ assert.ok(!invokeResultText.includes("session: agent-b (continue)"));
 assert.ok(!invokeResultText.includes('"trace"'));
 assert.ok(invokeResultText.includes("hello via tool"));
 
+const manifest = {
+  protocolVersion: "0.2.0",
+  nodeId: "manifest_tool_projection",
+  packageId: "@kyvernitria/manifest-tool-projection-test",
+  version: "1.0.0",
+  purpose: "Verify pi.protocol.json registration carries UI metadata.",
+  ui: {
+    agentColors: {
+      root_agent: "success",
+      manifest_agent: "warning",
+    },
+  },
+  provides: [
+    {
+      name: "echo_manifest",
+      description: "Return the input through a manifest-registered handler.",
+      execution: { type: "handler", handler: "echo_manifest" },
+      version: "1.0.0",
+      inputSchema: textSchema,
+      outputSchema: textSchema,
+    },
+  ],
+} satisfies PiProtocolManifest;
+registerProtocolManifest(fabric, {
+  manifest,
+  handlers: {
+    echo_manifest: async (input) => input,
+  },
+});
+const manifestRegistry = fabric.registry();
+const manifestNode = manifestRegistry.nodes.find((node) => node.nodeId === "manifest_tool_projection");
+assert.equal(manifestNode?.ui?.agentColors?.manifest_agent, "warning");
+const manifestInvokeInput = {
+  action: "invoke" as const,
+  request: {
+    nodeId: "manifest_tool_projection",
+    provide: "echo_manifest",
+    input: { text: "hello manifest" },
+    traceId: "trace-manifest-tool-test",
+    spanId: "span-manifest-tool-test",
+    callerNodeId: "manifest_agent",
+  },
+};
+const manifestInvokeResult = await tool.execute("call-manifest", manifestInvokeInput);
+const colorTheme = {
+  fg: (color: string, text: string) => `[${color}]${text}`,
+  bold: (text: string) => text,
+};
+const manifestResultLines = tool.renderResult?.(manifestInvokeResult, { expanded: true }, colorTheme, {
+  args: manifestInvokeInput,
+}) as { render(width: number): string[] };
+const manifestResultText = manifestResultLines.render(160).join("\n");
+assert.ok(manifestResultText.includes("[warning]manifest_agent"));
+assert.ok(manifestResultText.includes("hello manifest"));
+
 const partialUpdates: Array<typeof invokeResult> = [];
 const streamingInvokeResult = await tool.execute(
   "call-5-streaming",
@@ -196,6 +257,8 @@ const streamingInvokeResult = await tool.execute(
 );
 assert.equal(streamingInvokeResult.content[0]?.text, "hello streaming trace");
 assert.ok(partialUpdates.length >= 1);
+const partialText = partialUpdates[0]!.content[0]?.text ?? "";
+assert.equal(partialText, "protocol running...");
 const partialTraceLines = tool.renderResult?.(partialUpdates[0]!, { isPartial: true }, testTheme, {
   args: {
     action: "invoke",
@@ -210,9 +273,7 @@ const partialTraceLines = tool.renderResult?.(partialUpdates[0]!, { isPartial: t
   },
 }) as { render(width: number): string[] };
 const partialTraceText = partialTraceLines.render(120).join("\n");
-assert.ok(partialTraceText.includes("protocol trace"));
-assert.ok(partialTraceText.includes("↗ pi-chat → alpha_tool_projection.echo [streaming-session continue]"));
-assert.ok(!partialTraceText.includes("hello streaming trace"), "partial collapsed trace should not show input preview");
+assert.ok(partialTraceText.includes("pi-chat → alpha_tool_projection.echo [streaming-session continue]"));
 
 const orphanParentTraceLines = tool.renderResult?.(
   {
@@ -245,7 +306,7 @@ const orphanParentTraceLines = tool.renderResult?.(
 ) as { render(width: number): string[] };
 const orphanParentTraceText = orphanParentTraceLines.render(120).join("\n");
 assert.ok(orphanParentTraceText.includes("protocol trace"));
-assert.ok(orphanParentTraceText.includes("✓ pi-chat → alpha_tool_projection.echo 12ms — nested output"));
+assert.ok(orphanParentTraceText.includes("✓ ● pi-chat/root pi-chat → alpha_tool_projection.echo 12ms — nested output"));
 const expandedOrphanParentTraceLines = tool.renderResult?.(
   {
     content: [{ type: "text", text: "orphan parent output" }],
@@ -279,6 +340,213 @@ const expandedOrphanParentTraceText = expandedOrphanParentTraceLines.render(120)
 assert.ok(expandedOrphanParentTraceText.includes("input:\n    nested input"));
 assert.ok(expandedOrphanParentTraceText.includes("output:\n    nested output"));
 
+fabric.register({
+  node: {
+    nodeId: "runtime_tool_projection",
+    purpose: "Verify protocol tool renders runtime event streams.",
+    provides: [
+      {
+        name: "stream",
+        description: "Emit runtime output while returning the input.",
+        inputSchema: textSchema,
+        outputSchema: textSchema,
+        execution: { type: "agent", agent: "streamer" },
+      },
+    ],
+  },
+  agentExecutors: {
+    streamer: async (input, context) => {
+      const traceId = context?.traceId;
+      const spanId = context?.spanId;
+      if (!traceId || !spanId) throw new Error("expected trace/span ids");
+      await context.emitRuntimeEvent?.({ type: "executor_output_delta", traceId, spanId, textDelta: "streamed " });
+      await context.emitRuntimeEvent?.({ type: "executor_output_delta", traceId, spanId, textDelta: "runtime" });
+      return input;
+    },
+  },
+});
+const runtimeInvokeInput = {
+  action: "invoke" as const,
+  request: {
+    nodeId: "runtime_tool_projection",
+    provide: "stream",
+    input: { text: "runtime output" },
+    traceId: "trace-runtime-tool-test",
+    spanId: "span-runtime-tool-test",
+    callerNodeId: "pi-chat",
+  },
+};
+const runtimePartialUpdates: Array<typeof invokeResult> = [];
+const runtimeInvokeResult = await tool.execute("call-runtime-stream", runtimeInvokeInput, undefined, (partial) => {
+  runtimePartialUpdates.push(partial as typeof invokeResult);
+});
+assert.ok(runtimePartialUpdates.length >= 2, "provenance/runtime events should produce partial updates");
+const runtimePartialDetails = runtimePartialUpdates.at(-1)?.details as {
+  action: "invoke";
+  trace: { runtimeEvents?: Array<{ type: string }> };
+};
+assert.equal(runtimePartialDetails.action, "invoke");
+assert.ok(runtimePartialDetails.trace.runtimeEvents?.some((event) => event.type === "executor_output_delta"));
+const runtimePartialLines = tool.renderResult?.(runtimePartialUpdates.at(-1)!, { expanded: true, isPartial: true }, testTheme, {
+  args: runtimeInvokeInput,
+}) as { render(width: number): string[] };
+const runtimePartialText = runtimePartialLines.render(120).join("\n");
+assert.ok(runtimePartialText.includes("output:\n    streamed runtime"));
+assert.ok(!runtimePartialText.includes("stream:\n    streamed runtime"));
+const runtimeResultLines = tool.renderResult?.(runtimeInvokeResult, { expanded: true }, testTheme, {
+  args: runtimeInvokeInput,
+}) as { render(width: number): string[] };
+const runtimeResultText = runtimeResultLines.render(120).join("\n");
+assert.ok(!runtimeResultText.includes("stream:\n    streamed runtime"));
+assert.ok(runtimeResultText.includes("output:\n    {\"text\":\"runtime output\"}"));
+
+const rootDuplicateLines = tool.renderResult?.(
+  {
+    content: [{ type: "text", text: "final answer" }],
+    details: {
+      ok: true,
+      action: "invoke",
+      result: { ok: true, nodeId: "runtime_tool_projection", provide: "stream", output: "final answer" },
+      trace: {
+        events: [
+          {
+            traceId: "trace-root-duplicate-test",
+            spanId: "span-root-duplicate-test",
+            callerNodeId: "pi-chat",
+            nodeId: "runtime_tool_projection",
+            provide: "stream",
+            status: "succeeded",
+            durationMs: 1,
+            inputPreview: "task",
+            outputPreview: "final answer",
+          },
+        ],
+      },
+    },
+  },
+  { expanded: true },
+  testTheme,
+  { args: runtimeInvokeInput },
+) as { render(width: number): string[] };
+const rootDuplicateText = rootDuplicateLines.render(120).join("\n");
+assert.equal(rootDuplicateText.match(/final answer/g)?.length, 1, "root output should not repeat inside trace and final result");
+
+const nestedTraceLines = tool.renderResult?.(
+  {
+    content: [{ type: "text", text: "root final" }],
+    details: {
+      ok: true,
+      action: "invoke",
+      result: { ok: true, nodeId: "runtime_tool_projection", provide: "stream", output: "root final" },
+      trace: {
+        events: [
+          {
+            traceId: "trace-nested-render-test",
+            spanId: "span-root-nested-render-test",
+            callerNodeId: "agent_a",
+            nodeId: "real_agent_chain",
+            provide: "start",
+            status: "succeeded",
+            durationMs: 3,
+            inputPreview: "user task",
+            outputPreview: "root final",
+          },
+          {
+            traceId: "trace-nested-render-test",
+            spanId: "span-child-b-render-test",
+            parentSpanId: "span-root-nested-render-test",
+            callerNodeId: "agent_a",
+            nodeId: "real_agent_chain",
+            provide: "draft_b",
+            status: "succeeded",
+            durationMs: 2,
+            inputPreview: "prompt b",
+            outputPreview: "draft b",
+          },
+          {
+            traceId: "trace-nested-render-test",
+            spanId: "span-child-c-render-test",
+            parentSpanId: "span-root-nested-render-test",
+            callerNodeId: "agent_b",
+            nodeId: "real_agent_chain",
+            provide: "ask_c",
+            status: "succeeded",
+            durationMs: 2,
+            inputPreview: "prompt c",
+            outputPreview: "review c",
+          },
+        ],
+      },
+    },
+  },
+  { expanded: true },
+  testTheme,
+  { args: runtimeInvokeInput },
+) as { render(width: number): string[] };
+const nestedTraceText = nestedTraceLines.render(120).join("\n");
+assert.ok(nestedTraceText.includes("calls:"));
+assert.ok(nestedTraceText.includes("agent_a → real_agent_chain.draft_b"));
+assert.ok(nestedTraceText.includes("agent_b → real_agent_chain.ask_c"));
+assert.ok(nestedTraceText.includes("├─ agent_a/call"));
+assert.ok(nestedTraceText.includes("├─ agent_b/call"));
+
+const nestedDuplicateFinalLines = tool.renderResult?.(
+  {
+    content: [{ type: "text", text: "root final" }],
+    details: {
+      ok: true,
+      action: "invoke",
+      result: { ok: true, nodeId: "runtime_tool_projection", provide: "stream", output: "root final" },
+      trace: {
+        events: [
+          {
+            traceId: "trace-nested-duplicate-final-test",
+            spanId: "span-root-nested-duplicate-final-test",
+            callerNodeId: "agent_a",
+            nodeId: "real_agent_chain",
+            provide: "start",
+            status: "succeeded",
+            durationMs: 3,
+            inputPreview: "user task",
+            outputPreview: "root final",
+          },
+          {
+            traceId: "trace-nested-duplicate-final-test",
+            spanId: "span-final-child-duplicate-test",
+            parentSpanId: "span-root-nested-duplicate-final-test",
+            callerNodeId: "agent_b",
+            nodeId: "real_agent_chain",
+            provide: "synthesize_b",
+            status: "succeeded",
+            durationMs: 2,
+            inputPreview: "prompt synthesis",
+            outputPreview: "root final",
+          },
+        ],
+      },
+    },
+  },
+  { expanded: true },
+  testTheme,
+  { args: runtimeInvokeInput },
+) as { render(width: number): string[] };
+const nestedDuplicateFinalText = nestedDuplicateFinalLines.render(120).join("\n");
+assert.equal(
+  nestedDuplicateFinalText.match(/root final/g)?.length,
+  1,
+  "leaf child output equal to the final tool output should not repeat",
+);
+assert.ok(nestedDuplicateFinalText.includes("agent_b → real_agent_chain.synthesize_b"));
+
+const reusableResultComponent = tool.renderResult?.(runtimeInvokeResult, {}, testTheme, {
+  args: runtimeInvokeInput,
+}) as { render(width: number): string[] };
+const reusedResultComponent = tool.renderResult?.(runtimeInvokeResult, { expanded: true }, testTheme, {
+  args: runtimeInvokeInput,
+  lastComponent: reusableResultComponent,
+}) as { render(width: number): string[] };
+assert.equal(reusedResultComponent, reusableResultComponent, "renderResult should reuse mutable components to avoid scroll reset");
+
 const invalidInvokeResult = await tool.execute("call-5", {
   action: "invoke",
   request: {
@@ -294,5 +562,47 @@ await assert.rejects(
   /requires nodeId/,
 );
 
+const isolatedToolFabricA = createProtocolFabric();
+const isolatedToolFabricB = createProtocolFabric();
+for (const [isolatedFabric, nodeId] of [
+  [isolatedToolFabricA, "isolated_tool_a"],
+  [isolatedToolFabricB, "isolated_tool_b"],
+] as const) {
+  isolatedFabric.register({
+    node: {
+      nodeId,
+      purpose: "Verify protocol tool trace subscriptions stay scoped to their fabric.",
+      provides: [
+        {
+          name: "echo",
+          description: "Return the input.",
+          inputSchema: textSchema,
+          outputSchema: textSchema,
+          execution: { type: "handler", handler: "echo" },
+        },
+      ],
+    },
+    handlers: { echo: async (input) => input },
+  });
+}
+const isolatedToolA = createProtocolTool(isolatedToolFabricA);
+const isolatedToolB = createProtocolTool(isolatedToolFabricB);
+const isolatedToolAResult = await isolatedToolA.execute("isolated-call-a", {
+  action: "invoke",
+  request: { nodeId: "isolated_tool_a", provide: "echo", input: { text: "a" }, traceId: "trace-isolated-a" },
+});
+const isolatedToolBResult = await isolatedToolB.execute("isolated-call-b", {
+  action: "invoke",
+  request: { nodeId: "isolated_tool_b", provide: "echo", input: { text: "b" }, traceId: "trace-isolated-b" },
+});
+const isolatedToolADetails = isolatedToolAResult.details as { trace: { events: Array<{ traceId: string }> } };
+const isolatedToolBDetails = isolatedToolBResult.details as { trace: { events: Array<{ traceId: string }> } };
+assert.equal(isolatedToolADetails.trace.events.length, 2);
+assert.equal(isolatedToolBDetails.trace.events.length, 2);
+assert.ok(isolatedToolADetails.trace.events.every((event) => event.traceId === "trace-isolated-a"));
+assert.ok(isolatedToolBDetails.trace.events.every((event) => event.traceId === "trace-isolated-b"));
+
 fabric.unregister("alpha_tool_projection");
+fabric.unregister("manifest_tool_projection");
+fabric.unregister("runtime_tool_projection");
 console.log("minimal pi protocol tool projection works");

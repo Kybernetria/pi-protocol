@@ -1,5 +1,5 @@
-export { ensureProtocolFabric } from "./fabric.ts";
-export { executeProvide } from "./execution.ts";
+export { createProtocolFabric, ensureProtocolFabric } from "./fabric.ts";
+export { protocolNodeFromManifest, registerProtocolManifest } from "./manifest.ts";
 
 export type {
   ExecutionSpec,
@@ -9,13 +9,23 @@ export type {
   InvocationProvenanceEvent,
   InvocationStatus,
   JsonSchemaLite,
+  PiProtocolManifest,
   ProtocolAgentExecutor,
+  ProtocolAgentInstructionSpec,
+  ProtocolAgentSpec,
+  ProtocolSettingSpec,
   ProtocolFabric,
   ProtocolHandler,
+  ProtocolInvocationContext,
   ProtocolNode,
+  ProtocolRuntimeEvent,
+  ProtocolRuntimeEventEmitter,
+  ProtocolRuntimeEventRecorder,
+  ProtocolUiSpec,
   ProvenanceRecorder,
   ProvideSnapshot,
   ProvideSpec,
   RegisterNodeInput,
+  RecorderUnsubscribe,
   RegistrySnapshot,
 } from "./types.ts";

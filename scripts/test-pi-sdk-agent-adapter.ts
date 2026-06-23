@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import type { ProtocolRuntimeEvent } from "../packages/pi-protocol-minimal/index.ts";
 import {
   createPiSdkAgentExecutor,
   type PiSdkAgentSessionEventLike,
@@ -62,12 +63,59 @@ assert.deepEqual(fake.prompts, ['Summarize: {"topic":"protocol"}']);
 assert.equal(fake.unsubscribed, true);
 assert.equal(fake.disposed, true);
 
+const runtimeFake = createFakeSession();
+const runtimeEvents: ProtocolRuntimeEvent[] = [];
+const runtimeExecutor = createPiSdkAgentExecutor({
+  createSession: () => runtimeFake.session,
+});
+const runtimeResult = await runtimeExecutor("emit runtime please", {
+  nodeId: "agent_b",
+  provide: "chat",
+  traceId: "trace-direct-runtime-test",
+  spanId: "span-direct-runtime-test",
+  emitRuntimeEvent: async (event) => {
+    runtimeEvents.push(event);
+    throw new Error("direct runtime recorder failure should be ignored");
+  },
+});
+assert.equal(runtimeResult, "hello world");
+assert.deepEqual(runtimeEvents, [
+  {
+    type: "executor_input_snapshot",
+    traceId: "trace-direct-runtime-test",
+    spanId: "span-direct-runtime-test",
+    inputPreview: "emit runtime please",
+    inputTruncated: false,
+  },
+  {
+    type: "executor_output_delta",
+    traceId: "trace-direct-runtime-test",
+    spanId: "span-direct-runtime-test",
+    textDelta: "hello",
+  },
+  {
+    type: "executor_output_delta",
+    traceId: "trace-direct-runtime-test",
+    spanId: "span-direct-runtime-test",
+    textDelta: " world",
+  },
+  {
+    type: "executor_output_snapshot",
+    traceId: "trace-direct-runtime-test",
+    spanId: "span-direct-runtime-test",
+    outputPreview: "hello world",
+    outputTruncated: false,
+  },
+]);
+assert.equal(runtimeFake.unsubscribed, true);
+assert.equal(runtimeFake.disposed, true);
+
 const failingFake = createFakeSession({ throwOnPrompt: true });
 const failingExecutor = createPiSdkAgentExecutor({
   createSession: () => failingFake.session,
 });
 
-await assert.rejects(() => failingExecutor("fail please"), /prompt failed/);
+await assert.rejects(async () => failingExecutor("fail please"), /prompt failed/);
 assert.deepEqual(failingFake.prompts, ["fail please"]);
 assert.equal(failingFake.unsubscribed, true);
 assert.equal(failingFake.disposed, true);
@@ -117,7 +165,7 @@ assert.equal(statefulFakes.length, 2);
 assert.deepEqual(statefulFakes[1].prompts, ["new thread"]);
 
 await assert.rejects(
-  () =>
+  async () =>
     statefulExecutor("missing id", {
       nodeId: "agent_b",
       provide: "chat",

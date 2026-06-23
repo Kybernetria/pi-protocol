@@ -1,4 +1,4 @@
-import type { ProtocolAgentExecutor, ProtocolInvocationContext } from "../pi-protocol-minimal/index.ts";
+import type { ProtocolAgentExecutor, ProtocolInvocationContext, ProtocolRuntimeEvent } from "@kyvernitria/pi-protocol-minimal";
 
 const PI_SDK_AGENT_SESSION_CACHE_KEY = Symbol.for("pi-protocol.pi-sdk.agent-session-cache");
 
@@ -45,14 +45,39 @@ export function createPiSdkAgentExecutor(
     const sessionKey = getSessionKey(context);
     const session = sessionKey ? await getOrCreateSession(sessions, sessionKey, options) : await options.createSession();
     let text = "";
+    const pendingRuntimeEvents: Promise<void>[] = [];
     const unsubscribe = session.subscribe((event) => {
-      if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+      if (isTextDeltaMessageUpdate(event)) {
         text += event.assistantMessageEvent.delta;
+        pendingRuntimeEvents.push(
+          emitRuntimeEventSafely(context, {
+            type: "executor_output_delta",
+            traceId: context?.traceId,
+            spanId: context?.spanId,
+            textDelta: event.assistantMessageEvent.delta,
+          }),
+        );
       }
     });
 
     try {
-      await session.prompt(toPrompt(options, input));
+      const prompt = toPrompt(options, input);
+      await emitRuntimeEventSafely(context, {
+        type: "executor_input_snapshot",
+        traceId: context?.traceId,
+        spanId: context?.spanId,
+        inputPreview: prompt,
+        inputTruncated: false,
+      });
+      await session.prompt(prompt);
+      await Promise.all(pendingRuntimeEvents);
+      await emitRuntimeEventSafely(context, {
+        type: "executor_output_snapshot",
+        traceId: context?.traceId,
+        spanId: context?.spanId,
+        outputPreview: text,
+        outputTruncated: false,
+      });
       return options.toOutput ? options.toOutput(text, input) : text;
     } finally {
       unsubscribe();
@@ -62,6 +87,77 @@ export function createPiSdkAgentExecutor(
       }
     }
   };
+}
+
+async function emitRuntimeEventSafely(
+  context: ProtocolInvocationContext | undefined,
+  event: RuntimeEventDraft,
+): Promise<void> {
+  if (!context?.emitRuntimeEvent || !event.traceId || !event.spanId) return;
+  const { traceId, spanId } = event;
+
+  try {
+    await context.emitRuntimeEvent(toRuntimeEvent(event, traceId, spanId));
+  } catch {
+    // Runtime events are observational; direct adapter callers should get the same safety as fabric invocations.
+  }
+}
+
+type RuntimeEventDraft =
+  | {
+      type: "executor_input_snapshot";
+      traceId?: string;
+      spanId?: string;
+      inputPreview: string;
+      inputTruncated?: boolean;
+    }
+  | { type: "executor_output_delta"; traceId?: string; spanId?: string; textDelta: string }
+  | {
+      type: "executor_output_snapshot";
+      traceId?: string;
+      spanId?: string;
+      outputPreview: string;
+      outputTruncated?: boolean;
+    };
+
+function toRuntimeEvent(event: RuntimeEventDraft, traceId: string, spanId: string): ProtocolRuntimeEvent {
+  if (event.type === "executor_input_snapshot") {
+    return {
+      type: event.type,
+      traceId,
+      spanId,
+      inputPreview: event.inputPreview,
+      inputTruncated: event.inputTruncated,
+    };
+  }
+
+  if (event.type === "executor_output_delta") {
+    return {
+      type: event.type,
+      traceId,
+      spanId,
+      textDelta: event.textDelta,
+    };
+  }
+
+  return {
+    type: event.type,
+    traceId,
+    spanId,
+    outputPreview: event.outputPreview,
+    outputTruncated: event.outputTruncated,
+  };
+}
+
+function isTextDeltaMessageUpdate(event: PiSdkAgentSessionEventLike): event is {
+  type: "message_update";
+  assistantMessageEvent: { type: "text_delta"; delta: string };
+} {
+  return (
+    event.type === "message_update" &&
+    "assistantMessageEvent" in event &&
+    event.assistantMessageEvent.type === "text_delta"
+  );
 }
 
 function ensurePiSdkAgentSessionCache(): Map<string, PiSdkAgentSessionLike> {

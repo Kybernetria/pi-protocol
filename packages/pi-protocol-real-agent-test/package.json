@@ -3,8 +3,9 @@
   "version": "0.0.0-prototype",
   "type": "module",
   "exports": "./extension.ts",
-  "pi": {
-    "extensions": ["./extension.ts"]
+  "dependencies": {
+    "@kyvernitria/pi-protocol-minimal": "0.0.0-prototype",
+    "@kyvernitria/pi-protocol-pi-sdk": "0.0.0-prototype"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

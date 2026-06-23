@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { ensureProtocolFabric } from "../pi-protocol-minimal/index.ts";
-import { registerProtocolTool } from "./index.ts";
+import { ensureProtocolFabric } from "@kyvernitria/pi-protocol-minimal";
+import { registerProtocolTool, type ProtocolToolRegistrationTarget } from "./index.ts";
 
 export default function protocolToolExtension(pi: ExtensionAPI): void {
-  registerProtocolTool(pi, ensureProtocolFabric());
+  registerProtocolTool(pi as ProtocolToolRegistrationTarget, ensureProtocolFabric());
 }
