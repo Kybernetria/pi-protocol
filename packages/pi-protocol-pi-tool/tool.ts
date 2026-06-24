@@ -33,7 +33,9 @@ export function createProtocolTool(fabric: ProtocolFabric, options: ProtocolTool
     promptSnippet: `${toolName}: inspect protocol nodes/provides and invoke them through the shared fabric`,
     promptGuidelines: [
       `Use ${toolName} for protocol capabilities: registry -> describe_node/describe_provide -> invoke.`,
-      `For invoke, pass nodeId, provide, and input; do not invent separate tools for protocol provides.`,
+      `For simple invoke, pass nodeId, provide, and input; do not invent separate tools for protocol provides.`,
+      `For trace/session controls, use request: { nodeId, provide, input, traceId?, spanId?, parentSpanId?, callerNodeId?, session? }.`,
+      `To continue a protocol-backed agent conversation, reuse request.session.id with request.session.mode = "continue"; use "end" to dispose it.`,
     ],
     parameters: Type.Object({
       action: Type.Union([
@@ -45,9 +47,26 @@ export function createProtocolTool(fabric: ProtocolFabric, options: ProtocolTool
       nodeId: Type.Optional(Type.String()),
       provide: Type.Optional(Type.String()),
       input: Type.Optional(Type.Any()),
+      request: Type.Optional(Type.Object({
+        nodeId: Type.Optional(Type.String()),
+        provide: Type.Optional(Type.String()),
+        input: Type.Optional(Type.Any()),
+        traceId: Type.Optional(Type.String()),
+        spanId: Type.Optional(Type.String()),
+        parentSpanId: Type.Optional(Type.String()),
+        callerNodeId: Type.Optional(Type.String()),
+        session: Type.Optional(Type.Object({
+          id: Type.Optional(Type.String()),
+          mode: Type.Optional(Type.Union([
+            Type.Literal("ephemeral"),
+            Type.Literal("continue"),
+            Type.Literal("end"),
+          ])),
+        })),
+      })),
     }),
-    async execute(_toolCallId, input, _signal, onUpdate) {
-      const result = await handleProtocolToolInput(fabric, input, onUpdate);
+    async execute(_toolCallId, input, signal, onUpdate) {
+      const result = await handleProtocolToolInput(fabric, input, onUpdate, signal);
       return {
         content: [{ type: "text", text: formatProtocolToolResult(result) }],
         details: result,

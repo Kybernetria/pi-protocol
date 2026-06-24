@@ -1,5 +1,13 @@
+export {
+  createChildInvokeRequest,
+  getCurrentProtocolInvocationContext,
+  invokeFromCurrentContext,
+  runWithProtocolInvocationContextValue,
+} from "./context.ts";
 export { createProtocolFabric, ensureProtocolFabric } from "./fabric.ts";
 export { protocolNodeFromManifest, registerProtocolManifest } from "./manifest.ts";
+
+export type { CurrentProtocolInvocationContext } from "./context.ts";
 
 export type {
   ExecutionSpec,

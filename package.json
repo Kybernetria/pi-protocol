@@ -8,14 +8,16 @@
   "scripts": {
     "test:minimal-fabric": "tsx scripts/test-minimal-fabric.ts",
     "test:minimal-fabric-pi-sdk-adapter": "tsx scripts/test-minimal-fabric-pi-sdk-adapter.ts",
+    "test:protocol-agent-p2p-context": "tsx scripts/test-protocol-agent-p2p-context.ts",
     "test:minimal-pi-sdk-agent-adapter": "tsx scripts/test-pi-sdk-agent-adapter.ts",
     "test:minimal-pi-sdk-agent-session-import": "tsx scripts/test-pi-sdk-agent-session-import.ts",
+    "test:real-agent-runtime": "tsx scripts/test-real-agent-runtime.ts",
     "test:minimal-pi-tool-projection": "tsx scripts/test-minimal-pi-tool-projection.ts",
     "test:minimal-protocol-test-nodes": "tsx scripts/test-minimal-protocol-test-nodes.ts",
     "test:protocol-project-review-agent": "tsx scripts/test-protocol-project-review-agent.ts",
     "test:pi-ng": "tsx scripts/test-pi-ng.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:minimal-pi-tool-projection && npm run test:minimal-protocol-test-nodes && npm run test:protocol-project-review-agent && npm run test:pi-ng"
+    "test": "npm run typecheck && npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:protocol-agent-p2p-context && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:real-agent-runtime && npm run test:minimal-pi-tool-projection && npm run test:minimal-protocol-test-nodes && npm run test:protocol-project-review-agent && npm run test:pi-ng"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.75.4",

@@ -73,6 +73,11 @@ assert.ok(tool, "protocol tool should be registered");
 assert.equal(tool.name, "protocol");
 assert.equal(typeof tool.renderCall, "function");
 assert.equal(typeof tool.renderResult, "function");
+assert.ok(
+  tool.promptGuidelines.some((line) => line.includes("request.session.mode = \"continue\"")),
+  "protocol tool should advertise continued-session invocation controls",
+);
+assert.ok(JSON.stringify(tool.parameters).includes("session"), "protocol tool schema should expose request.session");
 
 const testTheme = {
   fg: (_color: string, text: string) => text,
@@ -91,6 +96,7 @@ assert.ok(registryDetails.registry.provides.some((provide) => provide.globalId =
 assert.ok(registryResult.content[0]?.text.includes("protocol registry"));
 assert.ok(registryResult.content[0]?.text.includes("alpha_tool_projection"));
 assert.ok(registryResult.content[0]?.text.includes("echo"));
+assert.ok(registryResult.content[0]?.text.includes("request.session"));
 assert.ok(!registryResult.content[0]?.text.includes("inputSchema"), "registry tool content should stay compact");
 
 const nodeResult = await tool.execute("call-2", {
@@ -99,6 +105,8 @@ const nodeResult = await tool.execute("call-2", {
 });
 assert.ok(nodeResult.content[0]?.text.includes('"nodeId": "alpha_tool_projection"'));
 assert.ok(nodeResult.content[0]?.text.includes('"name": "echo"'));
+assert.ok(nodeResult.content[0]?.text.includes('"invocationControls"'));
+assert.ok(nodeResult.content[0]?.text.includes('"continue"'));
 
 const provideResult = await tool.execute("call-3", {
   action: "describe_provide",
@@ -106,6 +114,9 @@ const provideResult = await tool.execute("call-3", {
   provide: "echo",
 });
 assert.ok(provideResult.content[0]?.text.includes('"globalId": "alpha_tool_projection.echo"'));
+assert.ok(provideResult.content[0]?.text.includes('"session"'));
+assert.ok(provideResult.content[0]?.text.includes('"requiresIdFor"'));
+assert.ok(provideResult.content[0]?.text.includes('"mode": "continue"'));
 
 const invokeResult = await tool.execute("call-4", {
   action: "invoke",
@@ -430,6 +441,46 @@ const rootDuplicateLines = tool.renderResult?.(
 ) as { render(width: number): string[] };
 const rootDuplicateText = rootDuplicateLines.render(120).join("\n");
 assert.equal(rootDuplicateText.match(/final answer/g)?.length, 1, "root output should not repeat inside trace and final result");
+
+const rootJsonDuplicateLines = tool.renderResult?.(
+  {
+    content: [{ type: "text", text: JSON.stringify({ status: "completed", summary: "done" }, null, 2) }],
+    details: {
+      ok: true,
+      action: "invoke",
+      result: {
+        ok: true,
+        nodeId: "runtime_tool_projection",
+        provide: "stream",
+        output: { status: "completed", summary: "done" },
+      },
+      trace: {
+        events: [
+          {
+            traceId: "trace-root-json-duplicate-test",
+            spanId: "span-root-json-duplicate-test",
+            callerNodeId: "pi-chat",
+            nodeId: "runtime_tool_projection",
+            provide: "stream",
+            status: "succeeded",
+            durationMs: 1,
+            inputPreview: "task",
+            outputPreview: '{"status":"completed","summary":"done"}',
+          },
+        ],
+      },
+    },
+  },
+  { expanded: true },
+  testTheme,
+  { args: runtimeInvokeInput },
+) as { render(width: number): string[] };
+const rootJsonDuplicateText = rootJsonDuplicateLines.render(120).join("\n");
+assert.equal(
+  rootJsonDuplicateText.match(/"summary": "done"/g)?.length,
+  1,
+  "compact trace JSON and pretty final JSON should not repeat",
+);
 
 const nestedTraceLines = tool.renderResult?.(
   {

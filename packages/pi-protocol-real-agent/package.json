@@ -1,14 +1,16 @@
 {
-  "name": "@kyvernitria/pi-protocol-pi-sdk",
+  "name": "@kyvernitria/pi-protocol-real-agent",
   "version": "0.0.0-prototype",
   "type": "module",
   "exports": {
-    ".": "./index.ts",
-    "./agent-session": "./agent-session.ts"
+    ".": "./extension.ts"
+  },
+  "pi": {
+    "extensions": ["./extension.ts"]
   },
   "dependencies": {
     "@kyvernitria/pi-protocol-minimal": "0.0.0-prototype",
-    "@kyvernitria/pi-protocol-pi-tool": "0.0.0-prototype"
+    "@kyvernitria/pi-protocol-pi-sdk": "0.0.0-prototype"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

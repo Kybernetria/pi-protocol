@@ -12,6 +12,7 @@ import type {
   RecorderUnsubscribe,
   RegistrySnapshot,
 } from "./types.ts";
+import { runWithProtocolInvocationContext } from "./context.ts";
 import { executeProvide } from "./execution.ts";
 import { validateRegistration } from "./validation.ts";
 
@@ -132,14 +133,16 @@ export function createProtocolFabric(): ProtocolFabric {
         return { ok: false, error };
       }
 
-      const result = await executeProvide({
-        request,
-        provenance,
-        provide,
-        handlers: registered.handlers,
-        agentExecutors: registered.agentExecutors,
-        emitRuntimeEvent: createRuntimeEventEmitter(runtimeEventRecorder, runtimeEventSubscribers),
-      });
+      const result = await runWithProtocolInvocationContext(request, provenance, () =>
+        executeProvide({
+          request,
+          provenance,
+          provide,
+          handlers: registered.handlers,
+          agentExecutors: registered.agentExecutors,
+          emitRuntimeEvent: createRuntimeEventEmitter(runtimeEventRecorder, runtimeEventSubscribers),
+        }),
+      );
       await recordProvenance(provenanceRecorder, provenanceSubscribers, {
         ...provenance,
         status: result.ok ? "succeeded" : "failed",

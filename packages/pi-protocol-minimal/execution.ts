@@ -19,6 +19,13 @@ export interface ExecuteProvideInput {
 }
 
 export async function executeProvide(input: ExecuteProvideInput): Promise<InvokeResult> {
+  if (input.request.abortSignal?.aborted) {
+    return {
+      ok: false,
+      error: { code: "ABORTED", message: "Invocation aborted" },
+    };
+  }
+
   const inputError = validateJsonSchemaLite(input.provide.inputSchema, input.request.input, "input");
   if (inputError) {
     return {
@@ -47,8 +54,8 @@ export async function executeProvide(input: ExecuteProvideInput): Promise<Invoke
     return {
       ok: false,
       error: {
-        code: "EXECUTION_FAILED",
-        message: error instanceof Error ? error.message : String(error),
+        code: isAbortError(error) ? "ABORTED" : "EXECUTION_FAILED",
+        message: isAbortError(error) ? "Invocation aborted" : error instanceof Error ? error.message : String(error),
       },
     };
   }
@@ -63,6 +70,7 @@ function executeImplementation(input: ExecuteProvideInput): unknown | Promise<un
     parentSpanId: input.provenance.parentSpanId,
     callerNodeId: input.provenance.callerNodeId,
     session: input.request.session,
+    abortSignal: input.request.abortSignal,
     emitRuntimeEvent: input.emitRuntimeEvent,
   };
 
@@ -71,4 +79,8 @@ function executeImplementation(input: ExecuteProvideInput): unknown | Promise<un
   }
 
   return input.agentExecutors[input.provide.execution.agent](input.request.input, context);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && (error.name === "AbortError" || error.message === "Invocation aborted");
 }

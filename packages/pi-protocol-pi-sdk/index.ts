@@ -1,6 +1,16 @@
-import type { ProtocolAgentExecutor, ProtocolInvocationContext, ProtocolRuntimeEvent } from "@kyvernitria/pi-protocol-minimal";
+import type {
+  CurrentProtocolInvocationContext,
+  ProtocolAgentExecutor,
+  ProtocolInvocationContext,
+  ProtocolRuntimeEvent,
+} from "@kyvernitria/pi-protocol-minimal";
 
 const PI_SDK_AGENT_SESSION_CACHE_KEY = Symbol.for("pi-protocol.pi-sdk.agent-session-cache");
+
+interface CachedPiSdkAgentSession {
+  session: PiSdkAgentSessionLike;
+  activePrompts: number;
+}
 
 /**
  * Pi SDK adapter boundary.
@@ -25,6 +35,7 @@ export interface PiSdkAgentSessionLike {
   prompt(text: string): Promise<void>;
   subscribe(listener: (event: PiSdkAgentSessionEventLike) => void): () => void;
   dispose(): void;
+  setProtocolInvocationContext?(context: CurrentProtocolInvocationContext | undefined): void;
 }
 
 export type PiSdkAgentSessionFactory = () => PiSdkAgentSessionLike | Promise<PiSdkAgentSessionLike>;
@@ -41,9 +52,13 @@ export function createPiSdkAgentExecutor(
   const sessions = ensurePiSdkAgentSessionCache();
 
   return async (input, context) => {
+    throwIfAborted(context?.abortSignal);
     const sessionMode = context?.session?.mode ?? "ephemeral";
     const sessionKey = getSessionKey(context);
-    const session = sessionKey ? await getOrCreateSession(sessions, sessionKey, options) : await options.createSession();
+    const leasedSession = sessionKey
+      ? await getOrCreateSessionLease(sessions, sessionKey, options)
+      : { session: await options.createSession(), sessionKey: undefined, cached: false };
+    const session = leasedSession.session;
     let text = "";
     const pendingRuntimeEvents: Promise<void>[] = [];
     const unsubscribe = session.subscribe((event) => {
@@ -59,6 +74,7 @@ export function createPiSdkAgentExecutor(
         );
       }
     });
+    const removeAbortListener = addAbortListener(context?.abortSignal, () => session.dispose());
 
     try {
       const prompt = toPrompt(options, input);
@@ -69,7 +85,8 @@ export function createPiSdkAgentExecutor(
         inputPreview: prompt,
         inputTruncated: false,
       });
-      await session.prompt(prompt);
+      session.setProtocolInvocationContext?.(toCurrentProtocolInvocationContext(context));
+      await runAbortable(session.prompt(prompt), context?.abortSignal);
       await Promise.all(pendingRuntimeEvents);
       await emitRuntimeEventSafely(context, {
         type: "executor_output_snapshot",
@@ -80,10 +97,13 @@ export function createPiSdkAgentExecutor(
       });
       return options.toOutput ? options.toOutput(text, input) : text;
     } finally {
+      session.setProtocolInvocationContext?.(undefined);
+      removeAbortListener();
       unsubscribe();
-      if (sessionMode !== "continue") {
+      releaseSessionLease(sessions, leasedSession);
+      if (!leasedSession.cached || sessionMode !== "continue" || context?.abortSignal?.aborted) {
         session.dispose();
-        if (sessionKey) sessions.delete(sessionKey);
+        if (leasedSession.sessionKey) sessions.delete(leasedSession.sessionKey);
       }
     }
   };
@@ -149,6 +169,23 @@ function toRuntimeEvent(event: RuntimeEventDraft, traceId: string, spanId: strin
   };
 }
 
+function toCurrentProtocolInvocationContext(
+  context: ProtocolInvocationContext | undefined,
+): CurrentProtocolInvocationContext | undefined {
+  if (!context?.traceId || !context.spanId) return undefined;
+  return {
+    nodeId: context.nodeId,
+    provide: context.provide,
+    traceId: context.traceId,
+    spanId: context.spanId,
+    parentSpanId: context.parentSpanId,
+    callerNodeId: context.callerNodeId,
+    session: context.session,
+    abortSignal: context.abortSignal,
+    childCounter: 0,
+  };
+}
+
 function isTextDeltaMessageUpdate(event: PiSdkAgentSessionEventLike): event is {
   type: "message_update";
   assistantMessageEvent: { type: "text_delta"; delta: string };
@@ -160,27 +197,48 @@ function isTextDeltaMessageUpdate(event: PiSdkAgentSessionEventLike): event is {
   );
 }
 
-function ensurePiSdkAgentSessionCache(): Map<string, PiSdkAgentSessionLike> {
+function ensurePiSdkAgentSessionCache(): Map<string, CachedPiSdkAgentSession> {
   const globals = globalThis as Record<PropertyKey, unknown>;
-  const existing = globals[PI_SDK_AGENT_SESSION_CACHE_KEY] as Map<string, PiSdkAgentSessionLike> | undefined;
+  const existing = globals[PI_SDK_AGENT_SESSION_CACHE_KEY] as Map<string, CachedPiSdkAgentSession> | undefined;
   if (existing) return existing;
 
-  const created = new Map<string, PiSdkAgentSessionLike>();
+  const created = new Map<string, CachedPiSdkAgentSession>();
   globals[PI_SDK_AGENT_SESSION_CACHE_KEY] = created;
   return created;
 }
 
-async function getOrCreateSession(
-  sessions: Map<string, PiSdkAgentSessionLike>,
+interface PiSdkAgentSessionLease {
+  session: PiSdkAgentSessionLike;
+  sessionKey?: string;
+  cached: boolean;
+}
+
+async function getOrCreateSessionLease(
+  sessions: Map<string, CachedPiSdkAgentSession>,
   sessionKey: string,
   options: CreatePiSdkAgentExecutorOptions,
-): Promise<PiSdkAgentSessionLike> {
+): Promise<PiSdkAgentSessionLease> {
   const existing = sessions.get(sessionKey);
-  if (existing) return existing;
+  if (existing) {
+    if (existing.activePrompts > 0) {
+      return { session: await options.createSession(), cached: false };
+    }
 
-  const created = await options.createSession();
+    existing.activePrompts += 1;
+    return { session: existing.session, sessionKey, cached: true };
+  }
+
+  const created = { session: await options.createSession(), activePrompts: 1 };
   sessions.set(sessionKey, created);
-  return created;
+  return { session: created.session, sessionKey, cached: true };
+}
+
+function releaseSessionLease(
+  sessions: Map<string, CachedPiSdkAgentSession>,
+  lease: PiSdkAgentSessionLease): void {
+  if (!lease.cached || !lease.sessionKey) return;
+  const entry = sessions.get(lease.sessionKey);
+  if (entry) entry.activePrompts = Math.max(0, entry.activePrompts - 1);
 }
 
 function getSessionKey(context: ProtocolInvocationContext | undefined): string | undefined {
@@ -200,4 +258,34 @@ function toPrompt(options: CreatePiSdkAgentExecutorOptions, input: unknown): str
   if (options.toPrompt) return options.toPrompt(input);
   if (typeof input === "string") return input;
   return JSON.stringify(input);
+}
+
+async function runAbortable<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  throwIfAborted(signal);
+  if (!signal) return promise;
+
+  return Promise.race([
+    promise,
+    new Promise<never>((_resolve, reject) => {
+      const onAbort = () => reject(createAbortError());
+      signal.addEventListener("abort", onAbort, { once: true });
+      promise.finally(() => signal.removeEventListener("abort", onAbort)).catch(() => undefined);
+    }),
+  ]);
+}
+
+function addAbortListener(signal: AbortSignal | undefined, onAbort: () => void): () => void {
+  if (!signal) return () => undefined;
+  signal.addEventListener("abort", onAbort, { once: true });
+  return () => signal.removeEventListener("abort", onAbort);
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw createAbortError();
+}
+
+function createAbortError(): Error {
+  const error = new Error("Invocation aborted");
+  error.name = "AbortError";
+  return error;
 }

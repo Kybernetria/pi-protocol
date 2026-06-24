@@ -25,11 +25,13 @@ export async function invokeWithTraceUpdates(
   fabric: ProtocolFabric,
   request: InvokeRequest,
   onUpdate: ProtocolToolUpdateCallback | undefined,
+  signal?: AbortSignal,
 ): Promise<ProtocolInvokeToolDetails> {
   const tracedRequest: InvokeRequest = {
     ...request,
     traceId: request.traceId ?? createProtocolToolId("trace"),
     spanId: request.spanId ?? createProtocolToolId("span"),
+    abortSignal: request.abortSignal ?? signal,
   };
   const traceId = tracedRequest.traceId;
   const events: InvocationProvenanceEvent[] = [];
@@ -61,7 +63,7 @@ export async function invokeWithTraceUpdates(
   });
 
   try {
-    const result = await fabric.invoke(tracedRequest);
+    const result = await invokeAbortable(fabric, tracedRequest);
     return {
       ok: true,
       action: "invoke",
@@ -72,4 +74,22 @@ export async function invokeWithTraceUpdates(
     unsubscribeProvenance();
     unsubscribeRuntimeEvents();
   }
+}
+
+async function invokeAbortable(fabric: ProtocolFabric, request: InvokeRequest): ReturnType<ProtocolFabric["invoke"]> {
+  const signal = request.abortSignal;
+  if (signal?.aborted) return createAbortedInvokeResult();
+  if (!signal) return fabric.invoke(request);
+
+  return Promise.race([
+    fabric.invoke(request),
+    new Promise<Awaited<ReturnType<ProtocolFabric["invoke"]>>>((resolve) => {
+      const onAbort = () => resolve(createAbortedInvokeResult());
+      signal.addEventListener("abort", onAbort, { once: true });
+    }),
+  ]);
+}
+
+function createAbortedInvokeResult(): Awaited<ReturnType<ProtocolFabric["invoke"]>> {
+  return { ok: false, error: { code: "ABORTED", message: "Invocation aborted" } };
 }

@@ -98,6 +98,7 @@ export interface ProtocolInvocationContext {
   parentSpanId?: string;
   callerNodeId?: string;
   session?: InvocationSessionControl;
+  abortSignal?: AbortSignal;
   emitRuntimeEvent?: ProtocolRuntimeEventEmitter;
 }
 
@@ -187,9 +188,10 @@ export interface InvokeRequest {
   parentSpanId?: string;
   callerNodeId?: string;
   session?: InvocationSessionControl;
+  abortSignal?: AbortSignal;
 }
 
-export type InvokeErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "INVALID_OUTPUT" | "EXECUTION_FAILED";
+export type InvokeErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "INVALID_OUTPUT" | "EXECUTION_FAILED" | "ABORTED";
 
 export type InvokeResult =
   | { ok: true; nodeId: string; provide: string; output: unknown }

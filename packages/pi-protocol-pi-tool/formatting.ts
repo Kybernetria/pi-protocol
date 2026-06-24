@@ -256,7 +256,34 @@ function formatTraceEventOutputLines(
 }
 
 function isSameText(left: string, right: string): boolean {
-  return Boolean(right) && left.trim() === right.trim();
+  if (!right) return false;
+  const normalizedLeft = normalizeComparableText(left);
+  const normalizedRight = normalizeComparableText(right);
+  return normalizedLeft === normalizedRight;
+}
+
+function normalizeComparableText(value: string): string {
+  const trimmed = value.trim();
+  const parsed = tryParseJson(trimmed);
+  return parsed.ok ? stableStringify(parsed.value) : trimmed;
+}
+
+function tryParseJson(value: string): { ok: true; value: unknown } | { ok: false } {
+  if (!value) return { ok: false };
+  try {
+    return { ok: true, value: JSON.parse(value) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, child]) => `${JSON.stringify(key)}:${stableStringify(child)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function agentColorsFromRegistry(trace: ProtocolTraceDetails): Map<string, string> {
@@ -324,7 +351,11 @@ function formatRegistrySummary(registry: RegistrySnapshot): string {
     lines.push(`- ${node.nodeId}: ${node.purpose} (${provides || "no provides"})`);
   }
 
-  lines.push("", "next: describe_node -> describe_provide -> invoke");
+  lines.push(
+    "",
+    "invoke controls: use request.session { id, mode: ephemeral|continue|end } for protocol session continuation",
+    "next: describe_node -> describe_provide -> invoke",
+  );
   return lines.join("\n");
 }
 

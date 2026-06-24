@@ -175,4 +175,29 @@ await assert.rejects(
   /session\.id is required/,
 );
 
+let abortListener: ((event: PiSdkAgentSessionEventLike) => void) | undefined;
+let abortDisposed = false;
+const abortingExecutor = createPiSdkAgentExecutor({
+  createSession: () => ({
+    async prompt() {
+      await new Promise(() => undefined);
+    },
+    subscribe(listener) {
+      abortListener = listener;
+      return () => {
+        abortListener = undefined;
+      };
+    },
+    dispose() {
+      abortDisposed = true;
+    },
+  }),
+});
+const controller = new AbortController();
+const abortPromise = abortingExecutor("hang", { nodeId: "agent_b", provide: "chat", abortSignal: controller.signal });
+controller.abort();
+await assert.rejects(async () => abortPromise, /Invocation aborted/);
+assert.equal(abortListener, undefined);
+assert.equal(abortDisposed, true);
+
 console.log("pi sdk agent adapter works");

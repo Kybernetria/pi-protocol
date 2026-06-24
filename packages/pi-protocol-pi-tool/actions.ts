@@ -1,4 +1,4 @@
-import type { InvokeRequest, ProtocolFabric, ProtocolNode, ProvideSnapshot, ProvideSpec } from "@kyvernitria/pi-protocol-minimal";
+import { createChildInvokeRequest, type InvokeRequest, type ProtocolFabric, type ProtocolNode, type ProvideSnapshot, type ProvideSpec } from "@kyvernitria/pi-protocol-minimal";
 import { requireText } from "./helpers.ts";
 import { invokeWithTraceUpdates } from "./trace.ts";
 import type { ProtocolToolInput, ProtocolToolUpdateCallback } from "./types.ts";
@@ -7,6 +7,7 @@ export async function handleProtocolToolInput(
   fabric: ProtocolFabric,
   input: ProtocolToolInput,
   onUpdate?: ProtocolToolUpdateCallback,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   switch (input.action) {
     case "registry":
@@ -34,8 +35,8 @@ export async function handleProtocolToolInput(
     }
 
     case "invoke": {
-      const request = toInvokeRequest(input);
-      return invokeWithTraceUpdates(fabric, request, onUpdate);
+      const request = createChildInvokeRequest(toInvokeRequest(input));
+      return invokeWithTraceUpdates(fabric, request, onUpdate, signal);
     }
   }
 }
@@ -52,6 +53,7 @@ function summarizeNode(node: ProtocolNode): unknown {
           Object.entries(node.agents).map(([name, agent]) => [name, { description: agent.description }]),
         )
       : undefined,
+    invocationControls: summarizeInvocationControls(),
     next: "describe_provide -> invoke",
   };
 }
@@ -76,7 +78,35 @@ function summarizeProvideSnapshot(provide: ProvideSnapshot): unknown {
     input: summarizeSchema(provide.inputSchema),
     output: summarizeSchema(provide.outputSchema),
     execution: provide.execution.type,
-    invoke: { action: "invoke", nodeId: provide.nodeId, provide: provide.name, input: "..." },
+    invocationControls: summarizeInvocationControls(provide),
+    invoke: {
+      action: "invoke",
+      nodeId: provide.nodeId,
+      provide: provide.name,
+      input: "...",
+      request: {
+        nodeId: provide.nodeId,
+        provide: provide.name,
+        input: "...",
+        session: { id: "optional-session-id", mode: "continue" },
+      },
+    },
+  };
+}
+
+function summarizeInvocationControls(provide?: Pick<ProvideSpec, "execution">): unknown {
+  return {
+    request: {
+      trace: ["traceId", "spanId", "parentSpanId", "callerNodeId"],
+      session: {
+        supported: true,
+        modes: ["ephemeral", "continue", "end"],
+        requiresIdFor: ["continue", "end"],
+        note: provide?.execution.type === "agent"
+          ? "Pi SDK-backed agent provides can continue conversations when the same session.id is reused with mode='continue'."
+          : "Session controls are passed to handlers; durable continuation depends on the handler implementation.",
+      },
+    },
   };
 }
 
@@ -102,5 +132,6 @@ function toInvokeRequest(input: ProtocolToolInput): InvokeRequest {
     parentSpanId: request?.parentSpanId,
     callerNodeId: request?.callerNodeId,
     session: request?.session,
+    abortSignal: request?.abortSignal,
   };
 }

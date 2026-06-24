@@ -1,4 +1,12 @@
-import type { PiProtocolManifest, ProtocolAgentExecutor, ProtocolAgentSpec } from "@kyvernitria/pi-protocol-minimal";
+import {
+  ensureProtocolFabric,
+  runWithProtocolInvocationContextValue,
+  type CurrentProtocolInvocationContext,
+  type PiProtocolManifest,
+  type ProtocolAgentExecutor,
+  type ProtocolAgentSpec,
+} from "@kyvernitria/pi-protocol-minimal";
+import { createProtocolTool, DEFAULT_PROTOCOL_TOOL_NAME } from "@kyvernitria/pi-protocol-pi-tool";
 import {
   createPiSdkAgentExecutor,
   type CreatePiSdkAgentExecutorOptions,
@@ -34,12 +42,14 @@ export interface CreatePiSdkAgentSessionFactoryOptions {
 
 export interface CreateDefaultPiSdkAgentExecutorOptions
   extends Omit<CreatePiSdkAgentExecutorOptions, "createSession"> {
+  createSession?: PiSdkAgentSessionFactory;
   sessionOptions?: PiSdkCreateAgentSessionOptions;
   systemPrompt?: string;
   systemPromptMode?: "append" | "replace";
 }
 
 export interface CreatePiSdkAgentExecutorsFromManifestOptions {
+  createSession?: PiSdkAgentSessionFactory | ((agentName: string, agent: ProtocolAgentSpec) => PiSdkAgentSessionFactory | undefined);
   sessionOptions?: PiSdkCreateAgentSessionOptions | ((agentName: string, agent: ProtocolAgentSpec) => PiSdkCreateAgentSessionOptions | undefined);
   toPrompt?: CreatePiSdkAgentExecutorOptions["toPrompt"] | ((agentName: string, agent: ProtocolAgentSpec) => CreatePiSdkAgentExecutorOptions["toPrompt"]);
   toOutput?: CreatePiSdkAgentExecutorOptions["toOutput"] | ((agentName: string, agent: ProtocolAgentSpec) => CreatePiSdkAgentExecutorOptions["toOutput"]);
@@ -52,24 +62,46 @@ export function createPiSdkAgentSessionFactory(
     const sdk = await loadPiCodingAgentSdk();
     const sessionOptions = options.sessionOptions ?? {};
     const resourceLoader = await createResourceLoader(sdk, sessionOptions, options.systemPrompt, options.systemPromptMode);
+    let activeProtocolContext: CurrentProtocolInvocationContext | undefined;
+    const protocolTool = createProtocolTool(ensureProtocolFabric());
+    const boundProtocolTool = {
+      ...protocolTool,
+      async execute(toolCallId: string, input: Parameters<typeof protocolTool.execute>[1], signal?: AbortSignal, onUpdate?: Parameters<typeof protocolTool.execute>[3]) {
+        const execute = () => protocolTool.execute(toolCallId, input, signal, onUpdate);
+        return activeProtocolContext
+          ? runWithProtocolInvocationContextValue(activeProtocolContext, execute)
+          : execute();
+      },
+    };
+    const customTools = [
+      boundProtocolTool,
+      ...((sessionOptions.customTools as unknown[] | undefined) ?? []).filter(
+        (tool) => !isToolNamed(tool, DEFAULT_PROTOCOL_TOOL_NAME),
+      ),
+    ];
     const { session } = await sdk.createAgentSession({
       sessionManager: sdk.SessionManager.inMemory(sessionOptions.cwd),
       ...sessionOptions,
+      customTools,
       ...(resourceLoader ? { resourceLoader } : {}),
     });
+    const protocolAwareSession = session as PiSdkAgentSessionLike;
+    protocolAwareSession.setProtocolInvocationContext = (context) => {
+      activeProtocolContext = context;
+    };
 
-    return session as PiSdkAgentSessionLike;
+    return protocolAwareSession;
   };
 }
 
 export function createDefaultPiSdkAgentExecutor(
   options: CreateDefaultPiSdkAgentExecutorOptions = {},
 ): ProtocolAgentExecutor {
-  const { sessionOptions, systemPrompt, systemPromptMode, ...executorOptions } = options;
+  const { createSession, sessionOptions, systemPrompt, systemPromptMode, ...executorOptions } = options;
 
   return createPiSdkAgentExecutor({
     ...executorOptions,
-    createSession: createPiSdkAgentSessionFactory({ sessionOptions, systemPrompt, systemPromptMode }),
+    createSession: createSession ?? createPiSdkAgentSessionFactory({ sessionOptions, systemPrompt, systemPromptMode }),
   });
 }
 
@@ -80,6 +112,7 @@ export function createPiSdkAgentExecutorsFromManifest(
   const executors: Record<string, ProtocolAgentExecutor> = {};
   for (const [agentName, agent] of Object.entries(manifest.agents ?? {})) {
     executors[agentName] = createDefaultPiSdkAgentExecutor({
+      createSession: resolveCreateSession(options.createSession, agentName, agent),
       sessionOptions: resolveSessionOptions(options.sessionOptions, agentName, agent),
       toPrompt: resolveToPrompt(options.toPrompt, agentName, agent),
       toOutput: resolveToOutput(options.toOutput, agentName, agent),
@@ -88,6 +121,16 @@ export function createPiSdkAgentExecutorsFromManifest(
     });
   }
   return executors;
+}
+
+function resolveCreateSession(
+  value: CreatePiSdkAgentExecutorsFromManifestOptions["createSession"],
+  agentName: string,
+  agent: ProtocolAgentSpec,
+): PiSdkAgentSessionFactory | undefined {
+  return typeof value === "function" && value.length >= 1
+    ? (value as (agentName: string, agent: ProtocolAgentSpec) => PiSdkAgentSessionFactory | undefined)(agentName, agent)
+    : (value as PiSdkAgentSessionFactory | undefined);
 }
 
 function resolveSessionOptions(
@@ -116,6 +159,10 @@ function resolveToOutput(
   return typeof value === "function" && value.length >= 2
     ? (value as (agentName: string, agent: ProtocolAgentSpec) => CreatePiSdkAgentExecutorOptions["toOutput"])(agentName, agent)
     : (value as CreatePiSdkAgentExecutorOptions["toOutput"] | undefined);
+}
+
+function isToolNamed(tool: unknown, name: string): boolean {
+  return typeof tool === "object" && tool !== null && (tool as { name?: unknown }).name === name;
 }
 
 async function createResourceLoader(

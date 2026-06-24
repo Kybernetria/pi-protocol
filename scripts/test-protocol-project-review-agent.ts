@@ -18,8 +18,8 @@ assert.equal(node.version, "0.0.0-prototype");
 assert.equal(node.ui?.agentColors?.root_agent, "accent");
 assert.equal(node.ui?.agentColors?.project_reviewer, "success");
 assert.equal(node.ui?.agentColors?.["pi-chat"], "accent");
-assert.equal(node.agents?.project_reviewer.description, "Concise project/task reviewer for protocol certification smoke tests.");
-assert.match(node.agents?.project_reviewer.systemPrompt?.text ?? "", /Review the provided project task concisely/);
+assert.equal(node.agents?.project_reviewer.description, "Concise project/task reviewer.");
+assert.match(node.agents?.project_reviewer.systemPrompt?.text ?? "", /Review tasks concisely/);
 assert.equal(node.agents?.project_reviewer.systemPrompt?.mode, "append");
 
 const provide = fabric.describeProvide("project_review_agent", "review_task");
