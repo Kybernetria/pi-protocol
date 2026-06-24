@@ -34,6 +34,32 @@ interface PiCodingAgentSdk {
   getAgentDir?: () => string;
 }
 
+export const UNIVERSAL_PROTOCOL_AWARENESS_PROMPT = `## Pi Protocol ecosystem
+
+You are part of the pi-protocol ecosystem: a shared capability fabric where Pi packages, extensions, handlers, and agents expose callable provides.
+
+You may use the \`protocol\` tool to:
+- inspect available nodes/provides with \`registry\`
+- inspect details with \`describe_node\` or \`describe_provide\`
+- invoke relevant capabilities with \`invoke\`
+
+When a user task may be better served by another available protocol capability, use the protocol instead of solving entirely alone.
+
+Protocol provides may include tools, bridges, builders, reviewers, notifiers, memory systems, specialist agents, or other package capabilities. As the ecosystem grows, treat the registry as a resource you can draw from.
+
+Protocol agent sessions can be continued.
+
+For one-shot calls, use no session or use:
+{ "session": { "mode": "ephemeral" } }
+
+To continue a conversation with the same protocol-backed agent provide, reuse the same session id:
+{ "session": { "id": "some-stable-id", "mode": "continue" } }
+
+Use continued sessions when you need an agent to remember prior turns in the same delegated conversation.
+
+To make a final turn and dispose the continued session, use:
+{ "session": { "id": "some-stable-id", "mode": "end" } }`;
+
 export interface CreatePiSdkAgentSessionFactoryOptions {
   sessionOptions?: PiSdkCreateAgentSessionOptions;
   systemPrompt?: string;
@@ -172,7 +198,7 @@ async function createResourceLoader(
   mode: "append" | "replace" = "append",
 ): Promise<unknown> {
   const trimmed = systemPrompt?.trim();
-  if (!trimmed || !sdk.DefaultResourceLoader) return undefined;
+  if (!sdk.DefaultResourceLoader) return undefined;
 
   const loaderOptions: {
     cwd: string;
@@ -184,19 +210,32 @@ async function createResourceLoader(
     ...(sdk.getAgentDir ? { agentDir: sdk.getAgentDir() } : {}),
   };
 
-  if (mode === "replace") {
+  if (mode === "replace" && trimmed) {
+    // Preserve manifest replacement semantics for the main Pi system prompt, while
+    // still appending the universal protocol-awareness prompt for protocol agents.
     loaderOptions.systemPromptOverride = () => trimmed;
-    loaderOptions.appendSystemPromptOverride = () => [];
+    loaderOptions.appendSystemPromptOverride = (base: string[]) => appendUniquePromptChunks(base, [UNIVERSAL_PROTOCOL_AWARENESS_PROMPT]);
   } else {
-    loaderOptions.appendSystemPromptOverride = (base: string[]) => [
-      ...base,
-      `## Protocol agent instructions\n${trimmed}`,
-    ];
+    loaderOptions.appendSystemPromptOverride = (base: string[]) =>
+      appendUniquePromptChunks(base, [
+        UNIVERSAL_PROTOCOL_AWARENESS_PROMPT,
+        ...(trimmed ? [`## Protocol agent instructions\n${trimmed}`] : []),
+      ]);
   }
 
   const loader = new sdk.DefaultResourceLoader(loaderOptions);
   await loader.reload();
   return loader;
+}
+
+export function appendUniquePromptChunks(base: string[], chunks: string[]): string[] {
+  const result = [...base];
+  for (const chunk of chunks) {
+    if (!result.some((item) => item.includes(chunk))) {
+      result.push(chunk);
+    }
+  }
+  return result;
 }
 
 async function loadPiCodingAgentSdk(): Promise<PiCodingAgentSdk> {

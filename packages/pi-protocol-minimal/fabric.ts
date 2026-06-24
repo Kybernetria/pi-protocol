@@ -133,6 +133,21 @@ export function createProtocolFabric(): ProtocolFabric {
         return { ok: false, error };
       }
 
+      if (request.callerNodeId && provide.policy?.blacklistedCallers?.includes(request.callerNodeId)) {
+        const error = {
+          code: "POLICY_DENIED" as const,
+          message: `caller ${request.callerNodeId} is blacklisted from using ${request.nodeId}.${request.provide}`,
+        };
+        await recordProvenance(provenanceRecorder, provenanceSubscribers, {
+          ...provenance,
+          status: "failed",
+          durationMs: durationMs(),
+          ...inputPreview,
+          error,
+        });
+        return { ok: false, error };
+      }
+
       const result = await runWithProtocolInvocationContext(request, provenance, () =>
         executeProvide({
           request,
@@ -287,6 +302,7 @@ function cloneProvide<T extends ProtocolNode["provides"][number]>(provide: T): T
     inputSchema: cloneJsonLike(provide.inputSchema),
     outputSchema: cloneJsonLike(provide.outputSchema),
     execution: { ...provide.execution },
+    ...(provide.policy ? { policy: cloneJsonLike(provide.policy) } : {}),
   };
 }
 

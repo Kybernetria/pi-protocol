@@ -31,6 +31,7 @@ export type {
   ProtocolRuntimeEventRecorder,
   ProtocolUiSpec,
   ProvenanceRecorder,
+  ProvidePolicySpec,
   ProvideSnapshot,
   ProvideSpec,
   RegisterNodeInput,

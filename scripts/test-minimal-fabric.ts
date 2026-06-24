@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   createProtocolFabric,
   ensureProtocolFabric,
+  protocolNodeFromManifest,
   type InvocationProvenanceEvent,
   type JsonSchemaLite,
   type ProtocolRuntimeEvent,
@@ -175,6 +176,77 @@ unsubscribeGoodRuntimeSubscriber();
 await isolatedFabric.invoke({ nodeId: "isolated_runtime", provide: "stream", input: { text: "runtime again" } });
 assert.equal(isolatedRuntimeEvents.length, 1);
 isolatedFabric.setRuntimeEventRecorder(undefined);
+
+const policyFabric = createProtocolFabric();
+const policyProvenanceEvents: InvocationProvenanceEvent[] = [];
+policyFabric.setProvenanceRecorder((event) => {
+  policyProvenanceEvents.push(event);
+});
+policyFabric.register({
+  node: protocolNodeFromManifest({
+    protocolVersion: "0.1.0",
+    nodeId: "policy_target",
+    purpose: "Verify provide policy preservation and blacklist enforcement.",
+    provides: [
+      {
+        name: "echo",
+        description: "Echo text unless caller policy denies it.",
+        inputSchema: textInput,
+        outputSchema: textOutput,
+        execution: { type: "handler", handler: "echo" },
+        policy: { confirmation: "required", blacklistedCallers: ["bad_agent.invoke"] },
+      },
+    ],
+  }),
+  handlers: { echo: async (input) => input },
+});
+assert.deepEqual(policyFabric.registry().nodes[0]?.provides[0]?.policy, {
+  confirmation: "required",
+  blacklistedCallers: ["bad_agent.invoke"],
+});
+assert.deepEqual(policyFabric.registry().provides[0]?.policy, {
+  confirmation: "required",
+  blacklistedCallers: ["bad_agent.invoke"],
+});
+assert.deepEqual(policyFabric.describeProvide("policy_target", "echo")?.policy, {
+  confirmation: "required",
+  blacklistedCallers: ["bad_agent.invoke"],
+});
+policyProvenanceEvents.length = 0;
+const deniedPolicyResult = await policyFabric.invoke({
+  nodeId: "policy_target",
+  provide: "echo",
+  input: { text: "blocked" },
+  callerNodeId: "bad_agent.invoke",
+});
+assert.deepEqual(deniedPolicyResult, {
+  ok: false,
+  error: {
+    code: "POLICY_DENIED",
+    message: "caller bad_agent.invoke is blacklisted from using policy_target.echo",
+  },
+});
+assert.equal(policyProvenanceEvents.length, 2);
+assert.equal(policyProvenanceEvents[1]?.status, "failed");
+assert.deepEqual(policyProvenanceEvents[1]?.error, deniedPolicyResult.error);
+const allowedPolicyResult = await policyFabric.invoke({
+  nodeId: "policy_target",
+  provide: "echo",
+  input: { text: "allowed" },
+  callerNodeId: "good_agent.invoke",
+});
+assert.deepEqual(allowedPolicyResult, {
+  ok: true,
+  nodeId: "policy_target",
+  provide: "echo",
+  output: { text: "allowed" },
+});
+const anonymousPolicyResult = await policyFabric.invoke({
+  nodeId: "policy_target",
+  provide: "echo",
+  input: { text: "anonymous allowed" },
+});
+assert.equal(anonymousPolicyResult.ok, true);
 
 const legacyGlobalFabric = { registry: () => ({ nodes: [], provides: [] }) };
 (globalThis as Record<PropertyKey, unknown>)[Symbol.for("pi-protocol.minimal.fabric")] = legacyGlobalFabric;

@@ -5,6 +5,10 @@ import {
   type PiSdkAgentSessionEventLike,
   type PiSdkAgentSessionLike,
 } from "../packages/pi-protocol-pi-sdk/index.ts";
+import {
+  appendUniquePromptChunks,
+  UNIVERSAL_PROTOCOL_AWARENESS_PROMPT,
+} from "../packages/pi-protocol-pi-sdk/agent-session.ts";
 
 function createFakeSession(options: { throwOnPrompt?: boolean } = {}) {
   let listener: ((event: PiSdkAgentSessionEventLike) => void) | undefined;
@@ -49,6 +53,21 @@ function createFakeSession(options: { throwOnPrompt?: boolean } = {}) {
     },
   };
 }
+
+const composedPromptChunks = appendUniquePromptChunks(["base prompt"], [
+  UNIVERSAL_PROTOCOL_AWARENESS_PROMPT,
+  "## Protocol agent instructions\nReview tasks concisely.",
+]);
+assert.equal(composedPromptChunks.length, 3);
+assert.equal(composedPromptChunks[1], UNIVERSAL_PROTOCOL_AWARENESS_PROMPT);
+assert.match(composedPromptChunks[1], /## Pi Protocol ecosystem/);
+assert.match(composedPromptChunks[1], /Protocol agent sessions can be continued/);
+assert.match(composedPromptChunks[1], /"mode": "continue"/);
+assert.equal(composedPromptChunks[2], "## Protocol agent instructions\nReview tasks concisely.");
+assert.deepEqual(
+  appendUniquePromptChunks(composedPromptChunks, [UNIVERSAL_PROTOCOL_AWARENESS_PROMPT]),
+  composedPromptChunks,
+);
 
 const fake = createFakeSession();
 const executor = createPiSdkAgentExecutor({

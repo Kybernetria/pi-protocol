@@ -56,6 +56,7 @@ function provideFromManifest(provide: PiProtocolManifest["provides"][number]): P
     version: provide.version,
     tags: provide.tags,
     effects: provide.effects,
+    policy: provide.policy,
     inputSchema: provide.inputSchema,
     outputSchema: provide.outputSchema,
     execution: { ...provide.execution },

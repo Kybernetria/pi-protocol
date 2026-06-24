@@ -35,6 +35,7 @@ export function createProtocolTool(fabric: ProtocolFabric, options: ProtocolTool
       `Use ${toolName} for protocol capabilities: registry -> describe_node/describe_provide -> invoke.`,
       `For simple invoke, pass nodeId, provide, and input; do not invent separate tools for protocol provides.`,
       `For trace/session controls, use request: { nodeId, provide, input, traceId?, spanId?, parentSpanId?, callerNodeId?, session? }.`,
+      `For protocol callers, prefer callerNodeId in the form nodeId.provideName; root/user calls may use ids like pi-chat or root_agent.`,
       `To continue a protocol-backed agent conversation, reuse request.session.id with request.session.mode = "continue"; use "end" to dispose it.`,
     ],
     parameters: Type.Object({

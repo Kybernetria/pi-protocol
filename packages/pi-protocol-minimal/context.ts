@@ -57,6 +57,8 @@ export function createChildInvokeRequest(request: InvokeRequest): InvokeRequest 
     traceId: request.traceId ?? current.traceId,
     parentSpanId: request.parentSpanId ?? current.spanId,
     spanId: request.spanId ?? createChildSpanId(current),
+    // Canonical protocol caller ids should generally use nodeId.provideName.
+    // Root/user-originated calls may keep existing identities like pi-chat or root_agent.
     callerNodeId: request.callerNodeId ?? `${current.nodeId}.${current.provide}`,
     session: request.session ?? createInheritedChildSession(current),
     abortSignal: request.abortSignal ?? current.abortSignal,

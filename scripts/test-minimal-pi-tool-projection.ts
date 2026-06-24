@@ -48,6 +48,7 @@ fabric.register({
         inputSchema: textSchema,
         outputSchema: textSchema,
         execution: { type: "handler", handler: "echo" },
+        policy: { confirmation: "required", blacklistedCallers: ["blocked_tool_agent.invoke"] },
       },
     ],
   },
@@ -117,6 +118,9 @@ assert.ok(provideResult.content[0]?.text.includes('"globalId": "alpha_tool_proje
 assert.ok(provideResult.content[0]?.text.includes('"session"'));
 assert.ok(provideResult.content[0]?.text.includes('"requiresIdFor"'));
 assert.ok(provideResult.content[0]?.text.includes('"mode": "continue"'));
+assert.ok(provideResult.content[0]?.text.includes('"policy"'));
+assert.ok(provideResult.content[0]?.text.includes('"confirmation": "required"'));
+assert.ok(provideResult.content[0]?.text.includes('"blocked_tool_agent.invoke"'));
 
 const invokeResult = await tool.execute("call-4", {
   action: "invoke",

@@ -145,6 +145,11 @@ export interface ProtocolNode {
 
 // A provide is one callable/discoverable capability inside a node.
 // Schemas define the contract; execution defines what implements it.
+export interface ProvidePolicySpec {
+  confirmation?: "free" | "required";
+  blacklistedCallers?: string[];
+}
+
 export interface ProvideSpec {
   name: string;
   description: string;
@@ -154,6 +159,7 @@ export interface ProvideSpec {
   version?: string;
   tags?: string[];
   effects?: string[];
+  policy?: ProvidePolicySpec;
 }
 
 export interface RegisterNodeInput {
@@ -191,7 +197,7 @@ export interface InvokeRequest {
   abortSignal?: AbortSignal;
 }
 
-export type InvokeErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "INVALID_OUTPUT" | "EXECUTION_FAILED" | "ABORTED";
+export type InvokeErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "INVALID_OUTPUT" | "EXECUTION_FAILED" | "ABORTED" | "POLICY_DENIED";
 
 export type InvokeResult =
   | { ok: true; nodeId: string; provide: string; output: unknown }
