@@ -62,6 +62,40 @@ Agent provide:
 
 `"type": "agent"` means the provide is backed by a real Pi SDK `AgentSession` when registered through the official Pi SDK adapter.
 
+## Agent model provider selection
+
+Agent-backed provides normally use standard Pi model selection: explicit SDK `sessionOptions.model`, Pi settings (`defaultProvider` / `defaultModel`), then Pi's usual available-model fallback. If a manifest does not declare a model preference, protocol does not override that behavior.
+
+A protocol agent may request a concrete Pi model with `agents.<agentName>.modelHint`:
+
+```json
+{
+  "agents": {
+    "project_reviewer": {
+      "description": "Concise project/task reviewer.",
+      "modelHint": {
+        "specific": "opencode-go/deepseek-v4-flash",
+        "thinkingLevel": "high"
+      }
+    }
+  }
+}
+```
+
+Fields:
+
+- `specific` — concrete model. Prefer `provider/model-id`, for example `openai/gpt-4o` or `opencode-go/deepseek-v4-flash`.
+- `provider` — optional provider when `specific` is only a model id.
+- `thinkingLevel` — optional Pi thinking level: `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`.
+- `tier` — advisory metadata (`fast`, `balanced`, `reasoning`) for UIs/routing layers; it does not by itself select a model.
+
+`modelHint.specific` is applied by `createPiSdkAgentExecutorsFromManifest()` / the Pi SDK agent-session adapter. The model must exist in Pi's `ModelRegistry`; unresolved model hints fail the invocation instead of silently falling back to another model. Protocol invoke traces show the actual selected agent model, for example:
+
+```text
+agent model: opencode-go/deepseek-v4-flash (high)
+agent prompt:
+```
+
 ## Canonical real-agent manifest
 
 ```json
@@ -77,6 +111,10 @@ Agent provide:
       "systemPrompt": {
         "text": "Review tasks concisely.",
         "mode": "append"
+      },
+      "modelHint": {
+        "specific": "opencode-go/deepseek-v4-flash",
+        "thinkingLevel": "high"
       }
     }
   },
