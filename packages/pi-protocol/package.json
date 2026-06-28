@@ -1,0 +1,47 @@
+{
+  "name": "@kybernetria/pi-protocol",
+  "version": "1.0.0",
+  "description": "Pi Protocol — shared in-memory fabric with handler/agent execution, protocol tool, and pi SDK adapter",
+  "type": "module",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./tool": "./tool/index.ts",
+    "./sdk": "./sdk/index.ts",
+    "./sdk/agent-session": "./sdk/agent-session.ts"
+  },
+  "files": [
+    "*.ts",
+    "tool/*.ts",
+    "sdk/*.ts",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": ["./extension.ts"]
+  },
+  "keywords": [
+    "pi-protocol",
+    "pi-extension",
+    "protocol-fabric"
+  ],
+  "author": "kybernetria",
+  "license": "AGPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kybernetria/pi-protocol.git",
+    "directory": "packages/pi-protocol"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@mariozechner/pi-ai": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@mariozechner/pi-ai": {
+      "optional": true
+    }
+  }
+}

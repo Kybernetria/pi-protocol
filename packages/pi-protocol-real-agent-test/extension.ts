@@ -5,8 +5,8 @@ import {
   type InvokeResult,
   type PiProtocolManifest,
   type ProtocolInvocationContext,
-} from "@kyvernitria/pi-protocol-minimal";
-import { createPiSdkAgentExecutorsFromManifest } from "@kyvernitria/pi-protocol-pi-sdk/agent-session";
+} from "@kybernetria/pi-protocol";
+import { createPiSdkAgentExecutorsFromManifest } from "@kybernetria/pi-protocol/sdk/agent-session";
 import realAgentManifestJson from "./pi.protocol.json" with { type: "json" };
 import realAgentChainManifestJson from "./pi.chain.protocol.json" with { type: "json" };
 

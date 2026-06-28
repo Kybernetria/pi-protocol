@@ -15,7 +15,7 @@ import realAgentSmokeFixtureExtension from "../packages/pi-protocol-real-agent-t
 const manifest: PiProtocolManifest = {
   protocolVersion: "0.2.0",
   nodeId: "official_real_agent_runtime_test",
-  packageId: "@kyvernitria/pi-protocol-real-agent-runtime-test",
+  packageId: "@kybernetria/pi-protocol-real-agent-runtime-test",
   version: "0.0.0-test",
   purpose: "Verifies official Pi SDK-backed agent provide registration and orchestration.",
   agents: {

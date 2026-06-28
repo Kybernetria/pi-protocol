@@ -1,4 +1,4 @@
-import { createChildInvokeRequest, type InvokeRequest, type ProtocolFabric, type ProtocolNode, type ProvideSnapshot, type ProvideSpec } from "@kyvernitria/pi-protocol-minimal";
+import { createChildInvokeRequest, type InvokeRequest, type ProtocolFabric, type ProtocolNode, type ProvideSnapshot, type ProvideSpec } from "../index.ts";
 import { requireText } from "./helpers.ts";
 import { invokeWithTraceUpdates } from "./trace.ts";
 import type { ProtocolToolInput, ProtocolToolUpdateCallback } from "./types.ts";

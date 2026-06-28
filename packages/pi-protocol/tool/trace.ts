@@ -4,7 +4,7 @@ import type {
   ProtocolFabric,
   ProtocolRuntimeEvent,
   RegistrySnapshot,
-} from "@kyvernitria/pi-protocol-minimal";
+} from "../index.ts";
 import { createProtocolToolId } from "./helpers.ts";
 import type { ProtocolToolExecutionResult, ProtocolToolUpdateCallback } from "./types.ts";
 

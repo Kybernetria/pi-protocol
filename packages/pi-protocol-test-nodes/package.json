@@ -1,10 +1,10 @@
 {
-  "name": "@kyvernitria/pi-protocol-test-nodes",
+  "name": "@kybernetria/pi-protocol-test-nodes",
   "version": "0.0.0-prototype",
   "type": "module",
   "exports": "./extension.ts",
   "dependencies": {
-    "@kyvernitria/pi-protocol-minimal": "0.0.0-prototype"
+    "@kybernetria/pi-protocol": "0.0.0-prototype"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

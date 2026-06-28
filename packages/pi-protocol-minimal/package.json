@@ -1,6 +1,0 @@
-{
-  "name": "@kyvernitria/pi-protocol-minimal",
-  "version": "0.0.0-prototype",
-  "type": "module",
-  "exports": "./index.ts"
-}

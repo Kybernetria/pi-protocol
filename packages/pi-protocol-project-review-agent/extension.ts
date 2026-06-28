@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { ensureProtocolFabric, registerProtocolManifest, type PiProtocolManifest } from "@kyvernitria/pi-protocol-minimal";
-import { createPiSdkAgentExecutorsFromManifest } from "@kyvernitria/pi-protocol-pi-sdk/agent-session";
+import { ensureProtocolFabric, registerProtocolManifest, type PiProtocolManifest } from "@kybernetria/pi-protocol";
+import { createPiSdkAgentExecutorsFromManifest } from "@kybernetria/pi-protocol/sdk/agent-session";
 import manifestJson from "./pi.protocol.json" with { type: "json" };
 
 const manifest = manifestJson as PiProtocolManifest;

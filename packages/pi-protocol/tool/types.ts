@@ -1,4 +1,4 @@
-import type { InvokeRequest } from "@kyvernitria/pi-protocol-minimal";
+import type { InvokeRequest } from "../index.ts";
 
 export const DEFAULT_PROTOCOL_TOOL_NAME = "protocol";
 

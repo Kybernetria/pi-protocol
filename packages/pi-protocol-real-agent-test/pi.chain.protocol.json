@@ -1,7 +1,7 @@
 {
   "protocolVersion": "0.2.0",
   "nodeId": "real_agent_chain",
-  "packageId": "@kyvernitria/pi-protocol-real-agent-test",
+  "packageId": "@kybernetria/pi-protocol-real-agent-test",
   "version": "0.0.0-prototype",
   "purpose": "Real Pi SDK-backed nested A -> B -> C protocol chain test node.",
   "agents": {

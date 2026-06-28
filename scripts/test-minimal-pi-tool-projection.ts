@@ -200,7 +200,7 @@ assert.ok(invokeResultText.includes("hello via tool"));
 const manifest = {
   protocolVersion: "0.2.0",
   nodeId: "manifest_tool_projection",
-  packageId: "@kyvernitria/manifest-tool-projection-test",
+  packageId: "@kybernetria/manifest-tool-projection-test",
   version: "1.0.0",
   purpose: "Verify pi.protocol.json registration carries UI metadata.",
   ui: {

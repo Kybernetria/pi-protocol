@@ -1,4 +1,4 @@
-import type { RegistrySnapshot } from "@kyvernitria/pi-protocol-minimal";
+import type { RegistrySnapshot } from "../index.ts";
 import type { ProtocolTraceDetails } from "./trace.ts";
 
 export function isInvokeToolResult(

@@ -3,7 +3,7 @@ import type {
   ProtocolAgentExecutor,
   ProtocolInvocationContext,
   ProtocolRuntimeEvent,
-} from "@kyvernitria/pi-protocol-minimal";
+} from "../index.ts";
 
 const PI_SDK_AGENT_SESSION_CACHE_KEY = Symbol.for("pi-protocol.pi-sdk.agent-session-cache");
 

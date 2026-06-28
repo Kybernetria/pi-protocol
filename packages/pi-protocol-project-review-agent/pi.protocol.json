@@ -1,7 +1,7 @@
 {
   "protocolVersion": "0.2.0",
   "nodeId": "project_review_agent",
-  "packageId": "@kyvernitria/pi-protocol-project-review-agent",
+  "packageId": "@kybernetria/pi-protocol-project-review-agent",
   "version": "0.0.0-prototype",
   "purpose": "Project/task review agent.",
   "agents": {

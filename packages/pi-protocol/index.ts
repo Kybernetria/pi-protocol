@@ -38,3 +38,19 @@ export type {
   RecorderUnsubscribe,
   RegistrySnapshot,
 } from "./types.ts";
+
+// Re-export tool and sdk for convenience (also available via ./tool and ./sdk entry points)
+export { createProtocolTool, registerProtocolTool, handleProtocolToolInput } from "./tool/index.ts";
+export type {
+  ProtocolToolAction,
+  ProtocolToolExecutionResult,
+  ProtocolToolInput,
+  ProtocolToolLike,
+  ProtocolToolOptions,
+  ProtocolToolRegistrationTarget,
+  ProtocolToolResultContent,
+  ProtocolToolThemeLike,
+  ProtocolToolUpdateCallback,
+} from "./tool/index.ts";
+
+export { createPiSdkAgentExecutor } from "./sdk/index.ts";

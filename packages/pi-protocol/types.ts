@@ -43,8 +43,14 @@ export interface ProtocolAgentSpec {
   description?: string;
   systemPrompt?: ProtocolAgentInstructionSpec;
   modelHint?: {
+    /** Advisory strength class for UIs/routing layers. */
     tier?: "fast" | "balanced" | "reasoning";
+    /** Concrete model override. Use provider/model-id when possible, e.g. "deepseek/deepseek-chat". */
     specific?: string;
+    /** Optional provider when specific is only a model id. */
+    provider?: string;
+    /** Optional Pi thinking level for this protocol-backed agent session. */
+    thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   };
 }
 

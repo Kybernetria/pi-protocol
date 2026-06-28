@@ -1,8 +1,8 @@
-# @kyvernitria/pi-protocol-real-agent
+# @kybernetria/pi-protocol-real-agent
 
 Official globally-loadable marker package for Pi SDK-backed pi-protocol agent execution.
 
-This package registers no test nodes. Real agent-backed provides are defined by normal packages in their own `pi.protocol.json` manifests and registered with `@kyvernitria/pi-protocol-pi-sdk/agent-session`.
+This package registers no test nodes. Real agent-backed provides are defined by normal packages in their own `pi.protocol.json` manifests and registered with `@kybernetria/pi-protocol/sdk/agent-session`.
 
 ```ts
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -10,8 +10,8 @@ import {
   ensureProtocolFabric,
   registerProtocolManifest,
   type PiProtocolManifest,
-} from "@kyvernitria/pi-protocol-minimal";
-import { createPiSdkAgentExecutorsFromManifest } from "@kyvernitria/pi-protocol-pi-sdk/agent-session";
+} from "@kybernetria/pi-protocol";
+import { createPiSdkAgentExecutorsFromManifest } from "@kybernetria/pi-protocol/sdk/agent-session";
 import manifestJson from "./pi.protocol.json" with { type: "json" };
 
 const manifest = manifestJson as PiProtocolManifest;
@@ -37,4 +37,4 @@ Mental model:
 - P2P = one provide invokes another provide through `fabric.invoke`.
 - orchestration = a handler invokes multiple provides through `fabric.invoke`.
 
-`pi-protocol-minimal` stays generic. The Pi SDK `AgentSession` adapter lives in `@kyvernitria/pi-protocol-pi-sdk`.
+`pi-protocol-minimal` stays generic. The Pi SDK `AgentSession` adapter lives in `@kybernetria/pi-protocol/sdk`.

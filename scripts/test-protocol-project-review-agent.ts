@@ -13,7 +13,7 @@ assert.ok(registry.provides.some((provide) => provide.globalId === "project_revi
 const node = fabric.describeNode("project_review_agent");
 assert.ok(node);
 assert.equal(node.protocolVersion, "0.2.0");
-assert.equal(node.packageId, "@kyvernitria/pi-protocol-project-review-agent");
+assert.equal(node.packageId, "@kybernetria/pi-protocol-project-review-agent");
 assert.equal(node.version, "0.0.0-prototype");
 assert.equal(node.ui?.agentColors?.root_agent, "accent");
 assert.equal(node.ui?.agentColors?.project_reviewer, "success");

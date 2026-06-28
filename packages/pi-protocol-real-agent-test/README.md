@@ -1,4 +1,4 @@
-# @kyvernitria/pi-protocol-real-agent-test
+# @kybernetria/pi-protocol-real-agent-test
 
 Smoke-test/example fixture for real Pi SDK-backed protocol agents.
 
@@ -10,4 +10,4 @@ This package intentionally is **not** advertised through `package.json` `pi.exte
 - trace/span/session propagation
 - A -> B -> C -> B multi-agent smoke chain
 
-Use `@kyvernitria/pi-protocol-real-agent` plus package-local registration with `@kyvernitria/pi-protocol-pi-sdk/agent-session` for official runtime usage.
+Use `@kybernetria/pi-protocol-real-agent` plus package-local registration with `@kybernetria/pi-protocol/sdk/agent-session` for official runtime usage.

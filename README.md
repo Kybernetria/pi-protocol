@@ -18,11 +18,11 @@ There is no special agent P2P transport. Agent-backed provides and handler-backe
 
 ## Packages
 
-- `@kyvernitria/pi-protocol-minimal` - generic registry, describe, invoke, manifest registration, execution type definitions, handler/agent executor interfaces, provenance/session fields
-- `@kyvernitria/pi-protocol-pi-sdk` - official Pi SDK `AgentSession` adapter for real agent-backed provides
-- `@kyvernitria/pi-protocol-real-agent` - globally-loadable official marker/docs package for real-agent runtime support; registers no test nodes
-- `@kyvernitria/pi-protocol-pi-tool` - Pi tool projection named `protocol`
-- `@kyvernitria/pi-protocol-real-agent-test` - smoke-test/example fixture only; not globally advertised as a Pi extension
+- `@kybernetria/pi-protocol` - generic registry, describe, invoke, manifest registration, execution type definitions, handler/agent executor interfaces, provenance/session fields
+- `@kybernetria/pi-protocol/sdk` - official Pi SDK `AgentSession` adapter for real agent-backed provides
+- `@kybernetria/pi-protocol-real-agent` - globally-loadable official marker/docs package for real-agent runtime support; registers no test nodes
+- `@kybernetria/pi-protocol/tool` - Pi tool projection named `protocol`
+- `@kybernetria/pi-protocol-real-agent-test` - smoke-test/example fixture only; not globally advertised as a Pi extension
 
 Pi SDK-specific behavior does not belong in `pi-protocol-minimal`; the core stays generic TypeScript.
 
@@ -33,7 +33,7 @@ A compatible package:
 1. ships a `pi.protocol.json` manifest
 2. registers it from its Pi extension with `ensureProtocolFabric()` + `registerProtocolManifest()`
 3. declares each provide with canonical `execution`
-4. for agent provides, supplies executors from `@kyvernitria/pi-protocol-pi-sdk/agent-session`
+4. for agent provides, supplies executors from `@kybernetria/pi-protocol/sdk/agent-session`
 5. communicates through `registry`, `describeNode`, `describeProvide`, and `invoke`
 
 Handler provide:
@@ -68,7 +68,7 @@ Agent provide:
 {
   "protocolVersion": "0.2.0",
   "nodeId": "project_review_agent",
-  "packageId": "@kyvernitria/pi-protocol-project-review-agent",
+  "packageId": "@kybernetria/pi-protocol-project-review-agent",
   "version": "0.0.0-prototype",
   "purpose": "Project/task review agent.",
   "agents": {
@@ -103,8 +103,8 @@ import {
   ensureProtocolFabric,
   registerProtocolManifest,
   type PiProtocolManifest,
-} from "@kyvernitria/pi-protocol-minimal";
-import { createPiSdkAgentExecutorsFromManifest } from "@kyvernitria/pi-protocol-pi-sdk/agent-session";
+} from "@kybernetria/pi-protocol";
+import { createPiSdkAgentExecutorsFromManifest } from "@kybernetria/pi-protocol/sdk/agent-session";
 import manifestJson from "./pi.protocol.json" with { type: "json" };
 
 const manifest = manifestJson as PiProtocolManifest;
@@ -141,7 +141,7 @@ await fabric.invoke({
 
 ## Public API
 
-### `@kyvernitria/pi-protocol-minimal`
+### `@kybernetria/pi-protocol`
 
 ```ts
 createProtocolFabric
@@ -152,13 +152,13 @@ protocolNodeFromManifest
 
 Core public types include `PiProtocolManifest`, `ProtocolFabric`, `ProtocolNode`, `ProvideSpec`, `ProtocolHandler`, `ProtocolAgentExecutor`, `InvokeRequest`, `InvokeResult`, `RegistrySnapshot`, and `ProvideSnapshot`.
 
-### `@kyvernitria/pi-protocol-pi-sdk`
+### `@kybernetria/pi-protocol/sdk`
 
 ```ts
 createPiSdkAgentExecutor
 ```
 
-### `@kyvernitria/pi-protocol-pi-sdk/agent-session`
+### `@kybernetria/pi-protocol/sdk/agent-session`
 
 ```ts
 createPiSdkAgentSessionFactory
@@ -166,7 +166,7 @@ createDefaultPiSdkAgentExecutor
 createPiSdkAgentExecutorsFromManifest
 ```
 
-### `@kyvernitria/pi-protocol-pi-tool`
+### `@kybernetria/pi-protocol/tool`
 
 ```ts
 createProtocolTool

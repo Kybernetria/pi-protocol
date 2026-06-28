@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { ensureProtocolFabric } from "@kyvernitria/pi-protocol-minimal";
+import { ensureProtocolFabric } from "@kybernetria/pi-protocol";
 import piNgExtension from "../packages/pi-ng/extension.ts";
 import { createPiNgDaemon, type AgentSessionRouter } from "../packages/pi-ng/daemon.ts";
 import { RoutingState } from "../packages/pi-ng/routing-state.ts";

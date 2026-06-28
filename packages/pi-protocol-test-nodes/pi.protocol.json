@@ -1,7 +1,7 @@
 {
   "protocolVersion": "0.2.0",
   "nodeId": "test_handler",
-  "packageId": "@kyvernitria/pi-protocol-test-nodes",
+  "packageId": "@kybernetria/pi-protocol-test-nodes",
   "version": "0.0.0-prototype",
   "purpose": "Minimal handler-backed protocol test node.",
   "ui": {

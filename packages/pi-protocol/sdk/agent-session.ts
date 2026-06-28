@@ -5,8 +5,8 @@ import {
   type PiProtocolManifest,
   type ProtocolAgentExecutor,
   type ProtocolAgentSpec,
-} from "@kyvernitria/pi-protocol-minimal";
-import { createProtocolTool, DEFAULT_PROTOCOL_TOOL_NAME } from "@kyvernitria/pi-protocol-pi-tool";
+} from "../index.ts";
+import { createProtocolTool, DEFAULT_PROTOCOL_TOOL_NAME } from "../tool/index.ts";
 import {
   createPiSdkAgentExecutor,
   type CreatePiSdkAgentExecutorOptions,
@@ -20,8 +20,15 @@ export interface PiSdkCreateAgentSessionOptions {
   [key: string]: unknown;
 }
 
+interface PiModelRegistryLike {
+  find(provider: string, modelId: string): unknown;
+  getAll?(): unknown[];
+}
+
 interface PiCodingAgentSdk {
   createAgentSession(options?: PiSdkCreateAgentSessionOptions): Promise<{ session: unknown }>;
+  AuthStorage?: { create(authPath?: string): unknown };
+  ModelRegistry?: { create(authStorage: unknown, modelsJsonPath?: string): PiModelRegistryLike };
   SessionManager: {
     inMemory(cwd?: string): unknown;
   };
@@ -86,7 +93,7 @@ export function createPiSdkAgentSessionFactory(
 ): PiSdkAgentSessionFactory {
   return async () => {
     const sdk = await loadPiCodingAgentSdk();
-    const sessionOptions = options.sessionOptions ?? {};
+    const sessionOptions = await resolveModelHintSessionOptions(sdk, options.sessionOptions ?? {});
     const resourceLoader = await createResourceLoader(sdk, sessionOptions, options.systemPrompt, options.systemPromptMode);
     let activeProtocolContext: CurrentProtocolInvocationContext | undefined;
     const protocolTool = createProtocolTool(ensureProtocolFabric());
@@ -139,7 +146,7 @@ export function createPiSdkAgentExecutorsFromManifest(
   for (const [agentName, agent] of Object.entries(manifest.agents ?? {})) {
     executors[agentName] = createDefaultPiSdkAgentExecutor({
       createSession: resolveCreateSession(options.createSession, agentName, agent),
-      sessionOptions: resolveSessionOptions(options.sessionOptions, agentName, agent),
+      sessionOptions: withAgentModelHint(resolveSessionOptions(options.sessionOptions, agentName, agent), agent),
       toPrompt: resolveToPrompt(options.toPrompt, agentName, agent),
       toOutput: resolveToOutput(options.toOutput, agentName, agent),
       systemPrompt: agent.systemPrompt?.text,
@@ -189,6 +196,77 @@ function resolveToOutput(
 
 function isToolNamed(tool: unknown, name: string): boolean {
   return typeof tool === "object" && tool !== null && (tool as { name?: unknown }).name === name;
+}
+
+function withAgentModelHint(
+  sessionOptions: PiSdkCreateAgentSessionOptions | undefined,
+  agent: ProtocolAgentSpec,
+): PiSdkCreateAgentSessionOptions | undefined {
+  const hint = agent.modelHint;
+  if (!hint?.specific && !hint?.thinkingLevel) return sessionOptions;
+  return {
+    ...(sessionOptions ?? {}),
+    ...(hint.specific ? { protocolModelHint: hint } : {}),
+    ...(hint.thinkingLevel && !(sessionOptions && "thinkingLevel" in sessionOptions) ? { thinkingLevel: hint.thinkingLevel } : {}),
+  };
+}
+
+async function resolveModelHintSessionOptions(
+  sdk: PiCodingAgentSdk,
+  sessionOptions: PiSdkCreateAgentSessionOptions,
+): Promise<PiSdkCreateAgentSessionOptions> {
+  const hint = sessionOptions.protocolModelHint as ProtocolAgentSpec["modelHint"] | undefined;
+  if (!hint?.specific || sessionOptions.model) return sessionOptions;
+
+  const registry = getOrCreateModelRegistry(sdk, sessionOptions);
+  const model = resolveModelFromHint(registry, hint);
+  if (!model) {
+    throw new Error(`Protocol modelHint.specific ${JSON.stringify(hint.specific)} could not be resolved. Use "provider/model-id" or include modelHint.provider.`);
+  }
+
+  const { protocolModelHint: _protocolModelHint, ...rest } = sessionOptions;
+  return { ...rest, model, modelRegistry: sessionOptions.modelRegistry ?? registry };
+}
+
+function getOrCreateModelRegistry(sdk: PiCodingAgentSdk, sessionOptions: PiSdkCreateAgentSessionOptions): PiModelRegistryLike {
+  const existing = sessionOptions.modelRegistry as PiModelRegistryLike | undefined;
+  if (existing?.find) return existing;
+  if (!sdk.AuthStorage || !sdk.ModelRegistry) {
+    throw new Error("Protocol modelHint.specific requires Pi SDK AuthStorage and ModelRegistry exports.");
+  }
+  const agentDir = typeof sessionOptions.agentDir === "string"
+    ? sessionOptions.agentDir
+    : sdk.getAgentDir?.();
+  const auth = sdk.AuthStorage.create(agentDir ? `${agentDir}/auth.json` : undefined);
+  return sdk.ModelRegistry.create(auth, agentDir ? `${agentDir}/models.json` : undefined);
+}
+
+function resolveModelFromHint(registry: PiModelRegistryLike, hint: NonNullable<ProtocolAgentSpec["modelHint"]>): unknown {
+  const specific = hint.specific?.trim();
+  if (!specific) return undefined;
+
+  const slash = specific.indexOf("/");
+  if (slash > 0) {
+    const provider = specific.slice(0, slash).trim();
+    const modelId = specific.slice(slash + 1).trim();
+    return provider && modelId ? registry.find(provider, modelId) : undefined;
+  }
+
+  if (hint.provider?.trim()) {
+    return registry.find(hint.provider.trim(), specific);
+  }
+
+  const normalized = normalizeModelPattern(specific);
+  const matches = registry.getAll?.().filter((model) => {
+    const candidate = model as { id?: unknown; model?: unknown; name?: unknown; provider?: unknown };
+    return [candidate.id, candidate.model, candidate.name, `${candidate.provider ?? ""}/${candidate.id ?? candidate.model ?? ""}`]
+      .some((value) => normalizeModelPattern(String(value ?? "")) === normalized);
+  }) ?? [];
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+function normalizeModelPattern(value: string): string {
+  return value.toLowerCase().replace(/[\s:_-]+/g, "");
 }
 
 async function createResourceLoader(

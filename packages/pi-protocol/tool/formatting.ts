@@ -3,7 +3,7 @@ import type {
   InvokeRequest,
   ProtocolRuntimeEvent,
   RegistrySnapshot,
-} from "@kyvernitria/pi-protocol-minimal";
+} from "../index.ts";
 import { formatOneLinePreview, formatTarget, formatValue, indentPreviewLines } from "./helpers.ts";
 import { isInvokeToolResult, isRegistryToolResult, isSuccessfulInvokeToolResult, isTextObject } from "./guards.ts";
 import type { ProtocolTraceDetails } from "./trace.ts";
