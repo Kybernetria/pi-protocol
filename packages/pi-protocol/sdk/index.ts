@@ -35,6 +35,8 @@ export interface PiSdkAgentSessionLike {
   prompt(text: string): Promise<void>;
   subscribe(listener: (event: PiSdkAgentSessionEventLike) => void): () => void;
   dispose(): void;
+  readonly model?: unknown;
+  readonly thinkingLevel?: string;
   setProtocolInvocationContext?(context: CurrentProtocolInvocationContext | undefined): void;
 }
 
@@ -78,6 +80,16 @@ export function createPiSdkAgentExecutor(
 
     try {
       const prompt = toPrompt(options, input);
+      const modelLabel = formatSessionModel(session);
+      if (modelLabel) {
+        await emitRuntimeEventSafely(context, {
+          type: "executor_session_model",
+          traceId: context?.traceId,
+          spanId: context?.spanId,
+          model: modelLabel,
+          thinkingLevel: typeof session.thinkingLevel === "string" ? session.thinkingLevel : undefined,
+        });
+      }
       await emitRuntimeEventSafely(context, {
         type: "executor_input_snapshot",
         traceId: context?.traceId,
@@ -125,6 +137,13 @@ async function emitRuntimeEventSafely(
 
 type RuntimeEventDraft =
   | {
+      type: "executor_session_model";
+      traceId?: string;
+      spanId?: string;
+      model: string;
+      thinkingLevel?: string;
+    }
+  | {
       type: "executor_input_snapshot";
       traceId?: string;
       spanId?: string;
@@ -141,6 +160,16 @@ type RuntimeEventDraft =
     };
 
 function toRuntimeEvent(event: RuntimeEventDraft, traceId: string, spanId: string): ProtocolRuntimeEvent {
+  if (event.type === "executor_session_model") {
+    return {
+      type: event.type,
+      traceId,
+      spanId,
+      model: event.model,
+      thinkingLevel: event.thinkingLevel,
+    };
+  }
+
   if (event.type === "executor_input_snapshot") {
     return {
       type: event.type,
@@ -167,6 +196,16 @@ function toRuntimeEvent(event: RuntimeEventDraft, traceId: string, spanId: strin
     outputPreview: event.outputPreview,
     outputTruncated: event.outputTruncated,
   };
+}
+
+function formatSessionModel(session: PiSdkAgentSessionLike): string | undefined {
+  const model = session.model as { provider?: unknown; id?: unknown; name?: unknown } | undefined;
+  if (!model || typeof model !== "object") return undefined;
+  const provider = typeof model.provider === "string" ? model.provider.trim() : "";
+  const id = typeof model.id === "string" ? model.id.trim() : "";
+  if (provider && id) return `${provider}/${id}`;
+  if (id) return id;
+  return typeof model.name === "string" && model.name.trim() ? model.name.trim() : undefined;
 }
 
 function toCurrentProtocolInvocationContext(

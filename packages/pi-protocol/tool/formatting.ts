@@ -138,6 +138,7 @@ function appendTraceEventLines(
   lines.push(...formatTraceEventHeaderLines(event, theme, options, depth, agentColors, { suppressInput: hasPrompt }));
 
   if (options.expanded) {
+    lines.push(...formatTraceRuntimeModelLines(runtimeEvents, theme, depth));
     lines.push(...formatTraceRuntimePromptLines(runtimeEvents, theme, depth));
     lines.push(
       ...formatTraceRuntimeEventLines(runtimeEvents, theme, depth, {
@@ -195,6 +196,24 @@ function formatTraceEventHeaderLines(
   }
 
   return lines;
+}
+
+function formatTraceRuntimeModelLines(
+  runtimeEvents: ProtocolRuntimeEvent[],
+  theme: ProtocolToolThemeLike,
+  depth: number,
+): string[] {
+  const models = runtimeEvents.filter(
+    (event): event is Extract<ProtocolRuntimeEvent, { type: "executor_session_model" }> =>
+      event.type === "executor_session_model",
+  );
+  if (models.length === 0) return [];
+
+  const indent = "  ".repeat(depth);
+  return models.map((event) => {
+    const thinking = event.thinkingLevel ? ` (${event.thinkingLevel})` : "";
+    return `${indent}  ${theme.fg(traceDepthColor(depth), "agent model:")} ${theme.fg("muted", `${event.model}${thinking}`)}`;
+  });
 }
 
 function formatTraceRuntimePromptLines(

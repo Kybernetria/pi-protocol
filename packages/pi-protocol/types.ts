@@ -72,6 +72,13 @@ export interface InvocationSessionControl {
 
 export type ProtocolRuntimeEvent =
   | {
+      type: "executor_session_model";
+      traceId: string;
+      spanId: string;
+      model: string;
+      thinkingLevel?: string;
+    }
+  | {
       type: "executor_input_snapshot";
       traceId: string;
       spanId: string;
