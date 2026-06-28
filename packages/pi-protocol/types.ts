@@ -58,6 +58,14 @@ export interface ProtocolUiSpec {
   agentColors?: Record<string, string>;
 }
 
+export interface ProtocolDisplaySpec {
+  label?: string;
+  accentToken?: string;
+  outputToken?: string;
+  urlToken?: string;
+  resultMode?: string;
+}
+
 export type ProtocolHandler = (
   input: unknown,
   context?: ProtocolInvocationContext,
@@ -153,6 +161,7 @@ export interface ProtocolNode {
   tags?: string[];
   settings?: Record<string, ProtocolSettingSpec>;
   ui?: ProtocolUiSpec;
+  display?: ProtocolDisplaySpec;
   agents?: Record<string, ProtocolAgentSpec>;
 }
 
@@ -173,6 +182,7 @@ export interface ProvideSpec {
   tags?: string[];
   effects?: string[];
   policy?: ProvidePolicySpec;
+  display?: ProtocolDisplaySpec;
 }
 
 export interface RegisterNodeInput {

@@ -15,6 +15,8 @@ const textSchema: JsonSchemaLite = {
   properties: { text: { type: "string" } },
 };
 
+const stringSchema: JsonSchemaLite = { type: "string" };
+
 function createPiRuntime() {
   const tools: ProtocolToolLike[] = [];
 
@@ -251,6 +253,95 @@ const manifestResultLines = tool.renderResult?.(manifestInvokeResult, { expanded
 const manifestResultText = manifestResultLines.render(160).join("\n");
 assert.ok(manifestResultText.includes("[warning]manifest_agent"));
 assert.ok(manifestResultText.includes("hello manifest"));
+
+const displayManifest = {
+  protocolVersion: "0.2.0",
+  nodeId: "display_hint_tool_projection",
+  purpose: "Verify display hints remain local to Pi protocol tool rendering.",
+  display: { outputToken: "success", urlToken: "warning" },
+  provides: [
+    {
+      name: "node_tokens",
+      description: "Use node-level display hints.",
+      execution: { type: "handler", handler: "display_node_tokens" },
+      inputSchema: textSchema,
+      outputSchema: stringSchema,
+    },
+    {
+      name: "provide_tokens",
+      description: "Override node-level display hints.",
+      display: { outputToken: "accent", urlToken: "error" },
+      execution: { type: "handler", handler: "display_provide_tokens" },
+      inputSchema: textSchema,
+      outputSchema: textSchema,
+    },
+    {
+      name: "unknown_tokens",
+      description: "Fall back for unknown theme tokens.",
+      display: { outputToken: "bogusToken", urlToken: "#ff00ff" },
+      execution: { type: "handler", handler: "display_unknown_tokens" },
+      inputSchema: textSchema,
+      outputSchema: textSchema,
+    },
+  ],
+} satisfies PiProtocolManifest;
+registerProtocolManifest(fabric, {
+  manifest: displayManifest,
+  handlers: {
+    display_node_tokens: async () => "node says https://example.com/node",
+    display_provide_tokens: async () => ({ ok: true, isError: false, text: "provide says https://example.com/provide" }),
+    display_unknown_tokens: async () => ({ text: "unknown says https://example.com/unknown" }),
+  },
+});
+const defaultDisplayManifest = {
+  protocolVersion: "0.2.0",
+  nodeId: "default_display_tool_projection",
+  purpose: "Verify default Pi theme tokens for protocol output rendering.",
+  provides: [
+    {
+      name: "default_tokens",
+      description: "Use renderer default display tokens.",
+      execution: { type: "handler", handler: "display_default_tokens" },
+      inputSchema: textSchema,
+      outputSchema: stringSchema,
+    },
+  ],
+} satisfies PiProtocolManifest;
+registerProtocolManifest(fabric, {
+  manifest: defaultDisplayManifest,
+  handlers: { display_default_tokens: async () => "default says https://example.com/default" },
+});
+const knownThemeTokens = new Set(["toolTitle", "success", "error", "muted", "accent", "warning", "toolOutput", "mdLinkUrl"]);
+const tokenTheme = {
+  fg: (color: string, text: string) => {
+    if (!knownThemeTokens.has(color)) throw new Error(`unknown token ${color}`);
+    return `[${color}]${text}`;
+  },
+  bold: (text: string) => text,
+};
+async function renderDisplayHintProvide(provide: string, nodeId = "display_hint_tool_projection") {
+  const input = { action: "invoke" as const, request: { nodeId, provide, input: { text: "go" } } };
+  const result = await tool.execute(`call-display-${provide}`, input);
+  const rendered = tool.renderResult?.(result, {}, tokenTheme, { args: input }) as { render(width: number): string[] };
+  return { result, text: rendered.render(160).join("\n") };
+}
+const defaultDisplayResult = await renderDisplayHintProvide("default_tokens", "default_display_tool_projection");
+assert.equal(defaultDisplayResult.result.content[0]?.text, "default says https://example.com/default");
+assert.ok(defaultDisplayResult.text.includes("[toolOutput]default says "));
+assert.ok(defaultDisplayResult.text.includes("[mdLinkUrl]https://example.com/default"));
+const nodeDisplayResult = await renderDisplayHintProvide("node_tokens");
+assert.equal(nodeDisplayResult.result.content[0]?.text, "node says https://example.com/node");
+assert.ok(nodeDisplayResult.text.includes("[success]node says "));
+assert.ok(nodeDisplayResult.text.includes("[warning]https://example.com/node"));
+assert.ok(!nodeDisplayResult.result.content[0]?.text.includes("[success]"), "protocol output payload should remain plain");
+const provideDisplayResult = await renderDisplayHintProvide("provide_tokens");
+assert.equal(provideDisplayResult.result.content[0]?.text, "provide says https://example.com/provide");
+assert.ok(provideDisplayResult.text.includes("[accent]provide says "));
+assert.ok(provideDisplayResult.text.includes("[error]https://example.com/provide"));
+const unknownDisplayResult = await renderDisplayHintProvide("unknown_tokens");
+assert.equal(unknownDisplayResult.result.content[0]?.text, "unknown says https://example.com/unknown");
+assert.ok(unknownDisplayResult.text.includes("[toolOutput]unknown says "));
+assert.ok(unknownDisplayResult.text.includes("[mdLinkUrl]https://example.com/unknown"));
 
 const partialUpdates: Array<typeof invokeResult> = [];
 const streamingInvokeResult = await tool.execute(

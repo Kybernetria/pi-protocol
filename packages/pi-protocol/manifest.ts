@@ -24,6 +24,7 @@ export function protocolNodeFromManifest(manifest: PiProtocolManifest): Protocol
     tags: manifest.tags,
     settings: manifest.settings,
     ui: manifest.ui,
+    display: manifest.display,
     agents: manifest.agents,
     provides: manifest.provides.map(provideFromManifest),
   };
@@ -57,6 +58,7 @@ function provideFromManifest(provide: PiProtocolManifest["provides"][number]): P
     tags: provide.tags,
     effects: provide.effects,
     policy: provide.policy,
+    display: provide.display,
     inputSchema: provide.inputSchema,
     outputSchema: provide.outputSchema,
     execution: { ...provide.execution },

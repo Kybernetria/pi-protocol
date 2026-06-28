@@ -1,6 +1,7 @@
 import type {
   InvocationProvenanceEvent,
   InvokeRequest,
+  ProtocolDisplaySpec,
   ProtocolRuntimeEvent,
   RegistrySnapshot,
 } from "../index.ts";
@@ -53,7 +54,9 @@ export function formatProtocolToolResultDisplay(
   }
 
   const request = input?.request ?? input;
-  const output = result.content.map((item) => item.text).join("\n");
+  const outputStyle = resolveProtocolOutputStyle(details.trace?.registry, request?.nodeId, request?.provide);
+  const rawOutput = extractInvokeOutputText(details) ?? result.content.map((item) => item.text).join("\n");
+  const output = formatProtocolOutput(rawOutput, theme, outputStyle);
   const lines = formatProtocolTrace(details.trace, theme, options, output);
 
   if (!options.isPartial) {
@@ -61,7 +64,7 @@ export function formatProtocolToolResultDisplay(
     const status = invokeResult.ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
     const outcome = invokeResult.ok ? "returned" : "failed";
     if (lines.length > 0) lines.push("");
-    lines.push(`${status} ${theme.fg("muted", formatTarget(request?.nodeId, request?.provide))} ${outcome}`);
+    lines.push(`${status} ${safeFg(theme, outputStyle.accentToken, formatTarget(request?.nodeId, request?.provide), "accent")} ${theme.fg("muted", outcome)}`);
 
     if (output) lines.push("", output);
   }
@@ -381,5 +384,84 @@ function formatRegistrySummary(registry: RegistrySnapshot): string {
 function formatProvideOutput(output: unknown): string {
   if (typeof output === "string") return output;
   if (isTextObject(output)) return output.text;
+  if (typeof output === "object" && output !== null && typeof (output as { text?: unknown }).text === "string") {
+    return (output as { text: string }).text;
+  }
   return JSON.stringify(output, null, 2);
+}
+
+interface ResolvedProtocolOutputStyle {
+  accentToken: string;
+  outputToken: string;
+  urlToken: string;
+}
+
+function extractInvokeOutputText(details: { result: { ok: boolean; output?: unknown } }): string | undefined {
+  if (details.result.ok !== true || !("output" in details.result)) return undefined;
+  return formatProvideOutput(details.result.output);
+}
+
+function resolveProtocolOutputStyle(
+  registry: RegistrySnapshot | undefined,
+  nodeId: string | undefined,
+  provideName: string | undefined,
+): ResolvedProtocolOutputStyle {
+  const node = registry?.nodes.find((item) => item.nodeId === nodeId);
+  const provide = node?.provides.find((item) => item.name === provideName);
+  const display = mergeDisplayHints(node?.display, provide?.display);
+
+  return {
+    accentToken: normalizeThemeToken(display.accentToken, "accent"),
+    outputToken: normalizeThemeToken(display.outputToken, "toolOutput"),
+    urlToken: normalizeThemeToken(display.urlToken, "mdLinkUrl"),
+  };
+}
+
+function mergeDisplayHints(
+  nodeDisplay: ProtocolDisplaySpec | undefined,
+  provideDisplay: ProtocolDisplaySpec | undefined,
+): ProtocolDisplaySpec {
+  return { ...(nodeDisplay ?? {}), ...(provideDisplay ?? {}) };
+}
+
+function normalizeThemeToken(token: string | undefined, fallback: string): string {
+  if (!token) return fallback;
+  // Theme hints are token names only. Raw colors are intentionally not
+  // interpreted in the protocol tool projection layer.
+  if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(token)) return fallback;
+  return token;
+}
+
+function formatProtocolOutput(text: string, theme: ProtocolToolThemeLike, style: ResolvedProtocolOutputStyle): string {
+  // Protocol is exposed as a Pi tool, so render final provide output with
+  // standard Pi tool/markdown theme tokens. This is display-only: protocol
+  // payloads remain plain structured data in the fabric/runtime.
+  const urlPattern = /https?:\/\/[^\s)\]}>"]+/g;
+  let out = "";
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(urlPattern)) {
+    const url = match[0];
+    const index = match.index ?? 0;
+    if (index > lastIndex) out += safeFg(theme, style.outputToken, text.slice(lastIndex, index), "toolOutput");
+    out += safeFg(theme, style.urlToken, url, "mdLinkUrl");
+    lastIndex = index + url.length;
+  }
+
+  if (lastIndex < text.length) out += safeFg(theme, style.outputToken, text.slice(lastIndex), "toolOutput");
+  return out;
+}
+
+function safeFg(theme: ProtocolToolThemeLike, token: string, text: string, fallbackToken: string): string {
+  try {
+    return theme.fg(token, text);
+  } catch {
+    if (token === fallbackToken) return text;
+  }
+
+  try {
+    return theme.fg(fallbackToken, text);
+  } catch {
+    return text;
+  }
 }
