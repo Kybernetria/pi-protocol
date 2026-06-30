@@ -52,9 +52,16 @@ export function createChildInvokeRequest(request: InvokeRequest): InvokeRequest 
   const current = getCurrentProtocolInvocationContext();
   if (!current) return request;
 
+  const inheritsCurrentParent = request.parentSpanId === undefined;
+
   return {
     ...request,
-    traceId: request.traceId ?? current.traceId,
+    // If this call is implicitly attached as a child of the current protocol
+    // span, keep it on the current trace even when an agent supplied an
+    // arbitrary traceId. Otherwise the provenance tree is split across traces
+    // while still carrying an inherited parentSpanId, so nested recursive calls
+    // disappear from the parent trace display.
+    traceId: inheritsCurrentParent ? current.traceId : request.traceId ?? current.traceId,
     parentSpanId: request.parentSpanId ?? current.spanId,
     spanId: request.spanId ?? createChildSpanId(current),
     // Canonical protocol caller ids should generally use nodeId.provideName.

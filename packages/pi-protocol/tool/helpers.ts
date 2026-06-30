@@ -46,20 +46,30 @@ function wrapLine(line: string, width: number): string[] {
   if (visibleLength(line) <= width) return [line];
 
   const indent = line.match(/^\s*/)?.[0] ?? "";
-  const continuationIndent = indent.length < width ? indent : "";
+  const continuationIndent = visibleLength(indent) < width ? indent : "";
   const wrapped: string[] = [];
   let remaining = line;
 
-  while (visibleLength(remaining) > width) {
-    const available = Math.max(1, width - (wrapped.length > 0 ? visibleLength(continuationIndent) : 0));
+  while (visibleLength((wrapped.length > 0 ? continuationIndent : "") + remaining) > width) {
     const prefix = wrapped.length > 0 ? continuationIndent : "";
+    const available = Math.max(1, width - visibleLength(prefix));
     const { head, tail } = splitVisible(remaining, available);
-    wrapped.push(prefix + head.trimEnd());
-    remaining = tail.trimStart();
+    const activeStyle = activeSgrAtEnd(head);
+    wrapped.push(ensureFitsWidth(prefix + (activeStyle ? `${head.trimEnd()}\x1b[39m` : head.trimEnd()), width));
+    remaining = (activeStyle ? activeStyle + tail : tail).trimStart();
   }
 
-  wrapped.push((wrapped.length > 0 ? continuationIndent : "") + remaining);
+  wrapped.push(ensureFitsWidth((wrapped.length > 0 ? continuationIndent : "") + remaining, width));
   return wrapped;
+}
+
+function ensureFitsWidth(line: string, width: number): string {
+  if (visibleLength(line) <= width) return line;
+
+  const { head } = splitVisible(line, width);
+  const activeStyle = activeSgrAtEnd(head);
+  const clipped = head.trimEnd();
+  return activeStyle ? `${clipped}\x1b[39m` : clipped;
 }
 
 function splitVisible(text: string, maxVisibleChars: number): { head: string; tail: string } {
@@ -81,6 +91,16 @@ function splitVisible(text: string, maxVisibleChars: number): { head: string; ta
 
   const splitIndex = lastWhitespaceIndex > 0 && visibleChars >= maxVisibleChars ? lastWhitespaceIndex : index;
   return { head: text.slice(0, splitIndex), tail: text.slice(splitIndex) };
+}
+
+function activeSgrAtEnd(text: string): string | undefined {
+  let active: string | undefined;
+  for (const match of text.matchAll(/\x1b\[([0-9;]*)m/g)) {
+    const params = match[1]?.split(";") ?? [];
+    if (params.includes("0") || params.includes("39")) active = undefined;
+    else active = match[0];
+  }
+  return active;
 }
 
 function visibleLength(text: string): number {

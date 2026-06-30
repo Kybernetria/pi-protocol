@@ -63,6 +63,9 @@ export interface ProtocolDisplaySpec {
   accentToken?: string;
   outputToken?: string;
   urlToken?: string;
+  accentHex?: string;
+  outputHex?: string;
+  urlHex?: string;
   resultMode?: string;
 }
 

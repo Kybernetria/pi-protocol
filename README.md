@@ -62,6 +62,40 @@ Agent provide:
 
 `"type": "agent"` means the provide is backed by a real Pi SDK `AgentSession` when registered through the official Pi SDK adapter.
 
+## Display hints
+
+Nodes and provides may include optional `display` metadata for Pi protocol tool/UI rendering. These hints are presentation-only; they do not change fabric semantics, registry data, invocation outputs, traces, handler results, or payloads.
+
+Theme tokens are the default:
+
+```json
+{
+  "display": {
+    "accentToken": "accent",
+    "outputToken": "toolOutput",
+    "urlToken": "mdLinkUrl"
+  }
+}
+```
+
+Optional strict six-digit hex foreground hints may be used for final rendered protocol output only:
+
+```json
+{
+  "display": {
+    "accentToken": "accent",
+    "outputToken": "toolOutput",
+    "urlToken": "mdLinkUrl",
+    "outputHex": "#39ff14",
+    "urlHex": "#ff00ff"
+  }
+}
+```
+
+Supported hex fields are `accentHex`, `outputHex`, and `urlHex`. Hex values must be `#RRGGBB`; CSS names, `rgb()`, three-digit hex, and alpha values are ignored. Provide-level display hints override node-level display hints per field, and a valid hex hint overrides the matching token for that field.
+
+Do not return ANSI/colorized text from handlers or agents. Styling belongs only in the Pi protocol tool renderer/UI adapter layer.
+
 ## Agent model provider selection
 
 Agent-backed provides normally use standard Pi model selection: explicit SDK `sessionOptions.model`, Pi settings (`defaultProvider` / `defaultModel`), then Pi's usual available-model fallback. If a manifest does not declare a model preference, protocol does not override that behavior.

@@ -54,7 +54,8 @@ export function formatProtocolToolResultDisplay(
   }
 
   const request = input?.request ?? input;
-  const outputStyle = resolveProtocolOutputStyle(details.trace?.registry, request?.nodeId, request?.provide);
+  const displayTarget = resolveDisplayTarget(details, request);
+  const outputStyle = resolveProtocolOutputStyle(details.trace?.registry, displayTarget.nodeId, displayTarget.provide);
   const rawOutput = extractInvokeOutputText(details) ?? result.content.map((item) => item.text).join("\n");
   const output = formatProtocolOutput(rawOutput, theme, outputStyle);
   const lines = formatProtocolTrace(details.trace, theme, options, output);
@@ -64,7 +65,7 @@ export function formatProtocolToolResultDisplay(
     const status = invokeResult.ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
     const outcome = invokeResult.ok ? "returned" : "failed";
     if (lines.length > 0) lines.push("");
-    lines.push(`${status} ${safeFg(theme, outputStyle.accentToken, formatTarget(request?.nodeId, request?.provide), "accent")} ${theme.fg("muted", outcome)}`);
+    lines.push(`${status} ${safeStyle(theme, outputStyle.accent, formatTarget(displayTarget.nodeId, displayTarget.provide), "accent")} ${theme.fg("muted", outcome)}`);
 
     if (output) lines.push("", output);
   }
@@ -83,13 +84,14 @@ function formatProtocolTrace(
   const latestEvents = latestEventBySpan(trace.events);
   const runtimeEventsBySpan = groupRuntimeEventsBySpan(trace.runtimeEvents ?? []);
   const agentColors = agentColorsFromRegistry(trace);
+  const targetStyles = targetStylesFromRegistry(trace);
   const lines = [theme.fg("toolTitle", theme.bold("protocol trace"))];
   const spanIds = new Set(latestEvents.map((event) => event.spanId));
   const roots = latestEvents.filter((event) => !event.parentSpanId || !spanIds.has(event.parentSpanId));
   const childrenByParent = groupEventsByParent(latestEvents);
 
   for (const root of roots) {
-    appendTraceEventLines(lines, root, childrenByParent, runtimeEventsBySpan, agentColors, theme, options, 0, finalOutput);
+    appendTraceEventLines(lines, root, childrenByParent, runtimeEventsBySpan, agentColors, targetStyles, theme, options, 0, finalOutput);
   }
 
   return lines;
@@ -128,6 +130,7 @@ function appendTraceEventLines(
   childrenByParent: Map<string, InvocationProvenanceEvent[]>,
   runtimeEventsBySpan: Map<string, ProtocolRuntimeEvent[]>,
   agentColors: Map<string, string>,
+  targetStyles: Map<string, ResolvedStylePart>,
   theme: ProtocolToolThemeLike,
   options: { expanded?: boolean; isPartial?: boolean },
   depth: number,
@@ -138,7 +141,7 @@ function appendTraceEventLines(
   const hasPrompt = runtimeEvents.some((runtimeEvent) => runtimeEvent.type === "executor_input_snapshot");
   const indent = "  ".repeat(depth);
 
-  lines.push(...formatTraceEventHeaderLines(event, theme, options, depth, agentColors, { suppressInput: hasPrompt }));
+  lines.push(...formatTraceEventHeaderLines(event, theme, options, depth, agentColors, targetStyles, { suppressInput: hasPrompt }));
 
   if (options.expanded) {
     lines.push(...formatTraceRuntimeModelLines(runtimeEvents, theme, depth));
@@ -156,7 +159,7 @@ function appendTraceEventLines(
   }
 
   for (const child of children) {
-    appendTraceEventLines(lines, child, childrenByParent, runtimeEventsBySpan, agentColors, theme, options, depth + 1, finalOutput);
+    appendTraceEventLines(lines, child, childrenByParent, runtimeEventsBySpan, agentColors, targetStyles, theme, options, depth + 1, finalOutput);
   }
 
   if (options.expanded) {
@@ -174,15 +177,17 @@ function formatTraceEventHeaderLines(
   options: { expanded?: boolean; isPartial?: boolean },
   depth: number,
   agentColors: Map<string, string>,
+  targetStyles: Map<string, ResolvedStylePart>,
   displayOptions: { suppressInput?: boolean } = {},
 ): string[] {
   const indent = "  ".repeat(depth);
   const depthColor = traceEventColor(event, depth, agentColors);
+  const eventStyle = targetStyles.get(formatTarget(event.nodeId, event.provide)) ?? { token: depthColor };
   const icon = event.status === "failed" ? theme.fg("error", "✗") : event.status === "succeeded" ? theme.fg("success", "✓") : theme.fg("warning", "↗");
   const caller = formatValue(event.callerNodeId, "anonymous");
   const target = formatTarget(event.nodeId, event.provide);
-  const rail = theme.fg(depthColor, `${traceDepthConnector(depth)} ${traceCallerLabel(event, depth)}`);
-  const route = `${theme.fg(depthColor, caller)} ${theme.fg("muted", "→")} ${theme.fg(depthColor, target)}`;
+  const rail = safeStyle(theme, eventStyle, `${traceDepthConnector(depth)} ${traceCallerLabel(event, depth)}`, depthColor);
+  const route = `${safeStyle(theme, eventStyle, caller, depthColor)} ${theme.fg("muted", "→")} ${safeStyle(theme, eventStyle, target, depthColor)}`;
   const session = formatTraceSession(event.session);
   const duration = typeof event.durationMs === "number" ? ` ${event.durationMs}ms` : "";
   const status = event.status === "started" ? "" : event.status === "succeeded" ? duration : ` failed${duration}`;
@@ -318,6 +323,16 @@ function agentColorsFromRegistry(trace: ProtocolTraceDetails): Map<string, strin
   return colors;
 }
 
+function targetStylesFromRegistry(trace: ProtocolTraceDetails): Map<string, ResolvedStylePart> {
+  const styles = new Map<string, ResolvedStylePart>();
+  for (const node of trace.registry?.nodes ?? []) {
+    for (const provide of node.provides) {
+      styles.set(formatTarget(node.nodeId, provide.name), resolveStylePart(node.display, provide.display, "accent", "accent"));
+    }
+  }
+  return styles;
+}
+
 function traceEventColor(event: InvocationProvenanceEvent, depth: number, agentColors: Map<string, string>): string {
   const callerColor = event.callerNodeId ? agentColors.get(event.callerNodeId) : undefined;
   if (callerColor) return callerColor;
@@ -325,8 +340,10 @@ function traceEventColor(event: InvocationProvenanceEvent, depth: number, agentC
 }
 
 function traceDepthColor(depth: number): string {
-  const colors = ["accent", "warning", "success", "toolTitle", "muted"];
-  return colors[Math.min(depth, colors.length - 1)]!;
+  // Keep recursive trace layers visually distinct without falling onto tokens
+  // that commonly map to normal/default text in themes.
+  const colors = ["accent", "success"];
+  return colors[depth % colors.length]!;
 }
 
 function traceDepthConnector(depth: number): string {
@@ -390,15 +407,38 @@ function formatProvideOutput(output: unknown): string {
   return JSON.stringify(output, null, 2);
 }
 
+interface ResolvedStylePart {
+  token: string;
+  hex?: string;
+}
+
 interface ResolvedProtocolOutputStyle {
-  accentToken: string;
-  outputToken: string;
-  urlToken: string;
+  accent: ResolvedStylePart;
+  output: ResolvedStylePart;
+  url: ResolvedStylePart;
 }
 
 function extractInvokeOutputText(details: { result: { ok: boolean; output?: unknown } }): string | undefined {
   if (details.result.ok !== true || !("output" in details.result)) return undefined;
   return formatProvideOutput(details.result.output);
+}
+
+function resolveDisplayTarget(
+  details: { result: unknown; trace?: ProtocolTraceDetails },
+  request: Partial<InvokeRequest> | undefined,
+): { nodeId?: string; provide?: string } {
+  if (request?.nodeId || request?.provide) return { nodeId: request.nodeId, provide: request.provide };
+
+  const result = details.result as { ok?: unknown; nodeId?: unknown; provide?: unknown } | undefined;
+  if (result?.ok === true && typeof result.nodeId === "string" && typeof result.provide === "string") {
+    return { nodeId: result.nodeId, provide: result.provide };
+  }
+
+  const latestEvents = latestEventBySpan(details.trace?.events ?? []);
+  const spanIds = new Set(latestEvents.map((event) => event.spanId));
+  const root = latestEvents.find((event) => !event.parentSpanId || !spanIds.has(event.parentSpanId));
+  const event = root ?? latestEvents.at(-1);
+  return { nodeId: event?.nodeId, provide: event?.provide };
 }
 
 function resolveProtocolOutputStyle(
@@ -408,28 +448,62 @@ function resolveProtocolOutputStyle(
 ): ResolvedProtocolOutputStyle {
   const node = registry?.nodes.find((item) => item.nodeId === nodeId);
   const provide = node?.provides.find((item) => item.name === provideName);
-  const display = mergeDisplayHints(node?.display, provide?.display);
 
   return {
-    accentToken: normalizeThemeToken(display.accentToken, "accent"),
-    outputToken: normalizeThemeToken(display.outputToken, "toolOutput"),
-    urlToken: normalizeThemeToken(display.urlToken, "mdLinkUrl"),
+    accent: resolveStylePart(node?.display, provide?.display, "accent", "accent"),
+    output: resolveStylePart(node?.display, provide?.display, "output", "toolOutput"),
+    url: resolveStylePart(node?.display, provide?.display, "url", "mdLinkUrl"),
   };
 }
 
-function mergeDisplayHints(
+function resolveStylePart(
   nodeDisplay: ProtocolDisplaySpec | undefined,
   provideDisplay: ProtocolDisplaySpec | undefined,
-): ProtocolDisplaySpec {
-  return { ...(nodeDisplay ?? {}), ...(provideDisplay ?? {}) };
+  field: "accent" | "output" | "url",
+  defaultToken: string,
+): ResolvedStylePart {
+  const hexKey = `${field}Hex` as "accentHex" | "outputHex" | "urlHex";
+  const tokenKey = `${field}Token` as "accentToken" | "outputToken" | "urlToken";
+  const provideHexRaw = provideDisplay?.[hexKey];
+  const provideHex = normalizeHexColor(provideHexRaw);
+  if (provideHex) return { token: defaultToken, hex: provideHex };
+
+  const provideTokenRaw = provideDisplay?.[tokenKey];
+  const provideToken = normalizeThemeToken(provideTokenRaw, provideTokenRaw === undefined ? undefined : defaultToken);
+  if (provideToken) return { token: provideToken };
+  if (provideHexRaw !== undefined) return { token: defaultToken };
+
+  const nodeHexRaw = nodeDisplay?.[hexKey];
+  const nodeHex = normalizeHexColor(nodeHexRaw);
+  if (nodeHex) return { token: defaultToken, hex: nodeHex };
+
+  const nodeTokenRaw = nodeDisplay?.[tokenKey];
+  const nodeToken = normalizeThemeToken(nodeTokenRaw, nodeTokenRaw === undefined ? undefined : defaultToken);
+  if (nodeToken) return { token: nodeToken };
+
+  return { token: defaultToken };
 }
 
-function normalizeThemeToken(token: string | undefined, fallback: string): string {
+function normalizeThemeToken(token: string | undefined, fallback: string | undefined): string | undefined {
   if (!token) return fallback;
-  // Theme hints are token names only. Raw colors are intentionally not
-  // interpreted in the protocol tool projection layer.
   if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(token)) return fallback;
   return token;
+}
+
+function normalizeHexColor(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  return /^#[0-9A-Fa-f]{6}$/.test(value) ? value : undefined;
+}
+
+function formatHexFg(hex: string, text: string): string {
+  const red = Number.parseInt(hex.slice(1, 3), 16);
+  const green = Number.parseInt(hex.slice(3, 5), 16);
+  const blue = Number.parseInt(hex.slice(5, 7), 16);
+  const open = `\x1b[38;2;${red};${green};${blue}m`;
+  return text
+    .split(/(\n)/)
+    .map((part) => (part === "\n" || part === "" ? part : `${open}${part}\x1b[39m`))
+    .join("");
 }
 
 function formatProtocolOutput(text: string, theme: ProtocolToolThemeLike, style: ResolvedProtocolOutputStyle): string {
@@ -443,13 +517,18 @@ function formatProtocolOutput(text: string, theme: ProtocolToolThemeLike, style:
   for (const match of text.matchAll(urlPattern)) {
     const url = match[0];
     const index = match.index ?? 0;
-    if (index > lastIndex) out += safeFg(theme, style.outputToken, text.slice(lastIndex, index), "toolOutput");
-    out += safeFg(theme, style.urlToken, url, "mdLinkUrl");
+    if (index > lastIndex) out += safeStyle(theme, style.output, text.slice(lastIndex, index), "toolOutput");
+    out += safeStyle(theme, style.url, url, "mdLinkUrl");
     lastIndex = index + url.length;
   }
 
-  if (lastIndex < text.length) out += safeFg(theme, style.outputToken, text.slice(lastIndex), "toolOutput");
+  if (lastIndex < text.length) out += safeStyle(theme, style.output, text.slice(lastIndex), "toolOutput");
   return out;
+}
+
+function safeStyle(theme: ProtocolToolThemeLike, stylePart: ResolvedStylePart, text: string, fallbackToken: string): string {
+  if (stylePart.hex) return formatHexFg(stylePart.hex, text);
+  return safeFg(theme, stylePart.token, text, fallbackToken);
 }
 
 function safeFg(theme: ProtocolToolThemeLike, token: string, text: string, fallbackToken: string): string {

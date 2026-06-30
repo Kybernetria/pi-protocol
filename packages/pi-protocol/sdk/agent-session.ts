@@ -30,6 +30,7 @@ interface PiCodingAgentSdk {
   AuthStorage?: { create(authPath?: string): unknown };
   ModelRegistry?: { create(authStorage: unknown, modelsJsonPath?: string): PiModelRegistryLike };
   SessionManager: {
+    create(cwd?: string): unknown;
     inMemory(cwd?: string): unknown;
   };
   DefaultResourceLoader?: new (options: {
@@ -113,8 +114,8 @@ export function createPiSdkAgentSessionFactory(
       ),
     ];
     const { session } = await sdk.createAgentSession({
-      sessionManager: sdk.SessionManager.inMemory(sessionOptions.cwd),
       ...sessionOptions,
+      sessionManager: sessionOptions.sessionManager ?? sdk.SessionManager.create(sessionOptions.cwd ?? process.cwd()),
       customTools,
       ...(resourceLoader ? { resourceLoader } : {}),
     });

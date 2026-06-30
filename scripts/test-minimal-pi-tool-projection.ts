@@ -343,6 +343,68 @@ assert.equal(unknownDisplayResult.result.content[0]?.text, "unknown says https:/
 assert.ok(unknownDisplayResult.text.includes("[toolOutput]unknown says "));
 assert.ok(unknownDisplayResult.text.includes("[mdLinkUrl]https://example.com/unknown"));
 
+const hexDisplayManifest = {
+  protocolVersion: "0.2.0",
+  nodeId: "hex_display_tool_projection",
+  purpose: "Verify optional hex display hints are render-only.",
+  display: { outputHex: "#010203", urlHex: "#040506", accentToken: "warning" },
+  provides: [
+    {
+      name: "node_hex",
+      description: "Use node-level hex display hints.",
+      execution: { type: "handler", handler: "display_node_hex" },
+      inputSchema: textSchema,
+      outputSchema: stringSchema,
+    },
+    {
+      name: "provide_hex",
+      description: "Override node-level display hints with provide hex hints.",
+      display: { outputHex: "#39ff14", urlHex: "#ff00ff", accentHex: "#0000ff" },
+      execution: { type: "handler", handler: "display_provide_hex" },
+      inputSchema: textSchema,
+      outputSchema: stringSchema,
+    },
+    {
+      name: "invalid_hex",
+      description: "Invalid hex should fall back without throwing.",
+      display: { outputHex: "39ff14", urlHex: "#abc", accentHex: "red", outputToken: "success", urlToken: "warning", accentToken: "accent" },
+      execution: { type: "handler", handler: "display_invalid_hex" },
+      inputSchema: textSchema,
+      outputSchema: stringSchema,
+    },
+  ],
+} satisfies PiProtocolManifest;
+registerProtocolManifest(fabric, {
+  manifest: hexDisplayManifest,
+  handlers: {
+    display_node_hex: async () => "node hex https://example.com/node-hex",
+    display_provide_hex: async () => "provide hex https://example.com/provide-hex",
+    display_invalid_hex: async () => "invalid hex https://example.com/invalid-hex",
+  },
+});
+const ansiPattern = /\x1b\[[0-9;]*m/;
+const nodeHexDisplayResult = await renderDisplayHintProvide("node_hex", "hex_display_tool_projection");
+assert.equal(nodeHexDisplayResult.result.content[0]?.text, "node hex https://example.com/node-hex");
+assert.ok(nodeHexDisplayResult.text.includes("\x1b[38;2;1;2;3mnode hex "));
+assert.ok(nodeHexDisplayResult.text.includes("\x1b[38;2;4;5;6mhttps://example.com/node-hex"));
+assert.ok(!ansiPattern.test(nodeHexDisplayResult.result.content[0]?.text ?? ""), "protocol output payload should remain uncolored");
+assert.ok(!ansiPattern.test(JSON.stringify(nodeHexDisplayResult.result.details)), "protocol invocation details should remain uncolored");
+const provideHexDisplayResult = await renderDisplayHintProvide("provide_hex", "hex_display_tool_projection");
+assert.equal(provideHexDisplayResult.result.content[0]?.text, "provide hex https://example.com/provide-hex");
+assert.ok(provideHexDisplayResult.text.includes("\x1b[38;2;57;255;20mprovide hex "));
+assert.ok(provideHexDisplayResult.text.includes("\x1b[38;2;255;0;255mhttps://example.com/provide-hex"));
+assert.ok(provideHexDisplayResult.text.includes("\x1b[38;2;0;0;255mhex_display_tool_projection.provide_hex"));
+assert.ok(!provideHexDisplayResult.text.includes("\x1b[38;2;1;2;3mprovide hex "), "provide hex should override node hex");
+assert.ok(!ansiPattern.test(provideHexDisplayResult.result.content[0]?.text ?? ""));
+assert.ok(!ansiPattern.test(JSON.stringify(provideHexDisplayResult.result.details)));
+const invalidHexDisplayResult = await renderDisplayHintProvide("invalid_hex", "hex_display_tool_projection");
+assert.equal(invalidHexDisplayResult.result.content[0]?.text, "invalid hex https://example.com/invalid-hex");
+assert.ok(invalidHexDisplayResult.text.includes("[success]invalid hex "));
+assert.ok(invalidHexDisplayResult.text.includes("[warning]https://example.com/invalid-hex"));
+assert.ok(invalidHexDisplayResult.text.includes("[accent]hex_display_tool_projection.invalid_hex"));
+assert.ok(!ansiPattern.test(invalidHexDisplayResult.result.content[0]?.text ?? ""));
+assert.ok(!ansiPattern.test(JSON.stringify(invalidHexDisplayResult.result.details)));
+
 const partialUpdates: Array<typeof invokeResult> = [];
 const streamingInvokeResult = await tool.execute(
   "call-5-streaming",
@@ -635,6 +697,7 @@ assert.ok(nestedTraceText.includes("agent_a → real_agent_chain.draft_b"));
 assert.ok(nestedTraceText.includes("agent_b → real_agent_chain.ask_c"));
 assert.ok(nestedTraceText.includes("├─ agent_a/call"));
 assert.ok(nestedTraceText.includes("├─ agent_b/call"));
+
 
 const nestedDuplicateFinalLines = tool.renderResult?.(
   {
