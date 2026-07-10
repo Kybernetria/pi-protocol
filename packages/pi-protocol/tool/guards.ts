@@ -3,7 +3,7 @@ import type { ProtocolTraceDetails } from "./trace.ts";
 
 export function isInvokeToolResult(
   result: unknown,
-): result is { ok: true; action: "invoke"; state?: "queued" | "running" | "completed" | "failed" | "aborted"; toolCallId?: string; result: { ok: boolean; error?: { code?: string } }; trace?: ProtocolTraceDetails } {
+): result is { ok: true; action: "invoke"; state?: "queued" | "running" | "completed" | "failed" | "aborted"; toolCallId?: string; result: { ok: boolean; error?: { code?: string; message?: string } }; trace?: ProtocolTraceDetails } {
   return isPlainObject(result) && result.ok === true && result.action === "invoke" && isPlainObject(result.result);
 }
 

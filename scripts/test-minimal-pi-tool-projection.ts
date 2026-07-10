@@ -191,9 +191,8 @@ const invokeResultLines = tool.renderResult?.(invokeResult, {}, testTheme, { arg
   render(width: number): string[];
 };
 const invokeResultText = invokeResultLines.render(120).join("\n");
-assert.ok(invokeResultText.includes("✓ alpha_tool_projection.echo"));
-assert.ok(invokeResultText.includes("— {\"text\":\"hello via tool\"}"));
-assert.ok(invokeResultText.includes("✓ alpha_tool_projection.echo returned"));
+assert.ok(invokeResultText.includes("pi-chat → alpha_tool_projection.echo"));
+assert.ok(!invokeResultText.includes("alpha_tool_projection.echo returned"), "compact result should not repeat the trace outcome");
 assert.ok(!invokeResultText.includes("caller: pi-chat"));
 assert.ok(!invokeResultText.includes("session: agent-b (continue)"));
 assert.ok(!invokeResultText.includes('"trace"'));
@@ -764,7 +763,8 @@ const invalidInvokeResult = await tool.execute("call-5", {
     input: { text: 123 },
   },
 });
-assert.ok(invalidInvokeResult.content[0]?.text.includes('"INVALID_INPUT"'));
+assert.ok(invalidInvokeResult.content[0]?.text.startsWith("INVALID_INPUT:"));
+assert.ok(!invalidInvokeResult.content[0]?.text.includes('"registry"'), "failed calls must not dump trace details into tool content");
 
 await assert.rejects(
   () => tool.execute("call-6", { action: "describe_node" }),

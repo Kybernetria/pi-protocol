@@ -85,21 +85,21 @@ function searchCapabilities(fabric: ProtocolFabric, query: string): unknown {
   return { ok: true, action: "search", query, capabilities };
 }
 
-function emitQueued(onUpdate: ProtocolToolUpdateCallback | undefined, fabric: ProtocolFabric, request: InvokeRequest, toolCallId?: string): void {
+function emitQueued(onUpdate: ProtocolToolUpdateCallback | undefined, _fabric: ProtocolFabric, request: InvokeRequest, toolCallId?: string): void {
   onUpdate?.({
     content: [{ type: "text", text: "protocol queued..." }],
-    details: { ok: true, action: "invoke", result: { ok: true }, state: "queued", toolCallId, trace: { events: [], runtimeEvents: [], registry: fabric.registry() }, target: `${request.nodeId}.${request.provide}` },
+    details: { ok: true, action: "invoke", result: { ok: true }, state: "queued", toolCallId, trace: { events: [], runtimeEvents: [] }, target: `${request.nodeId}.${request.provide}` },
   });
 }
 
-function abortedBeforeStart(request: InvokeRequest, fabric: ProtocolFabric, toolCallId?: string): unknown {
+function abortedBeforeStart(request: InvokeRequest, _fabric: ProtocolFabric, toolCallId?: string): unknown {
   return {
     ok: true,
     action: "invoke",
     state: "aborted",
     toolCallId,
     result: { ok: false, error: { code: "ABORTED", message: "Invocation aborted while queued" } },
-    trace: { events: [], runtimeEvents: [], registry: fabric.registry() },
+    trace: { events: [], runtimeEvents: [] },
     target: `${request.nodeId}.${request.provide}`,
   };
 }

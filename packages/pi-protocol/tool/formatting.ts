@@ -15,6 +15,11 @@ export function formatProtocolToolResult(result: unknown): string {
     return formatProvideOutput(result.result.output);
   }
 
+  if (isInvokeToolResult(result) && !result.result.ok) {
+    const code = result.result.error?.code ?? "FAILED";
+    return `${code}: ${result.result.error?.message ?? (code === "ABORTED" ? "Invocation aborted" : "Invocation failed")}`;
+  }
+
   if (isRegistryToolResult(result)) {
     return formatRegistrySummary(result.registry);
   }
@@ -62,24 +67,19 @@ export function formatProtocolToolResultDisplay(
   const rawOutput = extractInvokeOutputText(details) ?? result.content.map((item) => item.text).join("\n");
   const output = formatProtocolOutput(rawOutput, theme, outputStyle);
   const lines = details.state === "queued"
-    ? [theme.fg("warning", `○ protocol queued${details.toolCallId ? ` · ${details.toolCallId}` : ""}`)]
+    ? [theme.fg("warning", `○ protocol queued${details.toolCallId ? ` · ${shortToolCallId(details.toolCallId)}` : ""}`)]
     : formatProtocolTrace(details.trace, theme, options, output);
   if (details.toolCallId && lines.length > 0 && details.state !== "queued") {
-    lines[0] += theme.fg("muted", ` · ${details.toolCallId}`);
+    lines[0] += theme.fg("muted", ` · ${shortToolCallId(details.toolCallId)}`);
   }
 
-  if (!options.isPartial) {
-    const invokeResult = details.result;
-    const aborted = !invokeResult.ok && invokeResult.error?.code === "ABORTED";
-    const status = invokeResult.ok ? theme.fg("success", "✓") : aborted ? theme.fg("warning", "■") : theme.fg("error", "✗");
-    const outcome = invokeResult.ok ? "returned" : aborted ? "aborted" : "failed";
-    if (lines.length > 0) lines.push("");
-    lines.push(`${status} ${safeStyle(theme, outputStyle.accent, formatTarget(displayTarget.nodeId, displayTarget.provide), "accent")} ${theme.fg("muted", outcome)}`);
-
-    if (output) lines.push("", output);
-  }
+  if (!options.isPartial && output) lines.push("", output);
 
   return lines.join("\n");
+}
+
+function shortToolCallId(id: string): string {
+  return id.length <= 20 ? id : `…${id.slice(-12)}`;
 }
 
 function formatProtocolTrace(

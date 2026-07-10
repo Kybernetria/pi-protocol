@@ -50,7 +50,7 @@ export async function invokeWithTraceUpdates(
         state: "running",
         toolCallId,
         result: { ok: true },
-        trace: { events: [...events], runtimeEvents: [...runtimeEvents], registry: fabric.registry() },
+        trace: { events: [...events], runtimeEvents: [...runtimeEvents], registry: traceRegistry(fabric.registry(), events) },
       },
     } satisfies ProtocolToolExecutionResult);
   };
@@ -80,7 +80,7 @@ export async function invokeWithTraceUpdates(
       state: result.ok ? "completed" : result.error.code === "ABORTED" ? "aborted" : "failed",
       toolCallId,
       result,
-      trace: { events: [...events], runtimeEvents: [...runtimeEvents], registry: fabric.registry() },
+      trace: { events: [...events], runtimeEvents: [...runtimeEvents], registry: traceRegistry(fabric.registry(), events) },
     };
   } finally {
     unsubscribeProvenance();
@@ -120,6 +120,17 @@ function boundRuntimeEvent(event: ProtocolRuntimeEvent, remaining: number): Prot
   if (event.type === "executor_output_delta") return { ...event, textDelta: event.textDelta.slice(0, remaining) };
   if (event.type === "executor_input_snapshot") return { ...event, inputPreview: event.inputPreview.slice(0, remaining), inputTruncated: event.inputTruncated || event.inputPreview.length > remaining };
   return { ...event, outputPreview: event.outputPreview.slice(0, remaining), outputTruncated: event.outputTruncated || event.outputPreview.length > remaining };
+}
+
+function traceRegistry(registry: RegistrySnapshot, events: InvocationProvenanceEvent[]): RegistrySnapshot | undefined {
+  const targets = new Set(events.map((event) => `${event.nodeId}.${event.provide}`));
+  if (targets.size === 0) return undefined;
+  const nodeIds = new Set([...targets].map((target) => target.slice(0, target.lastIndexOf("."))));
+  const nodes = registry.nodes
+    .filter((node) => nodeIds.has(node.nodeId))
+    .map((node) => ({ ...node, provides: node.provides.filter((provide) => targets.has(`${node.nodeId}.${provide.name}`)) }));
+  const provides = registry.provides.filter((provide) => targets.has(provide.globalId));
+  return { nodes, provides };
 }
 
 function createAbortedInvokeResult(): Awaited<ReturnType<ProtocolFabric["invoke"]>> {
