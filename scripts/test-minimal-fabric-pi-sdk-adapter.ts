@@ -3,12 +3,12 @@ import {
   ensureProtocolFabric,
   type JsonSchemaLite,
   type ProtocolRuntimeEvent,
-} from "../packages/pi-protocol-minimal/index.ts";
+} from "../packages/pi-protocol/index.ts";
 import {
   createPiSdkAgentExecutor,
   type PiSdkAgentSessionEventLike,
   type PiSdkAgentSessionLike,
-} from "../packages/pi-protocol-pi-sdk/index.ts";
+} from "../packages/pi-protocol/sdk/index.ts";
 
 const textInput: JsonSchemaLite = {
   type: "object",

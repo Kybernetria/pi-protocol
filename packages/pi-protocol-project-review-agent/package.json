@@ -9,7 +9,7 @@
     ]
   },
   "dependencies": {
-    "@kybernetria/pi-protocol": "0.0.0-prototype"
+    "@kybernetria/pi-protocol": "^1.0.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

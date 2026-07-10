@@ -1,5 +1,5 @@
-import { ensureProtocolFabric, type JsonSchemaLite } from "../packages/pi-protocol-minimal/index.ts";
-import { createDefaultPiSdkAgentExecutor } from "../packages/pi-protocol-pi-sdk/agent-session.ts";
+import { ensureProtocolFabric, type JsonSchemaLite } from "../packages/pi-protocol/index.ts";
+import { createDefaultPiSdkAgentExecutor } from "../packages/pi-protocol/sdk/agent-session.ts";
 
 // Manual/live test. Requires existing Pi SDK auth/model configuration and may use tokens.
 // Run explicitly with:

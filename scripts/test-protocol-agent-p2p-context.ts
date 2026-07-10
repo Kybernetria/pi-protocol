@@ -3,13 +3,13 @@ import {
   createProtocolFabric,
   type InvocationProvenanceEvent,
   type ProtocolRuntimeEvent,
-} from "../packages/pi-protocol-minimal/index.ts";
+} from "../packages/pi-protocol/index.ts";
 import {
   createPiSdkAgentExecutor,
   type PiSdkAgentSessionEventLike,
   type PiSdkAgentSessionLike,
-} from "../packages/pi-protocol-pi-sdk/index.ts";
-import { handleProtocolToolInput } from "../packages/pi-protocol-pi-tool/index.ts";
+} from "../packages/pi-protocol/sdk/index.ts";
+import { handleProtocolToolInput } from "../packages/pi-protocol/tool/index.ts";
 
 function createFakeSession(onPrompt: (text: string, emit: (delta: string) => void) => Promise<void> | void) {
   let listener: ((event: PiSdkAgentSessionEventLike) => void) | undefined;

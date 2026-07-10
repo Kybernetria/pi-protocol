@@ -6,9 +6,9 @@ import {
   type InvocationProvenanceEvent,
   type PiProtocolManifest,
   type ProtocolInvocationContext,
-} from "../packages/pi-protocol-minimal/index.ts";
-import { createPiSdkAgentExecutorsFromManifest } from "../packages/pi-protocol-pi-sdk/agent-session.ts";
-import type { PiSdkAgentSessionEventLike, PiSdkAgentSessionLike } from "../packages/pi-protocol-pi-sdk/index.ts";
+} from "../packages/pi-protocol/index.ts";
+import { createPiSdkAgentExecutorsFromManifest } from "../packages/pi-protocol/sdk/agent-session.ts";
+import type { PiSdkAgentSessionEventLike, PiSdkAgentSessionLike } from "../packages/pi-protocol/sdk/index.ts";
 import realAgentRuntimeExtension from "../packages/pi-protocol-real-agent/extension.ts";
 import realAgentSmokeFixtureExtension from "../packages/pi-protocol-real-agent-test/extension.ts";
 

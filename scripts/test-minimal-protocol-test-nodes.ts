@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { ensureProtocolFabric } from "../packages/pi-protocol-minimal/index.ts";
+import { ensureProtocolFabric } from "../packages/pi-protocol/index.ts";
 import protocolTestNodesExtension from "../packages/pi-protocol-test-nodes/extension.ts";
 
 protocolTestNodesExtension({} as never);

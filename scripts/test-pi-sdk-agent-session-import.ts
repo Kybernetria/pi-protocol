@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {
   createDefaultPiSdkAgentExecutor,
   createPiSdkAgentSessionFactory,
-} from "../packages/pi-protocol-pi-sdk/agent-session.ts";
+} from "../packages/pi-protocol/sdk/agent-session.ts";
 
 assert.equal(typeof createPiSdkAgentSessionFactory, "function");
 assert.equal(typeof createDefaultPiSdkAgentExecutor, "function");

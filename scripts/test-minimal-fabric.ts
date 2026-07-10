@@ -6,7 +6,7 @@ import {
   type InvocationProvenanceEvent,
   type JsonSchemaLite,
   type ProtocolRuntimeEvent,
-} from "../packages/pi-protocol-minimal/index.ts";
+} from "../packages/pi-protocol/index.ts";
 
 const textInput: JsonSchemaLite = {
   type: "object",

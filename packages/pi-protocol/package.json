@@ -1,6 +1,6 @@
 {
   "name": "@kybernetria/pi-protocol",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Pi Protocol — shared in-memory fabric with handler/agent execution, protocol tool, and pi SDK adapter",
   "type": "module",
   "main": "./index.ts",
@@ -18,7 +18,9 @@
     "LICENSE"
   ],
   "pi": {
-    "extensions": ["./extension.ts"]
+    "extensions": [
+      "./extension.ts"
+    ]
   },
   "keywords": [
     "pi-protocol",
@@ -29,7 +31,7 @@
   "license": "AGPL-3.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kybernetria/pi-protocol.git",
+    "url": "git+https://github.com/kybernetria/pi-protocol.git",
     "directory": "packages/pi-protocol"
   },
   "peerDependencies": {

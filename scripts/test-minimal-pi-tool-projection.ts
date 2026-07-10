@@ -5,9 +5,9 @@ import {
   registerProtocolManifest,
   type JsonSchemaLite,
   type PiProtocolManifest,
-} from "../packages/pi-protocol-minimal/index.ts";
-import protocolToolExtension from "../packages/pi-protocol-pi-tool/extension.ts";
-import { createProtocolTool, registerProtocolTool, type ProtocolToolLike } from "../packages/pi-protocol-pi-tool/index.ts";
+} from "../packages/pi-protocol/index.ts";
+import protocolToolExtension from "../packages/pi-protocol/extension.ts";
+import { createProtocolTool, registerProtocolTool, type ProtocolToolLike } from "../packages/pi-protocol/tool/index.ts";
 
 const textSchema: JsonSchemaLite = {
   type: "object",
@@ -71,7 +71,7 @@ const extensionPi = createPiRuntime();
 protocolToolExtension(extensionPi as never);
 assert.equal(extensionPi.countTool("protocol"), 1, "extension entrypoint should register the protocol tool");
 
-const tool = pi.getTool("protocol");
+const tool = pi.getTool("protocol")!;
 assert.ok(tool, "protocol tool should be registered");
 assert.equal(tool.name, "protocol");
 assert.equal(typeof tool.renderCall, "function");

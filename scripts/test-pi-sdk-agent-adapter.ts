@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import type { ProtocolRuntimeEvent } from "../packages/pi-protocol-minimal/index.ts";
+import type { ProtocolRuntimeEvent } from "../packages/pi-protocol/index.ts";
 import {
   createPiSdkAgentExecutor,
   type PiSdkAgentSessionEventLike,
   type PiSdkAgentSessionLike,
-} from "../packages/pi-protocol-pi-sdk/index.ts";
+} from "../packages/pi-protocol/sdk/index.ts";
 import {
   appendUniquePromptChunks,
   UNIVERSAL_PROTOCOL_AWARENESS_PROMPT,
-} from "../packages/pi-protocol-pi-sdk/agent-session.ts";
+} from "../packages/pi-protocol/sdk/agent-session.ts";
 
 function createFakeSession(options: { throwOnPrompt?: boolean } = {}) {
   let listener: ((event: PiSdkAgentSessionEventLike) => void) | undefined;

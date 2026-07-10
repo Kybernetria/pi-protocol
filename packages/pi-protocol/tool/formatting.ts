@@ -186,8 +186,9 @@ function formatTraceEventHeaderLines(
   const icon = event.status === "failed" ? theme.fg("error", "✗") : event.status === "succeeded" ? theme.fg("success", "✓") : theme.fg("warning", "↗");
   const caller = formatValue(event.callerNodeId, "anonymous");
   const target = formatTarget(event.nodeId, event.provide);
-  const rail = safeStyle(theme, eventStyle, `${traceDepthConnector(depth)} ${traceCallerLabel(event, depth)}`, depthColor);
-  const route = `${safeStyle(theme, eventStyle, caller, depthColor)} ${theme.fg("muted", "→")} ${safeStyle(theme, eventStyle, target, depthColor)}`;
+  const callerStyle = { token: depthColor };
+  const rail = safeStyle(theme, callerStyle, `${traceDepthConnector(depth)} ${traceCallerLabel(event, depth)}`, depthColor);
+  const route = `${safeStyle(theme, callerStyle, caller, depthColor)} ${theme.fg("muted", "→")} ${safeStyle(theme, eventStyle, target, depthColor)}`;
   const session = formatTraceSession(event.session);
   const duration = typeof event.durationMs === "number" ? ` ${event.durationMs}ms` : "";
   const status = event.status === "started" ? "" : event.status === "succeeded" ? duration : ` failed${duration}`;
