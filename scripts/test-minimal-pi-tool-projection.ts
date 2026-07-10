@@ -526,6 +526,8 @@ fabric.register({
       const traceId = context?.traceId;
       const spanId = context?.spanId;
       if (!traceId || !spanId) throw new Error("expected trace/span ids");
+      await context.emitRuntimeEvent?.({ type: "executor_tool_start", traceId, spanId, toolCallId: "nested-tool-1", toolName: "protocol", argsPreview: '{"target":"child.work"}' });
+      await context.emitRuntimeEvent?.({ type: "executor_tool_end", traceId, spanId, toolCallId: "nested-tool-1", toolName: "protocol", resultPreview: '{"ok":true}', isError: false });
       await context.emitRuntimeEvent?.({ type: "executor_output_delta", traceId, spanId, textDelta: "streamed " });
       await context.emitRuntimeEvent?.({ type: "executor_output_delta", traceId, spanId, textDelta: "runtime" });
       return input;
@@ -558,12 +560,17 @@ const runtimePartialLines = tool.renderResult?.(runtimePartialUpdates.at(-1)!, {
   args: runtimeInvokeInput,
 }) as { render(width: number): string[] };
 const runtimePartialText = runtimePartialLines.render(120).join("\n");
+assert.ok(runtimePartialText.includes("· protocol"));
+assert.ok(runtimePartialText.includes('{"ok":true}'));
 assert.ok(runtimePartialText.includes("output:\n    streamed runtime"));
 assert.ok(!runtimePartialText.includes("stream:\n    streamed runtime"));
+const runtimeCollapsedLines = tool.renderResult?.(runtimeInvokeResult, {}, testTheme, { args: runtimeInvokeInput }) as { render(width: number): string[] };
+assert.ok(runtimeCollapsedLines.render(120).join("\n").includes("· protocol"), "collapsed agent calls should show nested tool progress");
 const runtimeResultLines = tool.renderResult?.(runtimeInvokeResult, { expanded: true }, testTheme, {
   args: runtimeInvokeInput,
 }) as { render(width: number): string[] };
 const runtimeResultText = runtimeResultLines.render(120).join("\n");
+assert.ok(runtimeResultText.includes("· protocol"));
 assert.ok(!runtimeResultText.includes("stream:\n    streamed runtime"));
 assert.ok(runtimeResultText.includes("output:\n    {\"text\":\"runtime output\"}"));
 
