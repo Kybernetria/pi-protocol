@@ -39,10 +39,12 @@ export function formatProtocolToolCallDisplay(input: ProtocolToolInput, theme: P
   const nodeId = request?.nodeId ?? input.nodeId ?? (separator > 0 ? input.target!.slice(0, separator) : undefined);
   const provide = request?.provide ?? input.provide ?? (separator > 0 ? input.target!.slice(separator + 1) : undefined);
   const target = formatTarget(nodeId, provide);
-  const caller = formatValue(request?.callerNodeId, "anonymous");
   const verb = action === "invoke" ? "invoke" : "call";
-  const lines = [title + theme.fg("accent", `${verb} `) + `${caller} → ` + theme.fg("muted", target)];
-  lines.push(`session: ${formatSession(request?.session)}`);
+  const lines = [title + theme.fg("accent", `${verb} `) + theme.fg("muted", target)];
+  if (request?.callerNodeId) lines[0] += theme.fg("muted", ` · from ${request.callerNodeId}`);
+  if (request?.session?.id || (request?.session?.mode && request.session.mode !== "ephemeral")) {
+    lines.push(`session: ${formatSession(request.session)}`);
+  }
   lines.push(...formatTraceLines(request));
 
   return lines.join("\n");
@@ -69,11 +71,11 @@ export function formatProtocolToolResultDisplay(
   const lines = details.state === "queued"
     ? [theme.fg("warning", `○ protocol queued${details.toolCallId ? ` · ${shortToolCallId(details.toolCallId)}` : ""}`)]
     : formatProtocolTrace(details.trace, theme, options, output);
-  if (details.toolCallId && lines.length > 0 && details.state !== "queued") {
+  if (options.expanded && details.toolCallId && lines.length > 0 && details.state !== "queued") {
     lines[0] += theme.fg("muted", ` · ${shortToolCallId(details.toolCallId)}`);
   }
 
-  if (!options.isPartial && output) lines.push("", output);
+  if (!options.isPartial && details.result.ok && output) lines.push("", output);
 
   return lines.join("\n");
 }
@@ -91,6 +93,9 @@ function formatProtocolTrace(
   if (!trace || trace.events.length === 0) return [theme.fg("muted", "protocol running...")];
 
   const latestEvents = latestEventBySpan(trace.events);
+  if (!options.expanded && latestEvents.length === 1 && !latestEvents[0]?.parentSpanId) {
+    return formatSimpleTrace(latestEvents[0]!, trace.registry, theme);
+  }
   const runtimeEventsBySpan = groupRuntimeEventsBySpan(trace.runtimeEvents ?? []);
   const agentColors = agentColorsFromRegistry(trace);
   const targetStyles = targetStylesFromRegistry(trace);
@@ -103,6 +108,17 @@ function formatProtocolTrace(
     appendTraceEventLines(lines, root, childrenByParent, runtimeEventsBySpan, agentColors, targetStyles, theme, options, 0, finalOutput);
   }
 
+  return lines;
+}
+
+function formatSimpleTrace(event: InvocationProvenanceEvent, registry: RegistrySnapshot | undefined, theme: ProtocolToolThemeLike): string[] {
+  const target = safeStyle(theme, resolveProtocolOutputStyle(registry, event.nodeId, event.provide).accent, formatTarget(event.nodeId, event.provide), "accent");
+  const duration = typeof event.durationMs === "number" ? ` ${event.durationMs}ms` : "";
+  if (event.status === "started") return [`${theme.fg("warning", "↗")} ${target}${theme.fg("muted", " running")}`];
+  if (event.status === "succeeded") return [`${theme.fg("success", "✓")} ${target}${theme.fg("muted", duration)}`];
+  const aborted = event.status === "aborted" || event.error?.code === "ABORTED";
+  const lines = [`${theme.fg(aborted ? "warning" : "error", aborted ? "■" : "✗")} ${target}${theme.fg("muted", `${aborted ? " aborted" : " failed"}${duration}`)}`];
+  if (event.error) lines.push(theme.fg("error", `${event.error.code}: ${event.error.message}`));
   return lines;
 }
 

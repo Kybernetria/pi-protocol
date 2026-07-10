@@ -181,7 +181,7 @@ const invokeRenderInput = {
   },
 };
 const invokeCallLines = tool.renderCall?.(invokeRenderInput, testTheme) as { render(width: number): string[] };
-assert.ok(invokeCallLines.render(120).join("\n").includes("protocol invoke pi-chat → alpha_tool_projection.echo"));
+assert.ok(invokeCallLines.render(120).join("\n").includes("protocol invoke alpha_tool_projection.echo · from pi-chat"));
 assert.ok(invokeCallLines.render(120).join("\n").includes("session: agent-b (continue)"));
 assert.ok(invokeCallLines.render(120).join("\n").includes("trace: trace-tool-test"));
 assert.ok(invokeCallLines.render(120).join("\n").includes("parent: span-parent-test"));
@@ -191,7 +191,7 @@ const invokeResultLines = tool.renderResult?.(invokeResult, {}, testTheme, { arg
   render(width: number): string[];
 };
 const invokeResultText = invokeResultLines.render(120).join("\n");
-assert.ok(invokeResultText.includes("pi-chat → alpha_tool_projection.echo"));
+assert.ok(invokeResultText.includes("✓ alpha_tool_projection.echo"));
 assert.ok(!invokeResultText.includes("alpha_tool_projection.echo returned"), "compact result should not repeat the trace outcome");
 assert.ok(!invokeResultText.includes("caller: pi-chat"));
 assert.ok(!invokeResultText.includes("session: agent-b (continue)"));
@@ -440,7 +440,7 @@ const partialTraceLines = tool.renderResult?.(partialUpdates[0]!, { isPartial: t
   },
 }) as { render(width: number): string[] };
 const partialTraceText = partialTraceLines.render(120).join("\n");
-assert.ok(partialTraceText.includes("pi-chat → alpha_tool_projection.echo [streaming-session continue]"));
+assert.ok(partialTraceText.includes("alpha_tool_projection.echo running"));
 
 const orphanParentTraceLines = tool.renderResult?.(
   {
