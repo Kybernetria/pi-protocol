@@ -23,32 +23,38 @@ import {
  */
 export function createProtocolTool(fabric: ProtocolFabric, options: ProtocolToolOptions = {}): ProtocolToolLike {
   const toolName = options.toolName?.trim() || DEFAULT_PROTOCOL_TOOL_NAME;
+  const scheduler = new InvocationScheduler(options.maxConcurrency ?? 4);
 
   return {
     name: toolName,
     label: options.label ?? "Protocol",
     description:
       options.description ??
-      "Inspect the Pi Protocol registry and invoke provides through the shared protocol fabric.",
-    promptSnippet: `${toolName}: inspect protocol nodes/provides and invoke them through the shared fabric`,
+      "Call a protocol capability by target, or search the compact capability index.",
+    promptSnippet: `${toolName}: call target capabilities or search the capability index`,
     promptGuidelines: [
-      `Use ${toolName} for protocol capabilities: registry -> describe_node/describe_provide -> invoke.`,
-      `For simple invoke, pass nodeId, provide, and input; do not invent separate tools for protocol provides.`,
-      `Avoid accidental unbounded self-recursion; if intentionally invoking the same node.provide from inside a protocol-backed provide, include an explicit stop condition/depth in the request.`,
-      `For trace/session controls, use request: { nodeId, provide, input, traceId?, spanId?, parentSpanId?, callerNodeId?, session? }.`,
-      `For protocol callers, prefer callerNodeId in the form nodeId.provideName; root/user calls may use ids like pi-chat or root_agent.`,
-      `To continue a protocol-backed agent conversation, reuse request.session.id with request.session.mode = "continue"; use "end" to dispose it.`,
+      `Call a known capability with { target: "node.provide", input }. The fabric selects its handler or agent automatically.`,
+      `Use { op: "search", query } only when no known capability clearly fits; use { op: "list" } for the compact index.`,
+      `Trace, caller, span, cancellation, and ephemeral session defaults are automatic. Put advanced controls in request only when needed.`,
+      `Avoid accidental unbounded self-recursion; intentional recursion needs an explicit stop condition.`,
+      `To continue an agent conversation, reuse request.session.id with request.session.mode = "continue"; use mode "end" to dispose it.`,
     ],
     parameters: Type.Object({
-      action: Type.Union([
+      op: Type.Optional(Type.Union([Type.Literal("list"), Type.Literal("search"), Type.Literal("call")])),
+      target: Type.Optional(Type.String({ description: "Capability id: node.provide" })),
+      query: Type.Optional(Type.String()),
+      input: Type.Optional(Type.Any()),
+      action: Type.Optional(Type.Union([
+        Type.Literal("list"),
+        Type.Literal("search"),
+        Type.Literal("call"),
         Type.Literal("registry"),
         Type.Literal("describe_node"),
         Type.Literal("describe_provide"),
         Type.Literal("invoke"),
-      ]),
+      ])),
       nodeId: Type.Optional(Type.String()),
       provide: Type.Optional(Type.String()),
-      input: Type.Optional(Type.Any()),
       request: Type.Optional(Type.Object({
         nodeId: Type.Optional(Type.String()),
         provide: Type.Optional(Type.String()),
@@ -67,8 +73,8 @@ export function createProtocolTool(fabric: ProtocolFabric, options: ProtocolTool
         })),
       })),
     }),
-    async execute(_toolCallId, input, signal, onUpdate) {
-      const result = await handleProtocolToolInput(fabric, input, onUpdate, signal);
+    async execute(toolCallId, input, signal, onUpdate) {
+      const result = await handleProtocolToolInput(fabric, input, onUpdate, signal, toolCallId, scheduler);
       return {
         content: [{ type: "text", text: formatProtocolToolResult(result) }],
         details: result,
@@ -100,6 +106,42 @@ export function registerProtocolTool(
 
   pi.registerTool(createProtocolTool(fabric, { ...options, toolName }));
   return { toolName, registered: true };
+}
+
+class InvocationScheduler {
+  private active = 0;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(private readonly max: number) {
+    if (!Number.isInteger(max) || max < 1) throw new Error("maxConcurrency must be a positive integer");
+  }
+
+  async run<T>(task: () => Promise<T>, signal?: AbortSignal, onQueued?: () => void): Promise<T> {
+    if (this.active >= this.max) {
+      onQueued?.();
+      await new Promise<void>((resolve, reject) => {
+        const enter = () => {
+          signal?.removeEventListener("abort", abort);
+          resolve();
+        };
+        const abort = () => {
+          const index = this.waiters.indexOf(enter);
+          if (index >= 0) this.waiters.splice(index, 1);
+          reject(Object.assign(new Error("Invocation aborted"), { name: "AbortError" }));
+        };
+        if (signal?.aborted) return abort();
+        this.waiters.push(enter);
+        signal?.addEventListener("abort", abort, { once: true });
+      });
+    }
+    this.active++;
+    try {
+      return await task();
+    } finally {
+      this.active--;
+      this.waiters.shift()?.();
+    }
+  }
 }
 
 function safeGetAllTools(pi: ProtocolToolRegistrationTarget): Array<{ name: string }> | undefined {

@@ -16,6 +16,24 @@ orchestration = handler invokes multiple provides
 
 There is no special agent P2P transport. Agent-backed provides and handler-backed provides are both normal protocol provides, and both are invoked through `fabric.invoke`. Trace/span/session fields propagate through normal invocation.
 
+## Compact agent interface
+
+Agents normally call a known capability directly. They do not need to know whether it is implemented by a handler or an agent:
+
+```json
+{ "target": "project_review_agent.review_task", "input": "Review this change" }
+```
+
+When the target is not known, agents can search compact capability cards containing only the stable target, description, and input signature:
+
+```json
+{ "op": "search", "query": "review TypeScript security" }
+```
+
+`{ "op": "list" }` returns the full compact index. The legacy `registry`, `describe_node`, `describe_provide`, and `invoke` actions remain available for diagnostics and compatibility. Advanced trace and session controls remain optional under `request`; ordinary calls inherit their invocation context automatically.
+
+The Pi tool projection defaults to four concurrent direct calls per tool instance. Excess calls queue FIFO and can be cancelled while queued. Live results expose `queued`, `running`, `completed`, `failed`, and `aborted` states together with the initiating Pi `toolCallId`. Trace rendering keeps recursive calls grouped by parent span, and runtime/input/output previews are bounded.
+
 ## Packages
 
 - `@kybernetria/pi-protocol` - generic registry, describe, invoke, manifest registration, execution type definitions, handler/agent executor interfaces, provenance/session fields

@@ -131,7 +131,7 @@ export type ProtocolAgentExecutor = (
   context?: ProtocolInvocationContext,
 ) => unknown | Promise<unknown>;
 
-export type InvocationStatus = "started" | "succeeded" | "failed";
+export type InvocationStatus = "started" | "succeeded" | "failed" | "aborted";
 
 export interface InvocationProvenanceEvent {
   traceId: string;

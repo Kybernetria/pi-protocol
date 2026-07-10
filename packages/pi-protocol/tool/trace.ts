@@ -17,6 +17,8 @@ export interface ProtocolTraceDetails {
 export interface ProtocolInvokeToolDetails {
   ok: true;
   action: "invoke";
+  state: "running" | "completed" | "failed" | "aborted";
+  toolCallId?: string;
   result: unknown;
   trace?: ProtocolTraceDetails;
 }
@@ -26,6 +28,7 @@ export async function invokeWithTraceUpdates(
   request: InvokeRequest,
   onUpdate: ProtocolToolUpdateCallback | undefined,
   signal?: AbortSignal,
+  toolCallId?: string,
 ): Promise<ProtocolInvokeToolDetails> {
   const tracedRequest: InvokeRequest = {
     ...request,
@@ -36,6 +39,7 @@ export async function invokeWithTraceUpdates(
   const traceId = tracedRequest.traceId;
   const events: InvocationProvenanceEvent[] = [];
   const runtimeEvents: ProtocolRuntimeEvent[] = [];
+  let runtimeChars = 0;
   let lastRuntimeUpdateAt = 0;
   const flush = (text: string) => {
     onUpdate?.({
@@ -43,6 +47,8 @@ export async function invokeWithTraceUpdates(
       details: {
         ok: true,
         action: "invoke",
+        state: "running",
+        toolCallId,
         result: { ok: true },
         trace: { events: [...events], runtimeEvents: [...runtimeEvents], registry: fabric.registry() },
       },
@@ -55,7 +61,11 @@ export async function invokeWithTraceUpdates(
   });
   const unsubscribeRuntimeEvents = fabric.subscribeRuntimeEventRecorder((event) => {
     if (traceId && event.traceId !== traceId) return;
-    runtimeEvents.push(event);
+    const bounded = boundRuntimeEvent(event, Math.max(0, 40_000 - runtimeChars));
+    if (!bounded) return;
+    runtimeChars += runtimeEventChars(bounded);
+    runtimeEvents.push(bounded);
+    if (runtimeEvents.length > 500) runtimeEvents.shift();
     const now = Date.now();
     if (now - lastRuntimeUpdateAt < 1_000) return;
     lastRuntimeUpdateAt = now;
@@ -67,6 +77,8 @@ export async function invokeWithTraceUpdates(
     return {
       ok: true,
       action: "invoke",
+      state: result.ok ? "completed" : result.error.code === "ABORTED" ? "aborted" : "failed",
+      toolCallId,
       result,
       trace: { events: [...events], runtimeEvents: [...runtimeEvents], registry: fabric.registry() },
     };
@@ -81,13 +93,33 @@ async function invokeAbortable(fabric: ProtocolFabric, request: InvokeRequest): 
   if (signal?.aborted) return createAbortedInvokeResult();
   if (!signal) return fabric.invoke(request);
 
-  return Promise.race([
-    fabric.invoke(request),
-    new Promise<Awaited<ReturnType<ProtocolFabric["invoke"]>>>((resolve) => {
-      const onAbort = () => resolve(createAbortedInvokeResult());
-      signal.addEventListener("abort", onAbort, { once: true });
-    }),
-  ]);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: Awaited<ReturnType<ProtocolFabric["invoke"]>>) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
+    const onAbort = () => finish(createAbortedInvokeResult());
+    signal.addEventListener("abort", onAbort, { once: true });
+    void fabric.invoke(request).then(finish);
+  });
+}
+
+function runtimeEventChars(event: ProtocolRuntimeEvent): number {
+  if (event.type === "executor_output_delta") return event.textDelta.length;
+  if (event.type === "executor_input_snapshot") return event.inputPreview.length;
+  if (event.type === "executor_output_snapshot") return event.outputPreview.length;
+  return 0;
+}
+
+function boundRuntimeEvent(event: ProtocolRuntimeEvent, remaining: number): ProtocolRuntimeEvent | undefined {
+  if (event.type === "executor_session_model") return event;
+  if (remaining <= 0) return undefined;
+  if (event.type === "executor_output_delta") return { ...event, textDelta: event.textDelta.slice(0, remaining) };
+  if (event.type === "executor_input_snapshot") return { ...event, inputPreview: event.inputPreview.slice(0, remaining), inputTruncated: event.inputTruncated || event.inputPreview.length > remaining };
+  return { ...event, outputPreview: event.outputPreview.slice(0, remaining), outputTruncated: event.outputTruncated || event.outputPreview.length > remaining };
 }
 
 function createAbortedInvokeResult(): Awaited<ReturnType<ProtocolFabric["invoke"]>> {

@@ -160,7 +160,7 @@ export function createProtocolFabric(): ProtocolFabric {
       );
       await recordProvenance(provenanceRecorder, provenanceSubscribers, {
         ...provenance,
-        status: result.ok ? "succeeded" : "failed",
+        status: result.ok ? "succeeded" : result.error.code === "ABORTED" ? "aborted" : "failed",
         durationMs: durationMs(),
         ...inputPreview,
         ...(result.ok ? createOutputPreview(result.output) : { error: result.error }),

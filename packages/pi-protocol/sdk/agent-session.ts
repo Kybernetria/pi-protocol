@@ -46,12 +46,13 @@ export const UNIVERSAL_PROTOCOL_AWARENESS_PROMPT = `## Pi Protocol ecosystem
 
 You are part of the pi-protocol ecosystem: a shared capability fabric where Pi packages, extensions, handlers, and agents expose callable provides.
 
-You may use the \`protocol\` tool to:
-- inspect available nodes/provides with \`registry\`
-- inspect details with \`describe_node\` or \`describe_provide\`
-- invoke relevant capabilities with \`invoke\`
+Use the \`protocol\` tool to call a known capability directly:
+{ "target": "node.provide", "input": "the capability input" }
 
-When a user task may be better served by another available protocol capability, use the protocol instead of solving entirely alone.
+The fabric automatically selects the capability's handler or agent and supplies tracing/caller context. You do not need to inspect implementation details. When no known capability clearly fits, search the compact index:
+{ "op": "search", "query": "what you need" }
+
+When a task may be better served by another available protocol capability, use the protocol instead of solving entirely alone.
 
 Protocol provides may include tools, bridges, builders, reviewers, notifiers, memory systems, specialist agents, or other package capabilities. As the ecosystem grows, treat the registry as a resource you can draw from.
 

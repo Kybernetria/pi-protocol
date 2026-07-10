@@ -13,10 +13,11 @@
     "test:minimal-pi-sdk-agent-session-import": "tsx scripts/test-pi-sdk-agent-session-import.ts",
     "test:real-agent-runtime": "tsx scripts/test-real-agent-runtime.ts",
     "test:minimal-pi-tool-projection": "tsx scripts/test-minimal-pi-tool-projection.ts",
+    "test:compact-protocol-tool": "tsx scripts/test-compact-protocol-tool.ts",
     "test:minimal-protocol-test-nodes": "tsx scripts/test-minimal-protocol-test-nodes.ts",
     "test:protocol-project-review-agent": "tsx scripts/test-protocol-project-review-agent.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:protocol-agent-p2p-context && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:real-agent-runtime && npm run test:minimal-pi-tool-projection && npm run test:minimal-protocol-test-nodes && npm run test:protocol-project-review-agent"
+    "test": "npm run typecheck && npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:protocol-agent-p2p-context && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:real-agent-runtime && npm run test:minimal-pi-tool-projection && npm run test:compact-protocol-tool && npm run test:minimal-protocol-test-nodes && npm run test:protocol-project-review-agent"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.75.4",

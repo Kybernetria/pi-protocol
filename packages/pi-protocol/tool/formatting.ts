@@ -24,16 +24,19 @@ export function formatProtocolToolResult(result: unknown): string {
 
 export function formatProtocolToolCallDisplay(input: ProtocolToolInput, theme: ProtocolToolThemeLike): string {
   const title = theme.fg("toolTitle", theme.bold("protocol "));
-  if (input.action !== "invoke") {
-    return title + theme.fg("muted", input.action);
+  const action = input.op ?? input.action ?? (input.target ? "call" : "list");
+  if (action !== "invoke" && action !== "call") {
+    return title + theme.fg("muted", `${action}${input.query ? ` ${input.query}` : ""}`);
   }
 
   const request = input.request;
-  const nodeId = request?.nodeId ?? input.nodeId;
-  const provide = request?.provide ?? input.provide;
+  const separator = input.target?.lastIndexOf(".") ?? -1;
+  const nodeId = request?.nodeId ?? input.nodeId ?? (separator > 0 ? input.target!.slice(0, separator) : undefined);
+  const provide = request?.provide ?? input.provide ?? (separator > 0 ? input.target!.slice(separator + 1) : undefined);
   const target = formatTarget(nodeId, provide);
   const caller = formatValue(request?.callerNodeId, "anonymous");
-  const lines = [title + theme.fg("accent", "invoke ") + `${caller} → ` + theme.fg("muted", target)];
+  const verb = action === "invoke" ? "invoke" : "call";
+  const lines = [title + theme.fg("accent", `${verb} `) + `${caller} → ` + theme.fg("muted", target)];
   lines.push(`session: ${formatSession(request?.session)}`);
   lines.push(...formatTraceLines(request));
 
@@ -58,12 +61,18 @@ export function formatProtocolToolResultDisplay(
   const outputStyle = resolveProtocolOutputStyle(details.trace?.registry, displayTarget.nodeId, displayTarget.provide);
   const rawOutput = extractInvokeOutputText(details) ?? result.content.map((item) => item.text).join("\n");
   const output = formatProtocolOutput(rawOutput, theme, outputStyle);
-  const lines = formatProtocolTrace(details.trace, theme, options, output);
+  const lines = details.state === "queued"
+    ? [theme.fg("warning", `○ protocol queued${details.toolCallId ? ` · ${details.toolCallId}` : ""}`)]
+    : formatProtocolTrace(details.trace, theme, options, output);
+  if (details.toolCallId && lines.length > 0 && details.state !== "queued") {
+    lines[0] += theme.fg("muted", ` · ${details.toolCallId}`);
+  }
 
   if (!options.isPartial) {
     const invokeResult = details.result;
-    const status = invokeResult.ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
-    const outcome = invokeResult.ok ? "returned" : "failed";
+    const aborted = !invokeResult.ok && invokeResult.error?.code === "ABORTED";
+    const status = invokeResult.ok ? theme.fg("success", "✓") : aborted ? theme.fg("warning", "■") : theme.fg("error", "✗");
+    const outcome = invokeResult.ok ? "returned" : aborted ? "aborted" : "failed";
     if (lines.length > 0) lines.push("");
     lines.push(`${status} ${safeStyle(theme, outputStyle.accent, formatTarget(displayTarget.nodeId, displayTarget.provide), "accent")} ${theme.fg("muted", outcome)}`);
 
@@ -183,7 +192,7 @@ function formatTraceEventHeaderLines(
   const indent = "  ".repeat(depth);
   const depthColor = traceEventColor(event, depth, agentColors);
   const eventStyle = targetStyles.get(formatTarget(event.nodeId, event.provide)) ?? { token: depthColor };
-  const icon = event.status === "failed" ? theme.fg("error", "✗") : event.status === "succeeded" ? theme.fg("success", "✓") : theme.fg("warning", "↗");
+  const icon = event.status === "failed" ? theme.fg("error", "✗") : event.status === "aborted" ? theme.fg("warning", "■") : event.status === "succeeded" ? theme.fg("success", "✓") : theme.fg("warning", "↗");
   const caller = formatValue(event.callerNodeId, "anonymous");
   const target = formatTarget(event.nodeId, event.provide);
   const callerStyle = { token: depthColor };

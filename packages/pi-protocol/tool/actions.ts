@@ -1,15 +1,24 @@
 import { createChildInvokeRequest, type InvokeRequest, type ProtocolFabric, type ProtocolNode, type ProvideSnapshot, type ProvideSpec } from "../index.ts";
 import { requireText } from "./helpers.ts";
 import { invokeWithTraceUpdates } from "./trace.ts";
-import type { ProtocolToolInput, ProtocolToolUpdateCallback } from "./types.ts";
+import type { ProtocolInvocationScheduler, ProtocolToolInput, ProtocolToolUpdateCallback } from "./types.ts";
 
 export async function handleProtocolToolInput(
   fabric: ProtocolFabric,
   input: ProtocolToolInput,
   onUpdate?: ProtocolToolUpdateCallback,
   signal?: AbortSignal,
+  toolCallId?: string,
+  scheduler?: ProtocolInvocationScheduler,
 ): Promise<unknown> {
-  switch (input.action) {
+  const action = input.op ?? input.action ?? (input.target ? "call" : "list");
+  switch (action) {
+    case "list":
+      return compactCapabilityIndex(fabric);
+
+    case "search":
+      return searchCapabilities(fabric, requireText(input.query, "protocol search requires query"));
+
     case "registry":
       return { ok: true, action: "registry", registry: fabric.registry() };
 
@@ -34,11 +43,65 @@ export async function handleProtocolToolInput(
           };
     }
 
+    case "call":
     case "invoke": {
       const request = createChildInvokeRequest(toInvokeRequest(input));
-      return invokeWithTraceUpdates(fabric, request, onUpdate, signal);
+      const invoke = () => invokeWithTraceUpdates(fabric, request, onUpdate, signal, toolCallId);
+      if (!scheduler) return invoke();
+      try {
+        return await scheduler.run(invoke, signal, () => emitQueued(onUpdate, fabric, request, toolCallId));
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          return abortedBeforeStart(request, fabric, toolCallId);
+        }
+        throw error;
+      }
     }
   }
+}
+
+function compactCapabilityIndex(fabric: ProtocolFabric): unknown {
+  return {
+    ok: true,
+    action: "list",
+    capabilities: fabric.registry().provides.map((provide) => ({
+      target: provide.globalId,
+      description: provide.description,
+      input: summarizeSchema(provide.inputSchema),
+    })),
+    usage: { target: "node.provide", input: "matching input" },
+  };
+}
+
+function searchCapabilities(fabric: ProtocolFabric, query: string): unknown {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const capabilities = fabric.registry().provides
+    .map((provide) => ({ target: provide.globalId, description: provide.description, input: summarizeSchema(provide.inputSchema), tags: provide.tags ?? [] }))
+    .map((card) => ({ card, score: terms.reduce((score, term) => score + (`${card.target} ${card.description} ${card.tags.join(" ")}`.toLowerCase().includes(term) ? 1 : 0), 0) }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 12)
+    .map(({ card: { tags: _tags, ...card } }) => card);
+  return { ok: true, action: "search", query, capabilities };
+}
+
+function emitQueued(onUpdate: ProtocolToolUpdateCallback | undefined, fabric: ProtocolFabric, request: InvokeRequest, toolCallId?: string): void {
+  onUpdate?.({
+    content: [{ type: "text", text: "protocol queued..." }],
+    details: { ok: true, action: "invoke", result: { ok: true }, state: "queued", toolCallId, trace: { events: [], runtimeEvents: [], registry: fabric.registry() }, target: `${request.nodeId}.${request.provide}` },
+  });
+}
+
+function abortedBeforeStart(request: InvokeRequest, fabric: ProtocolFabric, toolCallId?: string): unknown {
+  return {
+    ok: true,
+    action: "invoke",
+    state: "aborted",
+    toolCallId,
+    result: { ok: false, error: { code: "ABORTED", message: "Invocation aborted while queued" } },
+    trace: { events: [], runtimeEvents: [], registry: fabric.registry() },
+    target: `${request.nodeId}.${request.provide}`,
+  };
 }
 
 function summarizeNode(node: ProtocolNode): unknown {
@@ -125,9 +188,14 @@ function summarizeSchema(schema: ProvideSpec["inputSchema"]): string {
 
 function toInvokeRequest(input: ProtocolToolInput): InvokeRequest {
   const request = input.request;
+  const target = input.target?.trim();
+  const separator = target?.lastIndexOf(".") ?? -1;
+  const targetNode = separator > 0 ? target!.slice(0, separator) : undefined;
+  const targetProvide = separator > 0 ? target!.slice(separator + 1) : undefined;
+  if (target && separator <= 0) throw new Error("protocol target must be node.provide");
   return {
-    nodeId: requireText(request?.nodeId ?? input.nodeId, "protocol action invoke requires nodeId"),
-    provide: requireText(request?.provide ?? input.provide, "protocol action invoke requires provide"),
+    nodeId: requireText(request?.nodeId ?? input.nodeId ?? targetNode, "protocol call requires target or nodeId"),
+    provide: requireText(request?.provide ?? input.provide ?? targetProvide, "protocol call requires target or provide"),
     input: request && "input" in request ? request.input : input.input,
     traceId: request?.traceId,
     spanId: request?.spanId,
