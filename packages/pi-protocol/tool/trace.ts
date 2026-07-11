@@ -111,9 +111,6 @@ function runtimeEventChars(event: ProtocolRuntimeEvent): number {
   if (event.type === "executor_output_delta") return event.textDelta.length;
   if (event.type === "executor_input_snapshot") return event.inputPreview.length;
   if (event.type === "executor_output_snapshot") return event.outputPreview.length;
-  if (event.type === "executor_tool_start" || event.type === "executor_tool_update" || event.type === "executor_tool_end") {
-    return (event.argsPreview?.length ?? 0) + (event.resultPreview?.length ?? 0);
-  }
   return 0;
 }
 
@@ -122,11 +119,7 @@ function boundRuntimeEvent(event: ProtocolRuntimeEvent, remaining: number): Prot
   if (remaining <= 0) return undefined;
   if (event.type === "executor_output_delta") return { ...event, textDelta: event.textDelta.slice(0, remaining) };
   if (event.type === "executor_input_snapshot") return { ...event, inputPreview: event.inputPreview.slice(0, remaining), inputTruncated: event.inputTruncated || event.inputPreview.length > remaining };
-  if (event.type === "executor_output_snapshot") return { ...event, outputPreview: event.outputPreview.slice(0, remaining), outputTruncated: event.outputTruncated || event.outputPreview.length > remaining };
-  const argsPreview = event.argsPreview?.slice(0, remaining);
-  const resultRemaining = Math.max(0, remaining - (argsPreview?.length ?? 0));
-  const resultPreview = event.resultPreview?.slice(0, resultRemaining);
-  return { ...event, argsPreview, resultPreview, previewTruncated: event.previewTruncated || (event.argsPreview?.length ?? 0) > remaining || (event.resultPreview?.length ?? 0) > resultRemaining };
+  return { ...event, outputPreview: event.outputPreview.slice(0, remaining), outputTruncated: event.outputTruncated || event.outputPreview.length > remaining };
 }
 
 function traceRegistry(registry: RegistrySnapshot, events: InvocationProvenanceEvent[]): RegistrySnapshot | undefined {

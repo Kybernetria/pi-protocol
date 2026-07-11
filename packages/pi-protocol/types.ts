@@ -108,17 +108,6 @@ export type ProtocolRuntimeEvent =
       spanId: string;
       outputPreview: string;
       outputTruncated?: boolean;
-    }
-  | {
-      type: "executor_tool_start" | "executor_tool_update" | "executor_tool_end";
-      traceId: string;
-      spanId: string;
-      toolCallId: string;
-      toolName: string;
-      argsPreview?: string;
-      resultPreview?: string;
-      previewTruncated?: boolean;
-      isError?: boolean;
     };
 
 export type ProtocolRuntimeEventEmitter = (event: ProtocolRuntimeEvent) => void | Promise<void>;

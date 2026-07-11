@@ -34,8 +34,6 @@ When the target is not known, agents can search compact capability cards contain
 
 The Pi tool projection defaults to four concurrent direct calls per tool instance. Excess calls queue FIFO and can be cancelled while queued. Live results expose `queued`, `running`, `completed`, `failed`, and `aborted` states together with the initiating Pi `toolCallId`. Trace rendering keeps recursive calls grouped by parent span, and runtime/input/output previews are bounded.
 
-Agent-backed provides also stream their Pi tool activity into the trace. Collapsed mode shows concise running/completed tool rows beneath each agent span; expanded mode adds model, prompt, bounded tool arguments/results, streamed output, and the full recursive protocol call tree. Toggle expansion with Pi's standard tool expansion control (`ctrl+o`).
-
 ## Packages
 
 - `@kybernetria/pi-protocol` - generic registry, describe, invoke, manifest registration, execution type definitions, handler/agent executor interfaces, provenance/session fields

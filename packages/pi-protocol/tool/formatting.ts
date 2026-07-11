@@ -94,10 +94,7 @@ function formatProtocolTrace(
 
   const latestEvents = latestEventBySpan(trace.events);
   if (!options.expanded && latestEvents.length === 1 && !latestEvents[0]?.parentSpanId) {
-    return [
-      ...formatSimpleTrace(latestEvents[0]!, trace.registry, theme),
-      ...formatTraceRuntimeToolLines((trace.runtimeEvents ?? []).filter((runtimeEvent) => runtimeEvent.spanId === latestEvents[0]!.spanId), theme, 0, false),
-    ];
+    return formatSimpleTrace(latestEvents[0]!, trace.registry, theme);
   }
   const runtimeEventsBySpan = groupRuntimeEventsBySpan(trace.runtimeEvents ?? []);
   const agentColors = agentColorsFromRegistry(trace);
@@ -170,7 +167,6 @@ function appendTraceEventLines(
   const indent = "  ".repeat(depth);
 
   lines.push(...formatTraceEventHeaderLines(event, theme, options, depth, agentColors, targetStyles, { suppressInput: hasPrompt }));
-  lines.push(...formatTraceRuntimeToolLines(runtimeEvents, theme, depth, Boolean(options.expanded)));
 
   if (options.expanded) {
     lines.push(...formatTraceRuntimeModelLines(runtimeEvents, theme, depth));
@@ -234,33 +230,6 @@ function formatTraceEventHeaderLines(
   }
 
   return lines;
-}
-
-function formatTraceRuntimeToolLines(
-  runtimeEvents: ProtocolRuntimeEvent[],
-  theme: ProtocolToolThemeLike,
-  depth: number,
-  expanded: boolean,
-): string[] {
-  type ToolEvent = Extract<ProtocolRuntimeEvent, { type: "executor_tool_start" | "executor_tool_update" | "executor_tool_end" }>;
-  const latest = new Map<string, ToolEvent>();
-  for (const event of runtimeEvents) {
-    if (event.type === "executor_tool_start" || event.type === "executor_tool_update" || event.type === "executor_tool_end") {
-      latest.set(event.toolCallId, event);
-    }
-  }
-  if (latest.size === 0) return [];
-  const indent = `${"  ".repeat(depth)}  `;
-  return [...latest.values()].flatMap((event) => {
-    const running = event.type !== "executor_tool_end";
-    const icon = running ? theme.fg("warning", "▸") : event.isError ? theme.fg("error", "✗") : theme.fg("muted", "·");
-    const preview = event.argsPreview ? ` ${formatOneLinePreview(event.argsPreview, event.previewTruncated)}` : "";
-    const lines = [`${indent}${icon} ${theme.fg("muted", event.toolName)}${theme.fg("muted", preview)}`];
-    if (expanded && event.type === "executor_tool_end" && event.resultPreview) {
-      lines.push(...indentPreviewLines(event.resultPreview, `${indent}  `, event.previewTruncated));
-    }
-    return lines;
-  });
 }
 
 function formatTraceRuntimeModelLines(
