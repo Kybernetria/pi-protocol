@@ -10,7 +10,7 @@ import {
   UNIVERSAL_PROTOCOL_AWARENESS_PROMPT,
 } from "../packages/pi-protocol/sdk/agent-session.ts";
 
-function createFakeSession(options: { throwOnPrompt?: boolean } = {}) {
+function createFakeSession(options: { throwOnPrompt?: boolean; emitTools?: boolean } = {}) {
   let listener: ((event: PiSdkAgentSessionEventLike) => void) | undefined;
   const prompts: string[] = [];
   let unsubscribed = false;
@@ -21,6 +21,10 @@ function createFakeSession(options: { throwOnPrompt?: boolean } = {}) {
       prompts.push(text);
       if (options.throwOnPrompt) {
         throw new Error("prompt failed");
+      }
+      if (options.emitTools) {
+        listener?.({ type: "tool_execution_start", toolCallId: "tool-1", toolName: "protocol", args: { target: "child.work" } });
+        listener?.({ type: "tool_execution_end", toolCallId: "tool-1", toolName: "protocol", result: { content: [{ type: "text", text: "done" }], details: { deliberately: "not serialized" } }, isError: false });
       }
       listener?.({
         type: "message_update",
@@ -82,7 +86,7 @@ assert.deepEqual(fake.prompts, ['Summarize: {"topic":"protocol"}']);
 assert.equal(fake.unsubscribed, true);
 assert.equal(fake.disposed, true);
 
-const runtimeFake = createFakeSession();
+const runtimeFake = createFakeSession({ emitTools: true });
 const runtimeEvents: ProtocolRuntimeEvent[] = [];
 const runtimeExecutor = createPiSdkAgentExecutor({
   createSession: () => runtimeFake.session,
@@ -105,6 +109,25 @@ assert.deepEqual(runtimeEvents, [
     spanId: "span-direct-runtime-test",
     inputPreview: "emit runtime please",
     inputTruncated: false,
+  },
+  {
+    type: "executor_tool_start",
+    traceId: "trace-direct-runtime-test",
+    spanId: "span-direct-runtime-test",
+    toolCallId: "tool-1",
+    toolName: "protocol",
+    argsPreview: '{"target":"child.work"}',
+    previewTruncated: false,
+  },
+  {
+    type: "executor_tool_end",
+    traceId: "trace-direct-runtime-test",
+    spanId: "span-direct-runtime-test",
+    toolCallId: "tool-1",
+    toolName: "protocol",
+    resultPreview: "done",
+    isError: false,
+    previewTruncated: false,
   },
   {
     type: "executor_output_delta",

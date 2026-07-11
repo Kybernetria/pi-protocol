@@ -9,6 +9,7 @@ export interface CurrentProtocolInvocationContext {
   parentSpanId?: string;
   callerNodeId?: string;
   session?: InvokeRequest["session"];
+  correlation?: InvokeRequest["correlation"];
   abortSignal?: AbortSignal;
   childCounter: number;
 }
@@ -34,6 +35,7 @@ export function runWithProtocolInvocationContext<T>(
       parentSpanId: provenance.parentSpanId,
       callerNodeId: provenance.callerNodeId,
       session: request.session,
+      correlation: request.correlation,
       abortSignal: request.abortSignal ?? parent?.abortSignal,
       childCounter: 0,
     },
@@ -68,6 +70,7 @@ export function createChildInvokeRequest(request: InvokeRequest): InvokeRequest 
     // Root/user-originated calls may keep existing identities like pi-chat or root_agent.
     callerNodeId: request.callerNodeId ?? `${current.nodeId}.${current.provide}`,
     session: request.session ?? createInheritedChildSession(current),
+    correlation: request.correlation,
     abortSignal: request.abortSignal ?? current.abortSignal,
   };
 }

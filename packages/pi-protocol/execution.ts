@@ -70,6 +70,7 @@ function executeImplementation(input: ExecuteProvideInput): unknown | Promise<un
     parentSpanId: input.provenance.parentSpanId,
     callerNodeId: input.provenance.callerNodeId,
     session: input.request.session,
+    correlation: input.request.correlation,
     abortSignal: input.request.abortSignal,
     emitRuntimeEvent: input.emitRuntimeEvent,
   };

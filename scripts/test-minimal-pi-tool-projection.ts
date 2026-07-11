@@ -526,6 +526,8 @@ fabric.register({
       const traceId = context?.traceId;
       const spanId = context?.spanId;
       if (!traceId || !spanId) throw new Error("expected trace/span ids");
+      await context.emitRuntimeEvent?.({ type: "executor_tool_start", traceId, spanId, toolCallId: "nested-tool-1", toolName: "protocol", argsPreview: '{"target":"child.work"}' });
+      await context.emitRuntimeEvent?.({ type: "executor_tool_end", traceId, spanId, toolCallId: "nested-tool-1", toolName: "protocol", resultPreview: "done", isError: false });
       await context.emitRuntimeEvent?.({ type: "executor_output_delta", traceId, spanId, textDelta: "streamed " });
       await context.emitRuntimeEvent?.({ type: "executor_output_delta", traceId, spanId, textDelta: "runtime" });
       return input;
@@ -560,10 +562,14 @@ const runtimePartialLines = tool.renderResult?.(runtimePartialUpdates.at(-1)!, {
 const runtimePartialText = runtimePartialLines.render(120).join("\n");
 assert.ok(runtimePartialText.includes("output:\n    streamed runtime"));
 assert.ok(!runtimePartialText.includes("stream:\n    streamed runtime"));
+const runtimeCollapsedLines = tool.renderResult?.(runtimeInvokeResult, {}, testTheme, { args: runtimeInvokeInput }) as { render(width: number): string[] };
+assert.ok(runtimeCollapsedLines.render(120).join("\n").includes("· protocol"));
 const runtimeResultLines = tool.renderResult?.(runtimeInvokeResult, { expanded: true }, testTheme, {
   args: runtimeInvokeInput,
 }) as { render(width: number): string[] };
 const runtimeResultText = runtimeResultLines.render(120).join("\n");
+assert.ok(runtimeResultText.includes("· protocol"));
+assert.ok(runtimeResultText.includes("done"));
 assert.ok(!runtimeResultText.includes("stream:\n    streamed runtime"));
 assert.ok(runtimeResultText.includes("output:\n    {\"text\":\"runtime output\"}"));
 
@@ -663,6 +669,7 @@ const nestedTraceLines = tool.renderResult?.(
             spanId: "span-child-b-render-test",
             parentSpanId: "span-root-nested-render-test",
             callerNodeId: "agent_a",
+            correlation: { runtime: "pi", callId: "nested-protocol-call" },
             nodeId: "real_agent_chain",
             provide: "draft_b",
             status: "succeeded",
@@ -683,6 +690,10 @@ const nestedTraceLines = tool.renderResult?.(
             outputPreview: "review c",
           },
         ],
+        liveSpans: [{
+          spanId: "span-root-nested-render-test",
+          tools: [{ toolCallId: "nested-protocol-call", toolName: "protocol", status: "completed", argsPreview: '{"target":"real_agent_chain.draft_b"}', resultPreview: "draft complete" }],
+        }],
       },
     },
   },
@@ -696,6 +707,8 @@ assert.ok(nestedTraceText.includes("agent_a → real_agent_chain.draft_b"));
 assert.ok(nestedTraceText.includes("agent_b → real_agent_chain.ask_c"));
 assert.ok(nestedTraceText.includes("├─ agent_a/call"));
 assert.ok(nestedTraceText.includes("├─ agent_b/call"));
+assert.ok(nestedTraceText.includes("protocol → real_agent_chain.draft_b"), "live tool row should correlate to its recursive child span");
+assert.ok(nestedTraceText.includes("draft complete"));
 
 
 const nestedDuplicateFinalLines = tool.renderResult?.(
