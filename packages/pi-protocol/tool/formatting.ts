@@ -7,7 +7,7 @@ import type {
 } from "../index.ts";
 import { formatOneLinePreview, formatTarget, formatValue, indentPreviewLines } from "./helpers.ts";
 import { isInvokeToolResult, isRegistryToolResult, isSuccessfulInvokeToolResult, isTextObject } from "./guards.ts";
-import type { ProtocolLiveSpanProgress, ProtocolTraceDetails } from "./trace.ts";
+import type { ProtocolTraceDetails } from "./trace.ts";
 import type { ProtocolToolExecutionResult, ProtocolToolInput, ProtocolToolThemeLike } from "./types.ts";
 
 export function formatProtocolToolResult(result: unknown): string {
@@ -94,14 +94,9 @@ function formatProtocolTrace(
 
   const latestEvents = latestEventBySpan(trace.events);
   if (!options.expanded && latestEvents.length === 1 && !latestEvents[0]?.parentSpanId) {
-    const root = latestEvents[0]!;
-    return [
-      ...formatSimpleTrace(root, trace.registry, theme),
-      ...formatLiveToolLines((trace.liveSpans ?? []).find((span) => span.spanId === root.spanId), [], theme, 0, false),
-    ];
+    return formatSimpleTrace(latestEvents[0]!, trace.registry, theme);
   }
   const runtimeEventsBySpan = groupRuntimeEventsBySpan(trace.runtimeEvents ?? []);
-  const liveSpansById = new Map((trace.liveSpans ?? []).map((span) => [span.spanId, span]));
   const agentColors = agentColorsFromRegistry(trace);
   const targetStyles = targetStylesFromRegistry(trace);
   const lines = [theme.fg("toolTitle", theme.bold("protocol trace"))];
@@ -110,7 +105,7 @@ function formatProtocolTrace(
   const childrenByParent = groupEventsByParent(latestEvents);
 
   for (const root of roots) {
-    appendTraceEventLines(lines, root, childrenByParent, runtimeEventsBySpan, liveSpansById, agentColors, targetStyles, theme, options, 0, finalOutput);
+    appendTraceEventLines(lines, root, childrenByParent, runtimeEventsBySpan, agentColors, targetStyles, theme, options, 0, finalOutput);
   }
 
   return lines;
@@ -159,7 +154,6 @@ function appendTraceEventLines(
   event: InvocationProvenanceEvent,
   childrenByParent: Map<string, InvocationProvenanceEvent[]>,
   runtimeEventsBySpan: Map<string, ProtocolRuntimeEvent[]>,
-  liveSpansById: Map<string, ProtocolLiveSpanProgress>,
   agentColors: Map<string, string>,
   targetStyles: Map<string, ResolvedStylePart>,
   theme: ProtocolToolThemeLike,
@@ -173,7 +167,6 @@ function appendTraceEventLines(
   const indent = "  ".repeat(depth);
 
   lines.push(...formatTraceEventHeaderLines(event, theme, options, depth, agentColors, targetStyles, { suppressInput: hasPrompt }));
-  lines.push(...formatLiveToolLines(liveSpansById.get(event.spanId), children, theme, depth, Boolean(options.expanded)));
 
   if (options.expanded) {
     lines.push(...formatTraceRuntimeModelLines(runtimeEvents, theme, depth));
@@ -191,7 +184,7 @@ function appendTraceEventLines(
   }
 
   for (const child of children) {
-    appendTraceEventLines(lines, child, childrenByParent, runtimeEventsBySpan, liveSpansById, agentColors, targetStyles, theme, options, depth + 1, finalOutput);
+    appendTraceEventLines(lines, child, childrenByParent, runtimeEventsBySpan, agentColors, targetStyles, theme, options, depth + 1, finalOutput);
   }
 
   if (options.expanded) {
@@ -237,26 +230,6 @@ function formatTraceEventHeaderLines(
   }
 
   return lines;
-}
-
-function formatLiveToolLines(
-  span: ProtocolLiveSpanProgress | undefined,
-  childEvents: InvocationProvenanceEvent[],
-  theme: ProtocolToolThemeLike,
-  depth: number,
-  expanded: boolean,
-): string[] {
-  if (!span?.tools.length) return [];
-  const indent = `${"  ".repeat(depth)}  `;
-  return span.tools.flatMap((tool) => {
-    const child = childEvents.find((event) => event.correlation?.runtime === "pi" && event.correlation.callId === tool.toolCallId);
-    const icon = tool.status === "running" ? theme.fg("warning", "▸") : tool.status === "failed" ? theme.fg("error", "✗") : theme.fg("muted", "·");
-    const childLabel = child ? ` → ${formatTarget(child.nodeId, child.provide)}` : "";
-    const args = tool.argsPreview ? ` ${formatOneLinePreview(tool.argsPreview, tool.previewTruncated)}` : "";
-    const lines = [`${indent}${icon} ${theme.fg("muted", `${tool.toolName}${childLabel}${args}`)}`];
-    if (expanded && tool.resultPreview) lines.push(...indentPreviewLines(tool.resultPreview, `${indent}  `, tool.previewTruncated));
-    return lines;
-  });
 }
 
 function formatTraceRuntimeModelLines(

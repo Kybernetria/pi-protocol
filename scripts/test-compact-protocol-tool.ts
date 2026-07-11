@@ -39,8 +39,6 @@ const direct = await tool.execute("direct-call", { target: "compact_test.review"
 assert.equal(direct.content[0]?.text, "reviewed:now");
 assert.equal((direct.details as { toolCallId?: string }).toolCallId, "direct-call");
 assert.equal((direct.details as { state?: string }).state, "completed");
-const directTrace = (direct.details as { trace?: { events?: Array<{ correlation?: { runtime: string; callId: string } }> } }).trace;
-assert.deepEqual(directTrace?.events?.at(-1)?.correlation, { runtime: "pi", callId: "direct-call" });
 
 const first = tool.execute("first-call", { target: "compact_test.review", input: { text: "wait" } });
 await new Promise((resolve) => setTimeout(resolve, 5));
@@ -61,28 +59,4 @@ assert.equal(started, 2, "aborted queued call must not start");
 release();
 await first;
 
-const stressFabric = createProtocolFabric();
-stressFabric.register({
-  node: {
-    nodeId: "live_stress",
-    purpose: "Bounded live progress test",
-    provides: [{ name: "run", description: "Emit many tool events", inputSchema: { type: "string" }, outputSchema: { type: "string" }, execution: { type: "agent", agent: "stress" } }],
-  },
-  agentExecutors: {
-    stress: async (input, context) => {
-      for (let i = 0; i < 100; i++) {
-        await context?.emitRuntimeEvent?.({ type: "executor_tool_start", traceId: context.traceId!, spanId: context.spanId!, toolCallId: `stress-${i}`, toolName: "read", argsPreview: `file-${i}` });
-        await context?.emitRuntimeEvent?.({ type: "executor_tool_end", traceId: context.traceId!, spanId: context.spanId!, toolCallId: `stress-${i}`, toolName: "read", resultPreview: "ok", isError: false });
-      }
-      return String(input);
-    },
-  },
-});
-const stressTool = createProtocolTool(stressFabric);
-const stressResult = await stressTool.execute("stress-root", { target: "live_stress.run", input: "done" });
-const stressTrace = (stressResult.details as { trace: { liveSpans?: Array<{ tools: unknown[] }>; runtimeEvents?: Array<{ type: string }> } }).trace;
-assert.equal(stressTrace.liveSpans?.[0]?.tools.length, 12, "live progress keeps only the latest bounded tool snapshot");
-assert.ok(!stressTrace.runtimeEvents?.some((event) => event.type.startsWith("executor_tool_")), "tool progress must not accumulate in durable runtime history");
-assert.ok(JSON.stringify(stressResult.details).length < 20_000, "bounded live details must stay small under event load");
-
-console.log("compact protocol tool, correlation, concurrency, cancellation, and bounded live progress work");
+console.log("compact protocol tool, correlation, concurrency, and queued cancellation work");

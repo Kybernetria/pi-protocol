@@ -29,10 +29,7 @@ export type PiSdkAgentSessionEventLike =
         delta: string;
       };
     }
-  | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown }
-  | { type: "tool_execution_update"; toolCallId: string; toolName: string; args: unknown; partialResult: unknown }
-  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: unknown; isError: boolean }
-  | { type: string; [key: string]: unknown };
+  | { type: string };
 
 export interface PiSdkAgentSessionLike {
   prompt(text: string): Promise<void>;
@@ -77,22 +74,6 @@ export function createPiSdkAgentExecutor(
             textDelta: event.assistantMessageEvent.delta,
           }),
         );
-      } else if (isToolExecutionEvent(event)) {
-        const preview = event.type === "tool_execution_start"
-          ? createRuntimePreview(event.args)
-          : event.type === "tool_execution_end"
-            ? createToolResultPreview(event.result)
-            : { text: "", truncated: false };
-        pendingRuntimeEvents.push(emitRuntimeEventSafely(context, {
-          type: event.type === "tool_execution_start" ? "executor_tool_start" : event.type === "tool_execution_update" ? "executor_tool_update" : "executor_tool_end",
-          traceId: context?.traceId,
-          spanId: context?.spanId,
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          ...(event.type === "tool_execution_start" ? { argsPreview: preview.text } : {}),
-          ...(event.type === "tool_execution_end" ? { resultPreview: preview.text, isError: event.isError } : {}),
-          previewTruncated: preview.truncated,
-        }));
       }
     });
     const removeAbortListener = addAbortListener(context?.abortSignal, () => session.dispose());
@@ -171,17 +152,6 @@ type RuntimeEventDraft =
     }
   | { type: "executor_output_delta"; traceId?: string; spanId?: string; textDelta: string }
   | {
-      type: "executor_tool_start" | "executor_tool_update" | "executor_tool_end";
-      traceId?: string;
-      spanId?: string;
-      toolCallId: string;
-      toolName: string;
-      argsPreview?: string;
-      resultPreview?: string;
-      previewTruncated?: boolean;
-      isError?: boolean;
-    }
-  | {
       type: "executor_output_snapshot";
       traceId?: string;
       spanId?: string;
@@ -219,17 +189,12 @@ function toRuntimeEvent(event: RuntimeEventDraft, traceId: string, spanId: strin
     };
   }
 
-  if (event.type === "executor_tool_start" || event.type === "executor_tool_update" || event.type === "executor_tool_end") {
-    return { ...event, traceId, spanId };
-  }
-
-  const output = event as Extract<RuntimeEventDraft, { type: "executor_output_snapshot" }>;
   return {
-    type: "executor_output_snapshot",
+    type: event.type,
     traceId,
     spanId,
-    outputPreview: output.outputPreview,
-    outputTruncated: output.outputTruncated,
+    outputPreview: event.outputPreview,
+    outputTruncated: event.outputTruncated,
   };
 }
 
@@ -255,34 +220,9 @@ function toCurrentProtocolInvocationContext(
     parentSpanId: context.parentSpanId,
     callerNodeId: context.callerNodeId,
     session: context.session,
-    correlation: context.correlation,
     abortSignal: context.abortSignal,
     childCounter: 0,
   };
-}
-
-function isToolExecutionEvent(event: PiSdkAgentSessionEventLike): event is Extract<PiSdkAgentSessionEventLike, { type: "tool_execution_start" | "tool_execution_update" | "tool_execution_end" }> {
-  return event.type === "tool_execution_start" || event.type === "tool_execution_update" || event.type === "tool_execution_end";
-}
-
-function createRuntimePreview(value: unknown, max = 1_000): { text: string; truncated: boolean } {
-  let text: string;
-  if (typeof value === "string") text = value;
-  else {
-    try { text = JSON.stringify(value); } catch { text = String(value); }
-  }
-  return text.length > max ? { text: text.slice(0, max), truncated: true } : { text, truncated: false };
-}
-
-function createToolResultPreview(result: unknown): { text: string; truncated: boolean } {
-  if (typeof result === "object" && result !== null && "content" in result && Array.isArray((result as { content?: unknown }).content)) {
-    const text = ((result as { content: Array<{ type?: string; text?: string }> }).content)
-      .filter((item) => item?.type === "text" && typeof item.text === "string")
-      .map((item) => item.text)
-      .join("\n");
-    return createRuntimePreview(text);
-  }
-  return createRuntimePreview(result);
 }
 
 function isTextDeltaMessageUpdate(event: PiSdkAgentSessionEventLike): event is {
@@ -292,12 +232,7 @@ function isTextDeltaMessageUpdate(event: PiSdkAgentSessionEventLike): event is {
   return (
     event.type === "message_update" &&
     "assistantMessageEvent" in event &&
-    typeof event.assistantMessageEvent === "object" &&
-    event.assistantMessageEvent !== null &&
-    "type" in event.assistantMessageEvent &&
-    event.assistantMessageEvent.type === "text_delta" &&
-    "delta" in event.assistantMessageEvent &&
-    typeof event.assistantMessageEvent.delta === "string"
+    event.assistantMessageEvent.type === "text_delta"
   );
 }
 

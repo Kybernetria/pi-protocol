@@ -45,10 +45,7 @@ export async function handleProtocolToolInput(
 
     case "call":
     case "invoke": {
-      const request = createChildInvokeRequest({
-        ...toInvokeRequest(input),
-        ...(toolCallId ? { correlation: { runtime: "pi", callId: toolCallId } } : {}),
-      });
+      const request = createChildInvokeRequest(toInvokeRequest(input));
       const invoke = () => invokeWithTraceUpdates(fabric, request, onUpdate, signal, toolCallId);
       if (!scheduler) return invoke();
       try {

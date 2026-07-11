@@ -211,7 +211,6 @@ function createInvocationProvenance(request: InvokeRequest): Omit<InvocationProv
     nodeId: request.nodeId,
     provide: request.provide,
     ...(request.session ? { session: request.session } : {}),
-    ...(request.correlation ? { correlation: request.correlation } : {}),
   };
 }
 

@@ -81,13 +81,6 @@ export interface InvocationSessionControl {
   mode?: InvocationSessionMode;
 }
 
-export interface InvocationCorrelation {
-  /** Runtime adapter namespace, for example "pi". */
-  runtime: string;
-  /** Runtime-local call id, such as Pi's toolCallId. */
-  callId: string;
-}
-
 export type ProtocolRuntimeEvent =
   | {
       type: "executor_session_model";
@@ -115,17 +108,6 @@ export type ProtocolRuntimeEvent =
       spanId: string;
       outputPreview: string;
       outputTruncated?: boolean;
-    }
-  | {
-      type: "executor_tool_start" | "executor_tool_update" | "executor_tool_end";
-      traceId: string;
-      spanId: string;
-      toolCallId: string;
-      toolName: string;
-      argsPreview?: string;
-      resultPreview?: string;
-      previewTruncated?: boolean;
-      isError?: boolean;
     };
 
 export type ProtocolRuntimeEventEmitter = (event: ProtocolRuntimeEvent) => void | Promise<void>;
@@ -140,7 +122,6 @@ export interface ProtocolInvocationContext {
   parentSpanId?: string;
   callerNodeId?: string;
   session?: InvocationSessionControl;
-  correlation?: InvocationCorrelation;
   abortSignal?: AbortSignal;
   emitRuntimeEvent?: ProtocolRuntimeEventEmitter;
 }
@@ -160,7 +141,6 @@ export interface InvocationProvenanceEvent {
   nodeId: string;
   provide: string;
   session?: InvocationSessionControl;
-  correlation?: InvocationCorrelation;
   status: InvocationStatus;
   durationMs?: number;
   inputPreview?: string;
@@ -240,7 +220,6 @@ export interface InvokeRequest {
   parentSpanId?: string;
   callerNodeId?: string;
   session?: InvocationSessionControl;
-  correlation?: InvocationCorrelation;
   abortSignal?: AbortSignal;
 }
 
