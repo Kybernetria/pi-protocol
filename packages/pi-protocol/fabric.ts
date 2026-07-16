@@ -10,8 +10,10 @@ import type {
   ProvenanceRecorder,
   ProvideSnapshot,
   RecorderUnsubscribe,
+  RegistryRecorder,
   RegistrySnapshot,
 } from "./types.ts";
+import type { ProtocolTransport } from "./transport/types.ts";
 import { runWithProtocolInvocationContext } from "./context.ts";
 import { executeProvide } from "./execution.ts";
 import { validateRegistration } from "./validation.ts";
@@ -20,7 +22,7 @@ import { validateRegistration } from "./validation.ts";
 // can find the same fabric through globalThis.
 const FABRIC_KEY = Symbol.for("pi-protocol.minimal.fabric");
 const FABRIC_VERSION_KEY = Symbol.for("pi-protocol.minimal.fabric.version");
-const FABRIC_VERSION = 2;
+const FABRIC_VERSION = 3;
 const INPUT_PREVIEW_MAX_CHARS = 20_000;
 const OUTPUT_PREVIEW_MAX_CHARS = 40_000;
 
@@ -32,12 +34,27 @@ interface RegisteredNode {
 
 export function createProtocolFabric(): ProtocolFabric {
   const nodes = new Map<string, RegisteredNode>();
+  let transport: ProtocolTransport | undefined;
   let provenanceRecorder: ProvenanceRecorder | undefined;
   let runtimeEventRecorder: ProtocolRuntimeEventRecorder | undefined;
   const provenanceSubscribers = new Set<ProvenanceRecorder>();
   const runtimeEventSubscribers = new Set<ProtocolRuntimeEventRecorder>();
+  const registrySubscribers = new Set<RegistryRecorder>();
+
+  const localRegistry = (): RegistrySnapshot => {
+    const registeredNodes = [...nodes.values()].map((entry) => cloneProtocolNode(entry.node));
+    return freezeSnapshot({
+      nodes: registeredNodes,
+      provides: registeredNodes.flatMap((node) => node.provides.map((provide) => createProvideSnapshot(node, provide.name))),
+    });
+  };
 
   const fabric: ProtocolFabric = {
+    setTransport(nextTransport) {
+      transport = nextTransport;
+      notifyRegistrySubscribers(registrySubscribers, fabric.registry());
+    },
+
     setProvenanceRecorder(recorder) {
       provenanceRecorder = recorder;
     },
@@ -56,6 +73,11 @@ export function createProtocolFabric(): ProtocolFabric {
       return createUnsubscribe(runtimeEventSubscribers, recorder);
     },
 
+    subscribeRegistryRecorder(recorder) {
+      registrySubscribers.add(recorder);
+      return createUnsubscribe(registrySubscribers, recorder);
+    },
+
     register(input) {
       validateRegistration(input);
 
@@ -68,46 +90,54 @@ export function createProtocolFabric(): ProtocolFabric {
         handlers: { ...(input.handlers ?? {}) },
         agentExecutors: { ...(input.agentExecutors ?? {}) },
       });
+      notifyRegistrySubscribers(registrySubscribers, fabric.registry());
     },
 
     unregister(nodeId) {
-      nodes.delete(nodeId);
+      if (nodes.delete(nodeId)) notifyRegistrySubscribers(registrySubscribers, fabric.registry());
     },
 
     registry() {
-      const registeredNodes = [...nodes.values()].map((entry) => cloneProtocolNode(entry.node));
-
-      return freezeSnapshot({
-        nodes: registeredNodes,
-        provides: registeredNodes.flatMap((node) => node.provides.map((provide) => createProvideSnapshot(node, provide.name))),
-      });
+      return transport ? mergeRegistries(localRegistry(), transport.registry()) : localRegistry();
     },
 
     describeNode(nodeId) {
-      const node = nodes.get(nodeId)?.node;
+      const node = fabric.registry().nodes.find((item) => item.nodeId === nodeId);
       return node ? freezeSnapshot(cloneProtocolNode(node)) : undefined;
     },
 
     describeProvide(nodeId, provideName) {
-      const node = nodes.get(nodeId)?.node;
-      const provide = node?.provides.find((item) => item.name === provideName);
-      if (!node || !provide) return undefined;
-
-      return freezeSnapshot({
-        ...cloneProvide(provide),
-        nodeId: node.nodeId,
-        globalId: `${node.nodeId}.${provide.name}`,
-      });
+      const provide = fabric.registry().provides.find(
+        (item) => item.nodeId === nodeId && item.name === provideName,
+      );
+      return provide ? freezeSnapshot(cloneProvide(provide)) : undefined;
     },
 
     async invoke(request) {
       const provenance = createInvocationProvenance(request);
+      const localRegistered = nodes.get(request.nodeId);
+      const localProvide = localRegistered?.node.provides.some((item) => item.name === request.provide) ?? false;
+      const remoteProvide = transport?.registry().provides.some(
+        (item) => item.nodeId === request.nodeId && item.name === request.provide,
+      ) ?? false;
+      if (!localProvide && remoteProvide && transport) {
+        return invokeRemote(
+          transport,
+          { ...request, traceId: provenance.traceId, spanId: provenance.spanId },
+          provenance,
+          provenanceRecorder,
+          provenanceSubscribers,
+          runtimeEventRecorder,
+          runtimeEventSubscribers,
+        );
+      }
+
       const inputPreview = createInputPreview(request.input);
       const startedAt = Date.now();
       await recordProvenance(provenanceRecorder, provenanceSubscribers, { ...provenance, status: "started", ...inputPreview });
 
       const durationMs = () => Date.now() - startedAt;
-      const registered = nodes.get(request.nodeId);
+      const registered = localRegistered;
       if (!registered) {
         const error = { code: "NOT_FOUND" as const, message: `Node not found: ${request.nodeId}` };
         await recordProvenance(provenanceRecorder, provenanceSubscribers, {
@@ -189,10 +219,12 @@ function isCompatibleProtocolFabric(value: ProtocolFabric | undefined): value is
   return (
     Boolean(value) &&
     (value as unknown as Record<PropertyKey, unknown>)[FABRIC_VERSION_KEY] === FABRIC_VERSION &&
-    typeof value?.setProvenanceRecorder === "function" &&
+    typeof value?.setTransport === "function" &&
+    typeof value.setProvenanceRecorder === "function" &&
     typeof value.subscribeProvenanceRecorder === "function" &&
     typeof value.setRuntimeEventRecorder === "function" &&
     typeof value.subscribeRuntimeEventRecorder === "function" &&
+    typeof value.subscribeRegistryRecorder === "function" &&
     typeof value.register === "function" &&
     typeof value.unregister === "function" &&
     typeof value.registry === "function" &&
@@ -200,6 +232,58 @@ function isCompatibleProtocolFabric(value: ProtocolFabric | undefined): value is
     typeof value.describeProvide === "function" &&
     typeof value.invoke === "function"
   );
+}
+
+async function invokeRemote(
+  transport: ProtocolTransport,
+  request: InvokeRequest,
+  provenance: Omit<InvocationProvenanceEvent, "status" | "durationMs">,
+  provenanceRecorder: ProvenanceRecorder | undefined,
+  provenanceSubscribers: Set<ProvenanceRecorder>,
+  runtimeEventRecorder: ProtocolRuntimeEventRecorder | undefined,
+  runtimeEventSubscribers: Set<ProtocolRuntimeEventRecorder>,
+): Promise<Awaited<ReturnType<ProtocolTransport["invoke"]>>> {
+  let sawStarted = false;
+  let sawTerminal = false;
+  const startedAt = Date.now();
+  const inputPreview = createInputPreview(request.input);
+
+  try {
+    return await transport.invoke(request, {
+      async onProvenance(event) {
+        if (event.traceId !== provenance.traceId) return;
+        if (event.status === "started") sawStarted = true;
+        else sawTerminal = true;
+        await recordProvenance(provenanceRecorder, provenanceSubscribers, event);
+      },
+      async onRuntimeEvent(event) {
+        if (event.traceId !== provenance.traceId) return;
+        await recordAll(runtimeEventRecorder, runtimeEventSubscribers, event);
+      },
+    });
+  } catch (cause) {
+    const error = {
+      code: "TRANSPORT_FAILED" as const,
+      message: cause instanceof Error ? cause.message : String(cause),
+    };
+    if (!sawStarted) {
+      await recordProvenance(provenanceRecorder, provenanceSubscribers, {
+        ...provenance,
+        status: "started",
+        ...inputPreview,
+      });
+    }
+    if (!sawTerminal) {
+      await recordProvenance(provenanceRecorder, provenanceSubscribers, {
+        ...provenance,
+        status: "failed",
+        durationMs: Date.now() - startedAt,
+        ...inputPreview,
+        error,
+      });
+    }
+    return { ok: false, error };
+  }
 }
 
 function createInvocationProvenance(request: InvokeRequest): Omit<InvocationProvenanceEvent, "status" | "durationMs"> {
@@ -248,6 +332,10 @@ async function recordAll<T>(
   }
 }
 
+function notifyRegistrySubscribers(subscribers: Set<RegistryRecorder>, snapshot: RegistrySnapshot): void {
+  for (const subscriber of subscribers) subscriber(snapshot);
+}
+
 function createUnsubscribe<T>(subscribers: Set<T>, recorder: T): RecorderUnsubscribe {
   return () => {
     subscribers.delete(recorder);
@@ -287,6 +375,27 @@ function stringifyPreviewValue(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function mergeRegistries(local: RegistrySnapshot, remote: RegistrySnapshot): RegistrySnapshot {
+  const localTargets = new Set(local.provides.map((provide) => provide.globalId));
+  const provides = [
+    ...local.provides.map((provide) => cloneProvide(provide)),
+    ...remote.provides.filter((provide) => !localTargets.has(provide.globalId)).map((provide) => cloneProvide(provide)),
+  ];
+  const nodes = new Map(local.nodes.map((node) => [node.nodeId, cloneProtocolNode(node)]));
+  for (const remoteNode of remote.nodes) {
+    const localNode = nodes.get(remoteNode.nodeId);
+    if (!localNode) {
+      nodes.set(remoteNode.nodeId, cloneProtocolNode(remoteNode));
+      continue;
+    }
+    const localProvideNames = new Set(localNode.provides.map((provide) => provide.name));
+    localNode.provides.push(
+      ...remoteNode.provides.filter((provide) => !localProvideNames.has(provide.name)).map(cloneProvide),
+    );
+  }
+  return freezeSnapshot({ nodes: [...nodes.values()], provides });
 }
 
 function cloneProtocolNode(node: ProtocolNode): ProtocolNode {

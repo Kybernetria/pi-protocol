@@ -8,12 +8,14 @@
   "exports": {
     ".": "./index.ts",
     "./tool": "./tool/index.ts",
+    "./transport": "./transport/index.ts",
     "./sdk": "./sdk/index.ts",
     "./sdk/agent-session": "./sdk/agent-session.ts"
   },
   "files": [
     "*.ts",
     "tool/*.ts",
+    "transport/*.ts",
     "sdk/*.ts",
     "LICENSE"
   ],

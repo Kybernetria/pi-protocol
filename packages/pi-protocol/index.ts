@@ -38,8 +38,15 @@ export type {
   ProvideSpec,
   RegisterNodeInput,
   RecorderUnsubscribe,
+  RegistryRecorder,
   RegistrySnapshot,
 } from "./types.ts";
+
+export type {
+  ProtocolTransport,
+  ProtocolTransportDiagnostic,
+  ProtocolTransportObserver,
+} from "./transport/index.ts";
 
 // Re-export tool and sdk for convenience (also available via ./tool and ./sdk entry points)
 export { createProtocolTool, registerProtocolTool, handleProtocolToolInput } from "./tool/index.ts";
