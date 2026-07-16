@@ -34,10 +34,9 @@ export type ProtocolSettingSpec =
       maximum?: number;
     };
 
-export interface ProtocolAgentInstructionSpec {
-  text: string;
-  mode?: "append" | "replace";
-}
+export type ProtocolAgentInstructionSpec =
+  | { /** Inline agent instructions. */ text: string; file?: never; mode?: "append" | "replace" }
+  | { /** Prompt file, resolved relative to an explicit manifestBaseDir. */ file: string; text?: never; mode?: "append" | "replace" };
 
 export interface ProtocolAgentSpec {
   description?: string;

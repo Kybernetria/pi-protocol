@@ -1,32 +1,67 @@
+import { realpathSync, readFileSync, statSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
 import type {
   PiProtocolManifest,
   ProtocolAgentExecutor,
+  ProtocolAgentInstructionSpec,
   ProtocolFabric,
   ProtocolHandler,
   ProtocolNode,
   ProvideSpec,
 } from "./types.ts";
 
-export interface RegisterProtocolManifestInput {
+/** Options for loading a manifest whose agent prompts may reference files. */
+export interface ManifestResolutionOptions {
+  /**
+   * Directory relative to which `systemPrompt.file` is resolved. Required when
+   * the manifest contains file-backed prompts. This is intentionally never
+   * inferred from `process.cwd()`.
+   */
+  manifestBaseDir?: string;
+}
+
+export interface RegisterProtocolManifestInput extends ManifestResolutionOptions {
   manifest: PiProtocolManifest;
   handlers?: Record<string, ProtocolHandler>;
   agentExecutors?: Record<string, ProtocolAgentExecutor>;
 }
 
-export function protocolNodeFromManifest(manifest: PiProtocolManifest): ProtocolNode {
-  validateManifestAgentReferences(manifest);
+/**
+ * Return a copy of a manifest with file-backed agent prompts read as inline
+ * text. Call this before supplying the same manifest to other manifest-aware
+ * APIs, such as the SDK agent executor factory.
+ */
+export function resolveManifestSystemPrompts(
+  manifest: PiProtocolManifest,
+  options: ManifestResolutionOptions = {},
+): PiProtocolManifest {
+  const agents = Object.fromEntries(Object.entries(manifest.agents ?? {}).map(([name, agent]) => [
+    name,
+    agent.systemPrompt
+      ? { ...agent, systemPrompt: resolveSystemPrompt(manifest.nodeId, name, agent.systemPrompt, options) }
+      : { ...agent },
+  ]));
+  return { ...manifest, ...(manifest.agents ? { agents } : {}) };
+}
+
+export function protocolNodeFromManifest(
+  manifest: PiProtocolManifest,
+  options: ManifestResolutionOptions = {},
+): ProtocolNode {
+  const resolvedManifest = resolveManifestSystemPrompts(manifest, options);
+  validateManifestAgentReferences(resolvedManifest);
   return {
-    protocolVersion: manifest.protocolVersion,
-    nodeId: manifest.nodeId,
-    packageId: manifest.packageId,
-    version: manifest.version,
-    purpose: manifest.purpose,
-    tags: manifest.tags,
-    settings: manifest.settings,
-    ui: manifest.ui,
-    display: manifest.display,
-    agents: manifest.agents,
-    provides: manifest.provides.map(provideFromManifest),
+    protocolVersion: resolvedManifest.protocolVersion,
+    nodeId: resolvedManifest.nodeId,
+    packageId: resolvedManifest.packageId,
+    version: resolvedManifest.version,
+    purpose: resolvedManifest.purpose,
+    tags: resolvedManifest.tags,
+    settings: resolvedManifest.settings,
+    ui: resolvedManifest.ui,
+    display: resolvedManifest.display,
+    agents: resolvedManifest.agents,
+    provides: resolvedManifest.provides.map(provideFromManifest),
   };
 }
 
@@ -35,10 +70,66 @@ export function registerProtocolManifest(
   input: RegisterProtocolManifestInput,
 ): void {
   fabric.register({
-    node: protocolNodeFromManifest(input.manifest),
+    node: protocolNodeFromManifest(input.manifest, input),
     handlers: input.handlers,
     agentExecutors: input.agentExecutors,
   });
+}
+
+function resolveSystemPrompt(
+  nodeId: string,
+  agentName: string,
+  prompt: ProtocolAgentInstructionSpec,
+  options: ManifestResolutionOptions,
+): ProtocolAgentInstructionSpec {
+  const hasText = typeof (prompt as { text?: unknown }).text === "string";
+  const hasFile = typeof (prompt as { file?: unknown }).file === "string";
+  if (hasText === hasFile) {
+    throw new Error(`Manifest ${nodeId} agent ${agentName} systemPrompt must specify exactly one of "text" or "file".`);
+  }
+  if (prompt.mode !== undefined && prompt.mode !== "append" && prompt.mode !== "replace") {
+    throw new Error(`Manifest ${nodeId} agent ${agentName} systemPrompt.mode must be "append" or "replace".`);
+  }
+  if (hasText) return { text: (prompt as { text: string }).text, mode: prompt.mode };
+
+  const file = (prompt as { file: string }).file;
+  if (!options.manifestBaseDir) {
+    throw new Error(`Manifest ${nodeId} agent ${agentName} uses systemPrompt.file; manifestBaseDir is required.`);
+  }
+
+  let baseDir: string;
+  try {
+    baseDir = realpathSync(options.manifestBaseDir);
+  } catch (error) {
+    throw new Error(`Manifest ${nodeId} agent ${agentName} cannot use manifestBaseDir ${JSON.stringify(options.manifestBaseDir)}: ${(error as Error).message}`, { cause: error });
+  }
+  const candidate = resolve(baseDir, file);
+  if (!isWithin(baseDir, candidate)) {
+    throw new Error(`Manifest ${nodeId} agent ${agentName} systemPrompt.file ${JSON.stringify(file)} escapes manifestBaseDir.`);
+  }
+
+  let resolvedFile: string;
+  try {
+    resolvedFile = realpathSync(candidate);
+  } catch (error) {
+    throw new Error(`Manifest ${nodeId} agent ${agentName} systemPrompt.file ${JSON.stringify(file)} does not exist or is unreadable.`, { cause: error });
+  }
+  if (!isWithin(baseDir, resolvedFile)) {
+    throw new Error(`Manifest ${nodeId} agent ${agentName} systemPrompt.file ${JSON.stringify(file)} escapes manifestBaseDir.`);
+  }
+  try {
+    if (!statSync(resolvedFile).isFile()) {
+      throw new Error("not a regular file");
+    }
+    return { text: readFileSync(resolvedFile, "utf8"), mode: prompt.mode };
+  } catch (error) {
+    throw new Error(`Manifest ${nodeId} agent ${agentName} systemPrompt.file ${JSON.stringify(file)} is not a readable file.`, { cause: error });
+  }
+}
+
+function isWithin(baseDir: string, candidate: string): boolean {
+  const path = relative(baseDir, candidate);
+  return path === "" || (!path.startsWith("..") && !isAbsolute(path));
 }
 
 function validateManifestAgentReferences(manifest: PiProtocolManifest): void {

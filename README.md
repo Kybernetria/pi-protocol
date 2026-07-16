@@ -148,6 +148,16 @@ agent model: opencode-go/deepseek-v4-flash (high)
 agent prompt:
 ```
 
+## Agent system prompts
+
+An agent `systemPrompt` has exactly one source: inline `text` (the existing form), or a `file` path:
+
+```json
+"systemPrompt": { "file": "./prompts/architect.md", "mode": "append" }
+```
+
+File paths are resolved under an explicit `manifestBaseDir`, not the host process working directory. The path (including its real path after symlink resolution) may not escape that directory. Pass the same base directory to manifest registration and to `createPiSdkAgentExecutorsFromManifest()`; missing, non-file, or unreadable files fail registration/factory creation with the agent and path in the error. For package-local manifests, use `fileURLToPath(new URL(".", import.meta.url))`.
+
 ## Canonical real-agent manifest
 
 ```json
@@ -189,6 +199,7 @@ Canonical extension:
 
 ```ts
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { fileURLToPath } from "node:url";
 import {
   ensureProtocolFabric,
   registerProtocolManifest,
@@ -198,6 +209,7 @@ import { createPiSdkAgentExecutorsFromManifest } from "@kybernetria/pi-protocol/
 import manifestJson from "./pi.protocol.json" with { type: "json" };
 
 const manifest = manifestJson as PiProtocolManifest;
+const manifestBaseDir = fileURLToPath(new URL(".", import.meta.url));
 
 export default function extension(_pi: ExtensionAPI): void {
   const fabric = ensureProtocolFabric();
@@ -206,7 +218,9 @@ export default function extension(_pi: ExtensionAPI): void {
 
   registerProtocolManifest(fabric, {
     manifest,
+    manifestBaseDir,
     agentExecutors: createPiSdkAgentExecutorsFromManifest(manifest, {
+      manifestBaseDir,
       toPrompt: (input: unknown) => String(input),
       toOutput: (text: string) => text.trim(),
     }),

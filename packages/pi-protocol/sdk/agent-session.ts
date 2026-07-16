@@ -1,5 +1,6 @@
 import {
   ensureProtocolFabric,
+  resolveManifestSystemPrompts,
   runWithProtocolInvocationContextValue,
   type CurrentProtocolInvocationContext,
   type PiProtocolManifest,
@@ -84,6 +85,8 @@ export interface CreateDefaultPiSdkAgentExecutorOptions
 }
 
 export interface CreatePiSdkAgentExecutorsFromManifestOptions {
+  /** Required when the manifest uses `systemPrompt.file`; never inferred from process.cwd(). */
+  manifestBaseDir?: string;
   createSession?: PiSdkAgentSessionFactory | ((agentName: string, agent: ProtocolAgentSpec) => PiSdkAgentSessionFactory | undefined);
   sessionOptions?: PiSdkCreateAgentSessionOptions | ((agentName: string, agent: ProtocolAgentSpec) => PiSdkCreateAgentSessionOptions | undefined);
   toPrompt?: CreatePiSdkAgentExecutorOptions["toPrompt"] | ((agentName: string, agent: ProtocolAgentSpec) => CreatePiSdkAgentExecutorOptions["toPrompt"]);
@@ -145,7 +148,10 @@ export function createPiSdkAgentExecutorsFromManifest(
   options: CreatePiSdkAgentExecutorsFromManifestOptions = {},
 ): Record<string, ProtocolAgentExecutor> {
   const executors: Record<string, ProtocolAgentExecutor> = {};
-  for (const [agentName, agent] of Object.entries(manifest.agents ?? {})) {
+  // Resolve here as well as during registration so this factory is safe to use
+  // independently and file prompts behave exactly like inline prompt text.
+  const resolvedManifest = resolveManifestSystemPrompts(manifest, { manifestBaseDir: options.manifestBaseDir });
+  for (const [agentName, agent] of Object.entries(resolvedManifest.agents ?? {})) {
     executors[agentName] = createDefaultPiSdkAgentExecutor({
       createSession: resolveCreateSession(options.createSession, agentName, agent),
       sessionOptions: withAgentModelHint(resolveSessionOptions(options.sessionOptions, agentName, agent), agent),
