@@ -21,7 +21,7 @@ There is no special agent P2P transport. Agent-backed provides and handler-backe
 Agents normally call a known capability directly. They do not need to know whether it is implemented by a handler or an agent:
 
 ```json
-{ "target": "project_review_agent.review_task", "input": "Review this change" }
+{ "target": "task_reviewer.review_task", "input": "Review this change" }
 ```
 
 When the target is not known, agents can search compact capability cards containing only the stable target, description, and input signature:
@@ -38,9 +38,7 @@ The Pi tool projection defaults to four concurrent direct calls per tool instanc
 
 - `@kybernetria/pi-protocol` - generic registry, describe, invoke, manifest registration, execution type definitions, handler/agent executor interfaces, provenance/session fields
 - `@kybernetria/pi-protocol/sdk` - official Pi SDK `AgentSession` adapter for real agent-backed provides
-- `@kybernetria/pi-protocol-real-agent` - globally-loadable official marker/docs package for real-agent runtime support; registers no test nodes
 - `@kybernetria/pi-protocol/tool` - Pi tool projection named `protocol`
-- `@kybernetria/pi-protocol-real-agent-test` - smoke-test/example fixture only; not globally advertised as a Pi extension
 
 Pi SDK-specific behavior does not belong in `pi-protocol-minimal`; the core stays generic TypeScript.
 
@@ -158,13 +156,13 @@ An agent `systemPrompt` has exactly one source: inline `text` (the existing form
 
 File paths are resolved under an explicit `manifestBaseDir`, not the host process working directory. The path (including its real path after symlink resolution) may not escape that directory. Pass the same base directory to manifest registration and to `createPiSdkAgentExecutorsFromManifest()`; missing, non-file, or unreadable files fail registration/factory creation with the agent and path in the error. For package-local manifests, use `fileURLToPath(new URL(".", import.meta.url))`.
 
-## Canonical real-agent manifest
+## Canonical real-agent manifest example
 
 ```json
 {
   "protocolVersion": "0.2.0",
-  "nodeId": "project_review_agent",
-  "packageId": "@kybernetria/pi-protocol-project-review-agent",
+  "nodeId": "task_reviewer",
+  "packageId": "@example/task-reviewer",
   "version": "0.0.0-prototype",
   "purpose": "Project/task review agent.",
   "agents": {
@@ -232,7 +230,7 @@ Handler-backed orchestration is just nested invocation:
 
 ```ts
 await fabric.invoke({
-  nodeId: "project_review_agent",
+  nodeId: "task_reviewer",
   provide: "review_task",
   input: "check this task",
   traceId,

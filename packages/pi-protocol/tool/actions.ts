@@ -162,7 +162,7 @@ function summarizeInvocationControls(provide?: Pick<ProvideSpec, "execution">): 
   return {
     request: {
       trace: ["traceId", "spanId", "parentSpanId", "callerNodeId"],
-      callerIdentity: "For protocol callers, prefer canonical callerNodeId values in the form nodeId.provideName (for example project_review_agent.review_task). Root/user callers may use existing ids such as pi-chat or root_agent.",
+      callerIdentity: "For protocol callers, prefer canonical callerNodeId values in the form nodeId.provideName (for example task_reviewer.review_task). Root/user callers may use existing ids such as pi-chat or root_agent.",
       session: {
         supported: true,
         modes: ["ephemeral", "continue", "end"],

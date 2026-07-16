@@ -9,8 +9,6 @@ import {
 } from "../packages/pi-protocol/index.ts";
 import { createPiSdkAgentExecutorsFromManifest } from "../packages/pi-protocol/sdk/agent-session.ts";
 import type { PiSdkAgentSessionEventLike, PiSdkAgentSessionLike } from "../packages/pi-protocol/sdk/index.ts";
-import realAgentRuntimeExtension from "../packages/pi-protocol-real-agent/extension.ts";
-import realAgentSmokeFixtureExtension from "../packages/pi-protocol-real-agent-test/extension.ts";
 
 const manifest: PiProtocolManifest = {
   protocolVersion: "0.2.0",
@@ -79,7 +77,6 @@ class FakePiAgentSession implements PiSdkAgentSessionLike {
   dispose(): void {}
 }
 
-realAgentRuntimeExtension({} as never);
 const fabric = ensureProtocolFabric();
 fabric.unregister(manifest.nodeId);
 
@@ -146,26 +143,11 @@ assert.deepEqual(
   ],
 );
 
-const realAgentTestPackage = JSON.parse(
-  await readFile(new URL("../packages/pi-protocol-real-agent-test/package.json", import.meta.url), "utf8"),
-) as { pi?: { extensions?: string[] } };
-assert.equal(realAgentTestPackage.pi?.extensions, undefined);
-
-realAgentSmokeFixtureExtension({} as never);
-assert.ok(fabric.describeProvide("real_agent_test", "chat"));
-assert.ok(fabric.describeProvide("real_agent_chain", "start"));
-fabric.unregister("real_agent_test");
-fabric.unregister("real_agent_chain");
-
-const officialPackage = JSON.parse(
-  await readFile(new URL("../packages/pi-protocol-real-agent/package.json", import.meta.url), "utf8"),
-) as { pi?: { extensions?: string[] } };
-assert.deepEqual(officialPackage.pi?.extensions, ["./extension.ts"]);
 
 fabric.setProvenanceRecorder(undefined);
 fabric.unregister(manifest.nodeId);
 
-console.log("official real-agent runtime registration and orchestration works");
+console.log("Pi SDK agent runtime registration and orchestration works");
 
 async function runChain(task: string, context: ProtocolInvocationContext | undefined): Promise<string> {
   const traceId = context?.traceId ?? "trace-chain";

@@ -651,7 +651,7 @@ const nestedTraceLines = tool.renderResult?.(
             traceId: "trace-nested-render-test",
             spanId: "span-root-nested-render-test",
             callerNodeId: "agent_a",
-            nodeId: "real_agent_chain",
+            nodeId: "nested_chain",
             provide: "start",
             status: "succeeded",
             durationMs: 3,
@@ -663,7 +663,7 @@ const nestedTraceLines = tool.renderResult?.(
             spanId: "span-child-b-render-test",
             parentSpanId: "span-root-nested-render-test",
             callerNodeId: "agent_a",
-            nodeId: "real_agent_chain",
+            nodeId: "nested_chain",
             provide: "draft_b",
             status: "succeeded",
             durationMs: 2,
@@ -675,7 +675,7 @@ const nestedTraceLines = tool.renderResult?.(
             spanId: "span-child-c-render-test",
             parentSpanId: "span-root-nested-render-test",
             callerNodeId: "agent_b",
-            nodeId: "real_agent_chain",
+            nodeId: "nested_chain",
             provide: "ask_c",
             status: "succeeded",
             durationMs: 2,
@@ -692,8 +692,8 @@ const nestedTraceLines = tool.renderResult?.(
 ) as { render(width: number): string[] };
 const nestedTraceText = nestedTraceLines.render(120).join("\n");
 assert.ok(nestedTraceText.includes("calls:"));
-assert.ok(nestedTraceText.includes("agent_a → real_agent_chain.draft_b"));
-assert.ok(nestedTraceText.includes("agent_b → real_agent_chain.ask_c"));
+assert.ok(nestedTraceText.includes("agent_a → nested_chain.draft_b"));
+assert.ok(nestedTraceText.includes("agent_b → nested_chain.ask_c"));
 assert.ok(nestedTraceText.includes("├─ agent_a/call"));
 assert.ok(nestedTraceText.includes("├─ agent_b/call"));
 
@@ -711,7 +711,7 @@ const nestedDuplicateFinalLines = tool.renderResult?.(
             traceId: "trace-nested-duplicate-final-test",
             spanId: "span-root-nested-duplicate-final-test",
             callerNodeId: "agent_a",
-            nodeId: "real_agent_chain",
+            nodeId: "nested_chain",
             provide: "start",
             status: "succeeded",
             durationMs: 3,
@@ -723,7 +723,7 @@ const nestedDuplicateFinalLines = tool.renderResult?.(
             spanId: "span-final-child-duplicate-test",
             parentSpanId: "span-root-nested-duplicate-final-test",
             callerNodeId: "agent_b",
-            nodeId: "real_agent_chain",
+            nodeId: "nested_chain",
             provide: "synthesize_b",
             status: "succeeded",
             durationMs: 2,
@@ -744,7 +744,7 @@ assert.equal(
   1,
   "leaf child output equal to the final tool output should not repeat",
 );
-assert.ok(nestedDuplicateFinalText.includes("agent_b → real_agent_chain.synthesize_b"));
+assert.ok(nestedDuplicateFinalText.includes("agent_b → nested_chain.synthesize_b"));
 
 const reusableResultComponent = tool.renderResult?.(runtimeInvokeResult, {}, testTheme, {
   args: runtimeInvokeInput,
