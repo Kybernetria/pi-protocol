@@ -10,6 +10,7 @@
   },
   "files": [
     "*.ts",
+    "README.md",
     "LICENSE"
   ],
   "keywords": [
@@ -19,6 +20,6 @@
   ],
   "license": "AGPL-3.0",
   "dependencies": {
-    "@kybernetria/pi-protocol": "^1.0.1"
+    "@kybernetria/pi-protocol": "^1.1.0"
   }
 }
