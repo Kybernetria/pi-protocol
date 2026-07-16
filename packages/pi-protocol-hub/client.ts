@@ -61,8 +61,16 @@ export class ProtocolHubTransport implements ProtocolTransport {
       this.helloResolve = resolve;
       this.helloReject = reject;
     });
-    this.send({ v: PROTOCOL_TRANSPORT_VERSION, type: "hello", role: "caller", token });
-    await hello;
+    try {
+      this.send({ v: PROTOCOL_TRANSPORT_VERSION, type: "hello", role: "caller", token });
+      await hello;
+    } catch (error) {
+      this.closed = true;
+      socket.destroy();
+      this.socket = undefined;
+      this.wire = undefined;
+      throw error;
+    }
   }
 
   registry(): RegistrySnapshot {
@@ -236,8 +244,16 @@ export class ProtocolRuntimeClient {
       this.helloResolve = resolve;
       this.helloReject = reject;
     });
-    this.send({ v: PROTOCOL_TRANSPORT_VERSION, type: "hello", role: "runtime", token, registrations });
-    await hello;
+    try {
+      this.send({ v: PROTOCOL_TRANSPORT_VERSION, type: "hello", role: "runtime", token, registrations });
+      await hello;
+    } catch (error) {
+      this.closed = true;
+      socket.destroy();
+      this.socket = undefined;
+      this.wire = undefined;
+      throw error;
+    }
     this.unsubscribeRegistry = this.fabric.subscribeRegistryRecorder(() => {
       const next = registrationsFromFabric(this.fabric, this.options);
       if (next.length > 0) this.sendIfOpen({ v: PROTOCOL_TRANSPORT_VERSION, type: "runtime_update", registrations: next });
@@ -326,11 +342,16 @@ export class ProtocolRuntimeClient {
 
   private finishExecution(requestId: string, result: InvokeResult): void {
     this.executions.delete(requestId);
+    const safeResult = transportSafeResult(
+      requestId,
+      result,
+      this.options.maxEnvelopeBytes ?? DEFAULT_MAX_ENVELOPE_BYTES,
+    );
     this.completed.delete(requestId);
-    this.completed.set(requestId, result);
+    this.completed.set(requestId, safeResult);
     const maximum = this.options.maxRememberedRequests ?? 512;
     while (this.completed.size > maximum) this.completed.delete(this.completed.keys().next().value as string);
-    this.sendResult(requestId, result);
+    this.sendResult(requestId, safeResult);
   }
 
   private sendResult(requestId: string, result: InvokeResult): void {
@@ -427,6 +448,16 @@ function boundRuntimeEvent(event: ProtocolRuntimeEvent): ProtocolRuntimeEvent {
   if (event.type === "executor_output_snapshot") return { ...event, outputPreview: event.outputPreview.slice(0, 40_000), outputTruncated: event.outputTruncated || event.outputPreview.length > 40_000 };
   if (event.type === "transport_observation") return { ...event, ...(event.message ? { message: event.message.slice(0, 2_000) } : {}) };
   return event;
+}
+
+function transportSafeResult(requestId: string, result: InvokeResult, maxEnvelopeBytes: number): InvokeResult {
+  try {
+    const message = JSON.stringify({ v: PROTOCOL_TRANSPORT_VERSION, type: "result", requestId, result });
+    if (Buffer.byteLength(message, "utf8") <= maxEnvelopeBytes) return result;
+    return transportFailure("TRANSPORT_FAILED", `Remote result exceeds ${maxEnvelopeBytes} transport bytes`);
+  } catch (error) {
+    return transportFailure("TRANSPORT_FAILED", `Remote result is not JSON-safe: ${boundedError(error)}`);
+  }
 }
 
 function transportFailure(code: "ABORTED" | "TRANSPORT_FAILED" | "TRANSPORT_TIMEOUT" | "OVERLOADED", message: string): InvokeResult {

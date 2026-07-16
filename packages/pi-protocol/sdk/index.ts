@@ -66,18 +66,16 @@ export function createPiSdkAgentExecutor(
       : { session: await options.createSession(), sessionKey: undefined, cached: false };
     const session = leasedSession.session;
     let text = "";
-    const pendingRuntimeEvents: Promise<void>[] = [];
+    let pendingRuntimeEvents = Promise.resolve();
     const unsubscribe = session.subscribe((event) => {
       if (isTextDeltaMessageUpdate(event)) {
         text += event.assistantMessageEvent.delta;
-        pendingRuntimeEvents.push(
-          emitRuntimeEventSafely(context, {
-            type: "executor_output_delta",
-            traceId: context?.traceId,
-            spanId: context?.spanId,
-            textDelta: event.assistantMessageEvent.delta,
-          }),
-        );
+        pendingRuntimeEvents = pendingRuntimeEvents.then(() => emitRuntimeEventSafely(context, {
+          type: "executor_output_delta",
+          traceId: context?.traceId,
+          spanId: context?.spanId,
+          textDelta: event.assistantMessageEvent.delta,
+        }));
       }
     });
     const removeAbortListener = addAbortListener(context?.abortSignal, () => session.dispose());
@@ -103,7 +101,7 @@ export function createPiSdkAgentExecutor(
       });
       session.setProtocolInvocationContext?.(toCurrentProtocolInvocationContext(context));
       await runAbortable(session.prompt(prompt), context?.abortSignal);
-      await Promise.all(pendingRuntimeEvents);
+      await pendingRuntimeEvents;
       await emitRuntimeEventSafely(context, {
         type: "executor_output_snapshot",
         traceId: context?.traceId,

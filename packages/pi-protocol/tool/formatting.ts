@@ -169,6 +169,7 @@ function appendTraceEventLines(
   lines.push(...formatTraceEventHeaderLines(event, theme, options, depth, agentColors, targetStyles, { suppressInput: hasPrompt }));
 
   if (options.expanded) {
+    lines.push(...formatTransportObservationLines(runtimeEvents, theme, depth));
     lines.push(...formatTraceRuntimeModelLines(runtimeEvents, theme, depth));
     lines.push(...formatTraceRuntimePromptLines(runtimeEvents, theme, depth));
     lines.push(
@@ -230,6 +231,24 @@ function formatTraceEventHeaderLines(
   }
 
   return lines;
+}
+
+function formatTransportObservationLines(
+  runtimeEvents: ProtocolRuntimeEvent[],
+  theme: ProtocolToolThemeLike,
+  depth: number,
+): string[] {
+  const observations = runtimeEvents.filter(
+    (event): event is Extract<ProtocolRuntimeEvent, { type: "transport_observation" }> =>
+      event.type === "transport_observation",
+  );
+  if (observations.length === 0) return [];
+  const indent = "  ".repeat(depth);
+  return observations.map((event) => {
+    const runtime = event.runtimeId ? ` · ${event.runtimeId}` : "";
+    const message = event.message ? ` · ${formatOneLinePreview(event.message, false)}` : "";
+    return `${indent}  ${theme.fg(traceDepthColor(depth), "transport:")} ${theme.fg("muted", `${event.observation}${runtime}${message}`)}`;
+  });
 }
 
 function formatTraceRuntimeModelLines(

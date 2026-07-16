@@ -66,8 +66,12 @@ export function attachJsonSocket(
     send(value) {
       if (failed || socket.destroyed) throw new Error("IPC socket is closed");
       const line = JSON.stringify(value);
-      if (Buffer.byteLength(line, "utf8") > maxEnvelopeBytes) {
+      const bytes = Buffer.byteLength(line, "utf8");
+      if (bytes > maxEnvelopeBytes) {
         throw new Error(`IPC envelope exceeds ${maxEnvelopeBytes} bytes`);
+      }
+      if (socket.writableLength + bytes + 1 > maxEnvelopeBytes * 4) {
+        throw new Error("IPC socket backpressure limit reached");
       }
       socket.write(`${line}\n`);
     },
@@ -98,8 +102,12 @@ export async function secureHubSocketAfterListen(socketPath: string): Promise<vo
   await chmod(socketPath, 0o600);
 }
 
-export async function cleanupHubFiles(socketPath: string, tokenPath = `${socketPath}.token`): Promise<void> {
-  await Promise.all([safeUnlink(socketPath), safeUnlink(tokenPath)]);
+export async function cleanupHubFiles(
+  socketPath: string,
+  tokenPath = `${socketPath}.token`,
+  removeSocket = true,
+): Promise<void> {
+  await Promise.all([...(removeSocket ? [safeUnlink(socketPath)] : []), safeUnlink(tokenPath)]);
 }
 
 export async function readAndValidateHubToken(socketPath: string, tokenPath = `${socketPath}.token`): Promise<string> {

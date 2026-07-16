@@ -49,6 +49,8 @@ interface PendingRequest {
   state: "queued" | "active";
   affinityKey?: string;
   timer: NodeJS.Timeout;
+  forwardedEvents: number;
+  forwardedEventBytes: number;
 }
 
 interface CompletedRequest {
@@ -132,6 +134,7 @@ export class ProtocolHub {
     this.token = await prepareHubSocket(this.options.socketPath, this.tokenPath);
     const server = createServer((socket) => this.accept(socket));
     this.server = server;
+    let listening = false;
     try {
       await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
@@ -140,13 +143,15 @@ export class ProtocolHub {
           resolve();
         });
       });
+      listening = true;
       await secureHubSocketAfterListen(this.options.socketPath);
       this.expiryTimer = setInterval(() => this.expireStaleState(), this.heartbeatIntervalMs);
       this.expiryTimer.unref?.();
     } catch (error) {
       this.server = undefined;
-      server.close();
-      await cleanupHubFiles(this.options.socketPath, this.tokenPath);
+      if (listening) server.close();
+      // If listen lost a race, never unlink a socket created by the winner.
+      await cleanupHubFiles(this.options.socketPath, this.tokenPath, listening);
       throw error;
     }
   }
@@ -384,6 +389,8 @@ export class ProtocolHub {
       state: "queued",
       ...(affinityKey ? { affinityKey } : {}),
       timer: setTimeout(() => this.timeoutInvocation(message.requestId), this.requestTimeoutMs),
+      forwardedEvents: 0,
+      forwardedEventBytes: 0,
     };
     pending.timer.unref?.();
     this.pending.set(pending.requestId, pending);
@@ -461,6 +468,10 @@ export class ProtocolHub {
     // Nested remote calls intentionally carry their own target node/provide on
     // the same inherited trace, so trace correlation is the routing boundary.
     if (message.event.traceId !== pending.request.traceId) return;
+    const eventBytes = Buffer.byteLength(JSON.stringify(message.event), "utf8");
+    if (pending.forwardedEvents >= 500 || pending.forwardedEventBytes + eventBytes > 80_000) return;
+    pending.forwardedEvents += 1;
+    pending.forwardedEventBytes += eventBytes;
     this.safeSend(pending.caller, { ...message, v: PROTOCOL_TRANSPORT_VERSION });
   }
 
@@ -492,10 +503,19 @@ export class ProtocolHub {
   private timeoutInvocation(requestId: string): void {
     const pending = this.pending.get(requestId);
     if (!pending) return;
-    if (pending.state === "queued") this.removeFromQueue(pending);
-    else if (pending.runtime) this.safeSend(pending.runtime.connection, { v: PROTOCOL_TRANSPORT_VERSION, type: "cancel", requestId });
+    if (pending.state === "queued") {
+      this.removeFromQueue(pending);
+    } else if (pending.runtime) {
+      this.safeSend(pending.runtime.connection, { v: PROTOCOL_TRANSPORT_VERSION, type: "cancel", requestId });
+      // A worker that did not settle before the hard timeout cannot safely be
+      // treated as having free capacity. Drain and disconnect it rather than
+      // overlap another potentially non-idempotent invocation.
+      pending.runtime.status = "draining";
+    }
     if (pending.affinityKey && pending.state === "active") this.markAffinityLost(pending.affinityKey);
+    const timedOutRuntime = pending.state === "active" ? pending.runtime : undefined;
     this.complete(pending, transportError("TRANSPORT_TIMEOUT", "Remote protocol invocation timed out"));
+    timedOutRuntime?.connection.socket.destroy();
   }
 
   private complete(pending: PendingRequest, result: InvokeResult): void {
@@ -522,6 +542,7 @@ export class ProtocolHub {
   }
 
   private dispatchNext(runtime: RuntimeRecord): void {
+    if (this.stopping || runtime.status === "draining") return;
     while (runtime.active.size < runtime.capacity && runtime.queue.length > 0) {
       const next = runtime.queue.shift()!;
       if (this.pending.has(next.requestId)) this.dispatch(runtime, next);
