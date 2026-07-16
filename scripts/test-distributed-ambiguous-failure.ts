@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createProtocolFabric, type ProtocolFabric, type ProtocolNode } from "../packages/pi-protocol/index.ts";
+import { createProtocolFabric, type InvocationProvenanceEvent, type ProtocolFabric, type ProtocolNode } from "../packages/pi-protocol/index.ts";
 import { ProtocolHub, ProtocolHubTransport, ProtocolRuntimeClient } from "../packages/pi-protocol-hub/index.ts";
 
 const directory = await mkdtemp(join(tmpdir(), "pi-protocol-ambiguous-"));
@@ -49,6 +49,8 @@ const runtimeB = new ProtocolRuntimeClient(createWorker("runtime-b"), { socketPa
 const runtimes = new Map([["runtime-a", runtimeA], ["runtime-b", runtimeB]]);
 const transport = new ProtocolHubTransport({ socketPath, requestTimeoutMs: 3_000 });
 const caller = createProtocolFabric();
+const provenance: InvocationProvenanceEvent[] = [];
+caller.subscribeProvenanceRecorder((event) => { provenance.push(event); });
 
 try {
   await hub.start();
@@ -58,7 +60,13 @@ try {
   caller.setTransport(transport);
   await waitFor(() => caller.describeProvide("non_idempotent", "mutate") !== undefined);
 
-  const invocation = caller.invoke({ nodeId: "non_idempotent", provide: "mutate", input: "once" });
+  const invocation = caller.invoke({
+    nodeId: "non_idempotent",
+    provide: "mutate",
+    input: "once",
+    traceId: "trace-ambiguous",
+    spanId: "span-ambiguous",
+  });
   await waitFor(() => [...executions.values()].reduce((sum, count) => sum + count, 0) === 1);
   const owner = [...executions.entries()].find(([, count]) => count === 1)?.[0];
   assert.ok(owner);
@@ -72,6 +80,11 @@ try {
   }
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal([...executions.values()].reduce((sum, count) => sum + count, 0), 1);
+  const rootTerminal = provenance.filter((event) =>
+    event.spanId === "span-ambiguous" && event.status !== "started",
+  );
+  assert.equal(rootTerminal.length, 1, "ambiguous failure must produce one terminal provenance event");
+  assert.equal(rootTerminal[0]?.error?.code, "TRANSPORT_FAILED");
 } finally {
   await transport.close();
   await Promise.allSettled([runtimeA.close(), runtimeB.close()]);

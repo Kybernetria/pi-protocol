@@ -264,11 +264,25 @@ async function invokeRemote(
   const inputPreview = createInputPreview(request.input);
 
   try {
-    return await transport.invoke(request, {
+    const result = await transport.invoke(request, {
       async onProvenance(event) {
         if (event.traceId !== provenance.traceId) return;
-        if (event.status === "started") sawStarted = true;
-        else sawTerminal = true;
+        const isRootEvent =
+          event.spanId === provenance.spanId &&
+          event.nodeId === provenance.nodeId &&
+          event.provide === provenance.provide;
+        if (isRootEvent && event.status !== "started" && !sawStarted) {
+          sawStarted = true;
+          await recordProvenance(provenanceRecorder, provenanceSubscribers, {
+            ...provenance,
+            status: "started",
+            ...inputPreview,
+          });
+        }
+        if (isRootEvent) {
+          if (event.status === "started") sawStarted = true;
+          else sawTerminal = true;
+        }
         await recordProvenance(provenanceRecorder, provenanceSubscribers, event);
       },
       async onRuntimeEvent(event) {
@@ -276,6 +290,23 @@ async function invokeRemote(
         await recordAll(runtimeEventRecorder, runtimeEventSubscribers, event);
       },
     });
+    if (!sawStarted) {
+      await recordProvenance(provenanceRecorder, provenanceSubscribers, {
+        ...provenance,
+        status: "started",
+        ...inputPreview,
+      });
+    }
+    if (!sawTerminal) {
+      await recordProvenance(provenanceRecorder, provenanceSubscribers, {
+        ...provenance,
+        status: result.ok ? "succeeded" : result.error.code === "ABORTED" ? "aborted" : "failed",
+        durationMs: Date.now() - startedAt,
+        ...inputPreview,
+        ...(result.ok ? createOutputPreview(result.output) : { error: result.error }),
+      });
+    }
+    return result;
   } catch (cause) {
     const error = {
       code: "TRANSPORT_FAILED" as const,

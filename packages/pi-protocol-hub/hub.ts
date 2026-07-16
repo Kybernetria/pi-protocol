@@ -458,9 +458,9 @@ export class ProtocolHub {
   ): void {
     const pending = this.pending.get(requestId);
     if (!pending || pending.runtime !== runtime || pending.state !== "active") return;
+    // Nested remote calls intentionally carry their own target node/provide on
+    // the same inherited trace, so trace correlation is the routing boundary.
     if (message.event.traceId !== pending.request.traceId) return;
-    if (message.type === "provenance" &&
-      (message.event.nodeId !== pending.request.nodeId || message.event.provide !== pending.request.provide)) return;
     this.safeSend(pending.caller, { ...message, v: PROTOCOL_TRANSPORT_VERSION });
   }
 

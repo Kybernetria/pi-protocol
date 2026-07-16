@@ -6,6 +6,7 @@ import {
   createProtocolFabric,
   invokeFromCurrentContext,
   ProtocolInvocationError,
+  type InvocationProvenanceEvent,
   type ProtocolFabric,
 } from "../packages/pi-protocol/index.ts";
 import { ProtocolHub, ProtocolHubTransport, ProtocolRuntimeClient } from "../packages/pi-protocol-hub/index.ts";
@@ -23,6 +24,8 @@ const transportA = new ProtocolHubTransport({ socketPath });
 const transportB = new ProtocolHubTransport({ socketPath });
 const callerTransport = new ProtocolHubTransport({ socketPath });
 const caller = createProtocolFabric();
+const provenance: InvocationProvenanceEvent[] = [];
+caller.subscribeProvenanceRecorder((event) => { provenance.push(event); });
 
 try {
   await hub.start();
@@ -34,8 +37,16 @@ try {
   caller.setTransport(callerTransport);
   await waitFor(() => caller.describeProvide("route_a", "start") !== undefined && caller.describeProvide("route_b", "step") !== undefined);
 
-  const nested = await caller.invoke({ nodeId: "route_a", provide: "start", input: { recurse: false } });
+  const nested = await caller.invoke({
+    nodeId: "route_a",
+    provide: "start",
+    input: { recurse: false },
+    traceId: "trace-nested-route",
+    spanId: "span-nested-route",
+  });
   assert.deepEqual(nested, { ok: true, nodeId: "route_a", provide: "start", output: { from: "b" } });
+  assert.ok(provenance.some((event) => event.nodeId === "route_a" && event.status === "succeeded"));
+  assert.ok(provenance.some((event) => event.nodeId === "route_b" && event.status === "succeeded"));
 
   const loop = await caller.invoke({ nodeId: "route_a", provide: "start", input: { recurse: true } });
   assert.equal(loop.ok, false);
