@@ -18,8 +18,9 @@
     "test:optional-transport": "tsx scripts/test-optional-transport.ts",
     "test:unix-protocol-hub": "tsx scripts/test-unix-protocol-hub.ts",
     "test:distributed-session-affinity": "tsx scripts/test-distributed-session-affinity.ts",
+    "test:distributed-backpressure": "tsx scripts/test-distributed-backpressure.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:protocol-agent-p2p-context && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:real-agent-runtime && npm run test:minimal-pi-tool-projection && npm run test:compact-protocol-tool && npm run test:file-backed-system-prompts && npm run test:optional-transport && npm run test:unix-protocol-hub && npm run test:distributed-session-affinity"
+    "test": "npm run typecheck && npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:protocol-agent-p2p-context && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:real-agent-runtime && npm run test:minimal-pi-tool-projection && npm run test:compact-protocol-tool && npm run test:file-backed-system-prompts && npm run test:optional-transport && npm run test:unix-protocol-hub && npm run test:distributed-session-affinity && npm run test:distributed-backpressure"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.75.4",

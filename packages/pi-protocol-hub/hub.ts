@@ -399,6 +399,7 @@ export class ProtocolHub {
     const eligible = [...this.runtimes.values()].filter((runtime) => {
       if (runtime.status === "draining" || route.path.includes(runtime.runtimeId)) return false;
       if (placement?.runtimeId && runtime.runtimeId !== placement.runtimeId) return false;
+      if (placement?.repository || placement?.requiredTools || placement?.modelClass) return false;
       if (placement?.worktree && !runtime.registrations.some((registration) => registration.instance.worktree === placement.worktree)) return false;
       if (placement?.minimumCapacity && runtime.capacity < placement.minimumCapacity) return false;
       return runtime.registrations.some((registration) => this.isRegistrationEligible(runtime, registration, target));
@@ -434,6 +435,7 @@ export class ProtocolHub {
       route,
       runtimeId: runtime.runtimeId,
     });
+    this.emitTransportObservation(pending, "remote_invocation_started", runtime.runtimeId);
   }
 
   private forwardExecutionEvent(
@@ -444,12 +446,18 @@ export class ProtocolHub {
     const pending = this.pending.get(requestId);
     if (!pending || pending.runtime !== runtime || pending.state !== "active") return;
     if (message.event.traceId !== pending.request.traceId) return;
+    if (message.type === "provenance" &&
+      (message.event.nodeId !== pending.request.nodeId || message.event.provide !== pending.request.provide)) return;
     this.safeSend(pending.caller, { ...message, v: PROTOCOL_TRANSPORT_VERSION });
   }
 
   private receiveResult(runtime: RuntimeRecord, requestId: string, result: InvokeResult): void {
     const pending = this.pending.get(requestId);
     if (!pending || pending.runtime !== runtime || pending.state !== "active") return;
+    if (result.ok && (result.nodeId !== pending.request.nodeId || result.provide !== pending.request.provide)) {
+      this.complete(pending, transportError("TRANSPORT_FAILED", "Remote result target does not match invocation target"));
+      return;
+    }
     this.emitTransportObservation(pending, "remote_invocation_completed", runtime.runtimeId);
     this.complete(pending, result);
   }
@@ -478,6 +486,10 @@ export class ProtocolHub {
   }
 
   private complete(pending: PendingRequest, result: InvokeResult): void {
+    if (!this.pending.has(pending.requestId)) return;
+    if (!result.ok && (result.error.code === "TRANSPORT_FAILED" || result.error.code === "TRANSPORT_TIMEOUT")) {
+      this.emitTransportObservation(pending, "transport_failed", pending.runtime?.runtimeId, result.error.message);
+    }
     if (!this.pending.delete(pending.requestId)) return;
     clearTimeout(pending.timer);
     if (pending.runtime) {
@@ -625,10 +637,15 @@ export class ProtocolHub {
 
   private emitTransportObservation(
     pending: PendingRequest,
-    observation: Extract<HubToClientMessage, { type: "runtime_event" }>["event"] extends infer _T
-      ? "runtime_selected" | "queued" | "remote_invocation_completed" | "cancellation_requested"
-      : never,
+    observation:
+      | "runtime_selected"
+      | "queued"
+      | "remote_invocation_started"
+      | "remote_invocation_completed"
+      | "transport_failed"
+      | "cancellation_requested",
     runtimeId?: string,
+    message?: string,
   ): void {
     if (!pending.request.traceId || !pending.request.spanId) return;
     this.safeSend(pending.caller, {
@@ -642,6 +659,7 @@ export class ProtocolHub {
         observation,
         requestId: pending.requestId,
         ...(runtimeId ? { runtimeId } : {}),
+        ...(message ? { message: message.slice(0, 2_000) } : {}),
       },
     });
   }

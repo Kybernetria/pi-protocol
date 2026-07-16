@@ -71,6 +71,7 @@ export class ProtocolHubTransport implements ProtocolTransport {
 
   async invoke(request: InvokeRequest, observer: ProtocolTransportObserver): Promise<InvokeResult> {
     if (!this.wire || this.closed) throw new Error("Protocol hub transport is not connected");
+    if (request.abortSignal?.aborted) return transportFailure("ABORTED", "Invocation aborted before transport dispatch");
     if (this.pending.size >= 256) return transportFailure("OVERLOADED", "Caller transport request limit reached");
     const requestId = globalThis.crypto.randomUUID();
     const route = routeStorage.getStore() ?? { hopCount: 0, path: [] };
@@ -174,6 +175,9 @@ export class ProtocolHubTransport implements ProtocolTransport {
   private fail(error: Error): void {
     if (this.closed) return;
     this.closed = true;
+    this.socket?.destroy();
+    this.socket = undefined;
+    this.wire = undefined;
     this.helloReject?.(error);
     this.helloResolve = undefined;
     this.helloReject = undefined;
@@ -191,8 +195,8 @@ export class ProtocolHubTransport implements ProtocolTransport {
     if (!this.wire || this.closed) return;
     try {
       this.wire.send(message);
-    } catch {
-      // The socket failure path resolves all pending invocations.
+    } catch (error) {
+      this.fail(error instanceof Error ? error : new Error(String(error)));
     }
   }
 }
@@ -341,6 +345,9 @@ export class ProtocolRuntimeClient {
   private fail(error: Error): void {
     if (this.closed) return;
     this.closed = true;
+    this.socket?.destroy();
+    this.socket = undefined;
+    this.wire = undefined;
     this.helloReject?.(error);
     this.helloResolve = undefined;
     this.helloReject = undefined;
@@ -359,8 +366,8 @@ export class ProtocolRuntimeClient {
     if (!this.wire || this.closed) return;
     try {
       this.wire.send(message);
-    } catch {
-      // Socket close/error handling performs cleanup.
+    } catch (error) {
+      this.fail(error instanceof Error ? error : new Error(String(error)));
     }
   }
 }
@@ -422,7 +429,7 @@ function boundRuntimeEvent(event: ProtocolRuntimeEvent): ProtocolRuntimeEvent {
   return event;
 }
 
-function transportFailure(code: "TRANSPORT_FAILED" | "TRANSPORT_TIMEOUT" | "OVERLOADED", message: string): InvokeResult {
+function transportFailure(code: "ABORTED" | "TRANSPORT_FAILED" | "TRANSPORT_TIMEOUT" | "OVERLOADED", message: string): InvokeResult {
   return { ok: false, error: { code, message } };
 }
 

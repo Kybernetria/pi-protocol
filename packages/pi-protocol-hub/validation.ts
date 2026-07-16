@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
 import type {
+  InvocationProvenanceEvent,
+  InvokeErrorCode,
+  InvokeResult,
+  ProtocolRuntimeEvent,
+} from "@kybernetria/pi-protocol";
+import type {
   CapabilityInstance,
   ClientToHubMessage,
   RuntimeNodeRegistration,
@@ -55,21 +61,21 @@ export function parseClientMessage(value: unknown): ClientToHubMessage {
         v: PROTOCOL_TRANSPORT_VERSION,
         type,
         requestId: requireString(message.requestId, "result.requestId", MAX_ID),
-        result: message.result as ClientToHubMessage & never,
-      } as ClientToHubMessage;
+        result: parseInvokeResult(message.result),
+      };
     case "provenance":
       return {
         v: PROTOCOL_TRANSPORT_VERSION,
         type,
         requestId: requireString(message.requestId, "provenance.requestId", MAX_ID),
-        event: requireRecord(message.event, "provenance.event") as never,
+        event: parseProvenance(message.event),
       };
     case "runtime_event":
       return {
         v: PROTOCOL_TRANSPORT_VERSION,
         type,
         requestId: requireString(message.requestId, "runtime_event.requestId", MAX_ID),
-        event: requireRecord(message.event, "runtime_event.event") as never,
+        event: parseRuntimeEvent(message.event),
       };
     case "unregister":
       return { v: PROTOCOL_TRANSPORT_VERSION, type };
@@ -171,6 +177,111 @@ function parsePlacement(value: unknown): NonNullable<Extract<ClientToHubMessage,
   };
 }
 
+function parseInvokeResult(value: unknown): InvokeResult {
+  const result = requireRecord(value, "result");
+  if (result.ok === true) {
+    return {
+      ok: true,
+      nodeId: requireString(result.nodeId, "result.nodeId", MAX_ID),
+      provide: requireString(result.provide, "result.provide", MAX_ID),
+      output: result.output,
+    };
+  }
+  if (result.ok !== false) throw new Error("result.ok must be boolean");
+  const error = requireRecord(result.error, "result.error");
+  const code = requireString(error.code, "result.error.code", 64);
+  if (!INVOKE_ERROR_CODES.has(code as InvokeErrorCode)) throw new Error(`Unknown invoke error code: ${code}`);
+  return { ok: false, error: { code: code as InvokeErrorCode, message: requireString(error.message, "result.error.message", 2_000) } };
+}
+
+function parseProvenance(value: unknown): InvocationProvenanceEvent {
+  const event = requireRecord(value, "provenance.event");
+  const status = event.status;
+  if (status !== "started" && status !== "succeeded" && status !== "failed" && status !== "aborted") {
+    throw new Error("Invalid provenance status");
+  }
+  const error = event.error === undefined ? undefined : requireRecord(event.error, "provenance.event.error");
+  const errorCode = error ? requireString(error.code, "provenance.event.error.code", 64) : undefined;
+  if (errorCode && !INVOKE_ERROR_CODES.has(errorCode as InvokeErrorCode)) throw new Error(`Unknown invoke error code: ${errorCode}`);
+  return {
+    traceId: requireString(event.traceId, "provenance.event.traceId", MAX_ID),
+    spanId: requireString(event.spanId, "provenance.event.spanId", MAX_ID),
+    ...(event.parentSpanId === undefined ? {} : { parentSpanId: requireString(event.parentSpanId, "provenance.event.parentSpanId", MAX_ID) }),
+    ...(event.callerNodeId === undefined ? {} : { callerNodeId: requireString(event.callerNodeId, "provenance.event.callerNodeId", MAX_ID) }),
+    nodeId: requireString(event.nodeId, "provenance.event.nodeId", MAX_ID),
+    provide: requireString(event.provide, "provenance.event.provide", MAX_ID),
+    ...(event.session === undefined ? {} : { session: parseSession(event.session) }),
+    status,
+    ...(event.durationMs === undefined ? {} : { durationMs: requireFiniteNumber(event.durationMs, "provenance.event.durationMs") }),
+    ...(event.inputPreview === undefined ? {} : { inputPreview: requireBoundedText(event.inputPreview, "provenance.event.inputPreview", 20_000) }),
+    ...(event.inputTruncated === undefined ? {} : { inputTruncated: requireBoolean(event.inputTruncated, "provenance.event.inputTruncated") }),
+    ...(event.outputPreview === undefined ? {} : { outputPreview: requireBoundedText(event.outputPreview, "provenance.event.outputPreview", 40_000) }),
+    ...(event.outputTruncated === undefined ? {} : { outputTruncated: requireBoolean(event.outputTruncated, "provenance.event.outputTruncated") }),
+    ...(error && errorCode ? { error: { code: errorCode as InvokeErrorCode, message: requireString(error.message, "provenance.event.error.message", 2_000) } } : {}),
+  };
+}
+
+function parseRuntimeEvent(value: unknown): ProtocolRuntimeEvent {
+  const event = requireRecord(value, "runtime_event.event");
+  const type = requireString(event.type, "runtime_event.event.type", 64);
+  const traceId = requireString(event.traceId, "runtime_event.event.traceId", MAX_ID);
+  const spanId = requireString(event.spanId, "runtime_event.event.spanId", MAX_ID);
+  if (type === "executor_session_model") {
+    return {
+      type,
+      traceId,
+      spanId,
+      model: requireString(event.model, "runtime_event.event.model", 1_000),
+      ...(event.thinkingLevel === undefined ? {} : { thinkingLevel: requireString(event.thinkingLevel, "runtime_event.event.thinkingLevel", 64) }),
+    };
+  }
+  if (type === "executor_input_snapshot") {
+    return {
+      type,
+      traceId,
+      spanId,
+      inputPreview: requireBoundedText(event.inputPreview, "runtime_event.event.inputPreview", 20_000),
+      ...(event.inputTruncated === undefined ? {} : { inputTruncated: requireBoolean(event.inputTruncated, "runtime_event.event.inputTruncated") }),
+    };
+  }
+  if (type === "executor_output_delta") {
+    return { type, traceId, spanId, textDelta: requireBoundedText(event.textDelta, "runtime_event.event.textDelta", 20_000) };
+  }
+  if (type === "executor_output_snapshot") {
+    return {
+      type,
+      traceId,
+      spanId,
+      outputPreview: requireBoundedText(event.outputPreview, "runtime_event.event.outputPreview", 40_000),
+      ...(event.outputTruncated === undefined ? {} : { outputTruncated: requireBoolean(event.outputTruncated, "runtime_event.event.outputTruncated") }),
+    };
+  }
+  if (type === "transport_observation") {
+    const observation = requireString(event.observation, "runtime_event.event.observation", 64) as Extract<ProtocolRuntimeEvent, { type: "transport_observation" }>["observation"];
+    if (!TRANSPORT_OBSERVATIONS.has(observation)) throw new Error(`Unknown transport observation: ${observation}`);
+    return {
+      type,
+      traceId,
+      spanId,
+      observation,
+      ...(event.requestId === undefined ? {} : { requestId: requireString(event.requestId, "runtime_event.event.requestId", MAX_ID) }),
+      ...(event.runtimeId === undefined ? {} : { runtimeId: requireString(event.runtimeId, "runtime_event.event.runtimeId", MAX_ID) }),
+      ...(event.message === undefined ? {} : { message: requireBoundedText(event.message, "runtime_event.event.message", 2_000) }),
+    };
+  }
+  throw new Error(`Unknown runtime event type: ${type}`);
+}
+
+const INVOKE_ERROR_CODES = new Set<InvokeErrorCode>([
+  "NOT_FOUND", "INVALID_INPUT", "INVALID_OUTPUT", "EXECUTION_FAILED", "ABORTED", "POLICY_DENIED",
+  "TRANSPORT_FAILED", "TRANSPORT_TIMEOUT", "OVERLOADED", "SESSION_BUSY", "SESSION_LOST",
+  "INCOMPATIBLE_RUNTIME", "LOOP_DETECTED",
+]);
+const TRANSPORT_OBSERVATIONS = new Set<Extract<ProtocolRuntimeEvent, { type: "transport_observation" }>["observation"]>([
+  "runtime_selected", "queued", "transport_connected", "remote_invocation_started",
+  "remote_invocation_completed", "transport_failed", "cancellation_requested",
+]);
+
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -185,6 +296,16 @@ function requireRecord(value: unknown, field: string): Record<string, unknown> {
 
 function requireString(value: unknown, field: string, max: number): string {
   if (typeof value !== "string" || value.length < 1 || value.length > max) throw new Error(`${field} must be a non-empty bounded string`);
+  return value;
+}
+
+function requireBoundedText(value: unknown, field: string, max: number): string {
+  if (typeof value !== "string" || value.length > max) throw new Error(`${field} must be a bounded string`);
+  return value;
+}
+
+function requireBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`${field} must be boolean`);
   return value;
 }
 
