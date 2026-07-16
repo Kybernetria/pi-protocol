@@ -97,6 +97,10 @@ export function createProtocolFabric(): ProtocolFabric {
       if (nodes.delete(nodeId)) notifyRegistrySubscribers(registrySubscribers, fabric.registry());
     },
 
+    localRegistry() {
+      return localRegistry();
+    },
+
     registry() {
       return transport ? mergeRegistries(localRegistry(), transport.registry()) : localRegistry();
     },
@@ -227,6 +231,7 @@ function isCompatibleProtocolFabric(value: ProtocolFabric | undefined): value is
     typeof value.subscribeRegistryRecorder === "function" &&
     typeof value.register === "function" &&
     typeof value.unregister === "function" &&
+    typeof value.localRegistry === "function" &&
     typeof value.registry === "function" &&
     typeof value.describeNode === "function" &&
     typeof value.describeProvide === "function" &&

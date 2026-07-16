@@ -1,0 +1,24 @@
+{
+  "name": "@kybernetria/pi-protocol-hub",
+  "version": "0.1.0",
+  "description": "Optional same-user Unix-socket transport hub for Pi Protocol",
+  "type": "module",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "files": [
+    "*.ts",
+    "LICENSE"
+  ],
+  "keywords": [
+    "pi-protocol",
+    "unix-socket",
+    "protocol-transport"
+  ],
+  "license": "AGPL-3.0",
+  "dependencies": {
+    "@kybernetria/pi-protocol": "^1.0.1"
+  }
+}

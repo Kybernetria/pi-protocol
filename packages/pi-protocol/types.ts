@@ -269,6 +269,8 @@ export interface ProtocolFabric {
   subscribeRegistryRecorder(recorder: RegistryRecorder): RecorderUnsubscribe;
   register(input: RegisterNodeInput): void;
   unregister(nodeId: string): void;
+  /** Local registrations only; runtime registrars use this to avoid re-advertising remote cache entries. */
+  localRegistry(): RegistrySnapshot;
   registry(): RegistrySnapshot;
   describeNode(nodeId: string): ProtocolNode | undefined;
   describeProvide(nodeId: string, provideName: string): ProvideSnapshot | undefined;
