@@ -1,3 +1,4 @@
+import { ProtocolInvocationError } from "../index.ts";
 import type {
   CurrentProtocolInvocationContext,
   ProtocolAgentExecutor,
@@ -10,7 +11,10 @@ const PI_SDK_AGENT_SESSION_CACHE_KEY = Symbol.for("pi-protocol.pi-sdk.agent-sess
 interface CachedPiSdkAgentSession {
   session: PiSdkAgentSessionLike;
   activePrompts: number;
+  lastUsedAt: number;
 }
+
+const MAX_CONTINUED_AGENT_SESSIONS = 128;
 
 /**
  * Pi SDK adapter boundary.
@@ -260,14 +264,19 @@ async function getOrCreateSessionLease(
   const existing = sessions.get(sessionKey);
   if (existing) {
     if (existing.activePrompts > 0) {
-      return { session: await options.createSession(), cached: false };
+      throw new ProtocolInvocationError("SESSION_BUSY", "Continued protocol session already has an active prompt");
     }
 
     existing.activePrompts += 1;
+    existing.lastUsedAt = Date.now();
     return { session: existing.session, sessionKey, cached: true };
   }
 
-  const created = { session: await options.createSession(), activePrompts: 1 };
+  evictIdleSessions(sessions);
+  if (sessions.size >= MAX_CONTINUED_AGENT_SESSIONS) {
+    throw new ProtocolInvocationError("OVERLOADED", "Continued protocol session cache is full");
+  }
+  const created = { session: await options.createSession(), activePrompts: 1, lastUsedAt: Date.now() };
   sessions.set(sessionKey, created);
   return { session: created.session, sessionKey, cached: true };
 }
@@ -277,7 +286,21 @@ function releaseSessionLease(
   lease: PiSdkAgentSessionLease): void {
   if (!lease.cached || !lease.sessionKey) return;
   const entry = sessions.get(lease.sessionKey);
-  if (entry) entry.activePrompts = Math.max(0, entry.activePrompts - 1);
+  if (entry) {
+    entry.activePrompts = Math.max(0, entry.activePrompts - 1);
+    entry.lastUsedAt = Date.now();
+  }
+}
+
+function evictIdleSessions(sessions: Map<string, CachedPiSdkAgentSession>): void {
+  if (sessions.size < MAX_CONTINUED_AGENT_SESSIONS) return;
+  const idle = [...sessions.entries()]
+    .filter(([, entry]) => entry.activePrompts === 0)
+    .sort((left, right) => left[1].lastUsedAt - right[1].lastUsedAt);
+  const oldest = idle[0];
+  if (!oldest) return;
+  oldest[1].session.dispose();
+  sessions.delete(oldest[0]);
 }
 
 function getSessionKey(context: ProtocolInvocationContext | undefined): string | undefined {

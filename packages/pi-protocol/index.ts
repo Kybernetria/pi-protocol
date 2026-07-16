@@ -4,6 +4,7 @@ export {
   invokeFromCurrentContext,
   runWithProtocolInvocationContextValue,
 } from "./context.ts";
+export { ProtocolInvocationError } from "./errors.ts";
 export { createProtocolFabric, ensureProtocolFabric } from "./fabric.ts";
 export { protocolNodeFromManifest, registerProtocolManifest, resolveManifestSystemPrompts } from "./manifest.ts";
 export type { ManifestResolutionOptions, RegisterProtocolManifestInput } from "./manifest.ts";
