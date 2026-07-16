@@ -331,8 +331,8 @@ export class ProtocolHub {
       this.sendRequestError(connection, message.requestId, "OVERLOADED", "Hub active-request limit reached");
       return;
     }
-    if (message.route.hopCount >= this.maxHopCount || message.route.path.includes(this.hubId)) {
-      this.sendRequestError(connection, message.requestId, "LOOP_DETECTED", "Transport hop limit or recursive hub loop detected");
+    if (message.route.hopCount >= this.maxHopCount) {
+      this.sendRequestError(connection, message.requestId, "LOOP_DETECTED", "Transport hop limit was reached");
       return;
     }
 
@@ -362,7 +362,11 @@ export class ProtocolHub {
     }
     runtime ??= this.selectRuntime(message.request, message.route, message.placement);
     if (!runtime) {
-      this.sendRequestError(connection, message.requestId, "NOT_FOUND", `No compatible runtime hosts ${message.request.nodeId}.${message.request.provide}`);
+      if (this.hasVisitedRuntimeForTarget(message.request, message.route)) {
+        this.sendRequestError(connection, message.requestId, "LOOP_DETECTED", `Recursive transport route revisited ${message.request.nodeId}.${message.request.provide}`);
+      } else {
+        this.sendRequestError(connection, message.requestId, "NOT_FOUND", `No compatible runtime hosts ${message.request.nodeId}.${message.request.provide}`);
+      }
       return;
     }
     if (affinityKey) {
@@ -415,6 +419,15 @@ export class ProtocolHub {
     const chosen = tied[this.selectionCounter % tied.length];
     this.selectionCounter = (this.selectionCounter + 1) % Number.MAX_SAFE_INTEGER;
     return chosen;
+  }
+
+  private hasVisitedRuntimeForTarget(request: SerializedInvokeRequest, route: TransportRoute): boolean {
+    this.refreshCompatibility();
+    const target = `${request.nodeId}.${request.provide}`;
+    return [...this.runtimes.values()].some((runtime) =>
+      route.path.includes(runtime.runtimeId) &&
+      runtime.registrations.some((registration) => this.isRegistrationEligible(runtime, registration, target)),
+    );
   }
 
   private dispatch(runtime: RuntimeRecord, pending: PendingRequest): void {

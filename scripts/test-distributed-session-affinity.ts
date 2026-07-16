@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createProtocolFabric, type ProtocolFabric, type ProtocolNode } from "../packages/pi-protocol/index.ts";
+import { createProtocolFabric, handleProtocolToolInput, type ProtocolFabric, type ProtocolNode } from "../packages/pi-protocol/index.ts";
 import { ProtocolHub, ProtocolHubTransport, ProtocolRuntimeClient } from "../packages/pi-protocol-hub/index.ts";
 
 const directory = await mkdtemp(join(tmpdir(), "pi-protocol-affinity-"));
@@ -74,6 +74,27 @@ try {
   await transport.start();
   caller.setTransport(transport);
   await waitFor(() => caller.describeProvide("session_agent", "chat") !== undefined);
+  const compactList = await handleProtocolToolInput(caller, { op: "list" }) as {
+    capabilities: Array<{ target: string; runtimeId?: string }>;
+  };
+  assert.equal(compactList.capabilities.filter((capability) => capability.target === "session_agent.chat").length, 1);
+  assert.equal(compactList.capabilities[0]?.runtimeId, undefined, "compact discovery must not expose physical runtime ids");
+  const described = await handleProtocolToolInput(caller, {
+    action: "describe_provide",
+    nodeId: "session_agent",
+    provide: "chat",
+  }) as { ok: boolean; provide?: { availability?: string } };
+  assert.equal(described.ok, true);
+  assert.equal(described.provide?.availability, "remote");
+  const searched = await handleProtocolToolInput(caller, { op: "search", query: "conversation" }) as {
+    capabilities: Array<{ target: string }>;
+  };
+  assert.ok(searched.capabilities.some((capability) => capability.target === "session_agent.chat"));
+  const toolCall = await handleProtocolToolInput(caller, {
+    target: "session_agent.chat",
+    input: { text: "tool-call" },
+  }) as { result: { ok: boolean } };
+  assert.equal(toolCall.result.ok, true);
 
   const first = await chat("thread-1", "continue", "one");
   assert.equal(first.turn, 1);

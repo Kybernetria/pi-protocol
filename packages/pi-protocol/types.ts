@@ -272,6 +272,7 @@ export interface ProtocolFabric {
   /** Local registrations only; runtime registrars use this to avoid re-advertising remote cache entries. */
   localRegistry(): RegistrySnapshot;
   registry(): RegistrySnapshot;
+  capabilityAvailability(nodeId: string, provideName: string): "local" | "remote" | undefined;
   describeNode(nodeId: string): ProtocolNode | undefined;
   describeProvide(nodeId: string, provideName: string): ProvideSnapshot | undefined;
   invoke(request: InvokeRequest): Promise<InvokeResult>;

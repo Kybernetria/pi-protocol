@@ -105,6 +105,15 @@ export function createProtocolFabric(): ProtocolFabric {
       return transport ? mergeRegistries(localRegistry(), transport.registry()) : localRegistry();
     },
 
+    capabilityAvailability(nodeId, provideName) {
+      const local = nodes.get(nodeId)?.node.provides.some((provide) => provide.name === provideName) ?? false;
+      if (local) return "local";
+      const remote = transport?.registry().provides.some(
+        (provide) => provide.nodeId === nodeId && provide.name === provideName,
+      ) ?? false;
+      return remote ? "remote" : undefined;
+    },
+
     describeNode(nodeId) {
       const node = fabric.registry().nodes.find((item) => item.nodeId === nodeId);
       return node ? freezeSnapshot(cloneProtocolNode(node)) : undefined;
@@ -233,6 +242,7 @@ function isCompatibleProtocolFabric(value: ProtocolFabric | undefined): value is
     typeof value.unregister === "function" &&
     typeof value.localRegistry === "function" &&
     typeof value.registry === "function" &&
+    typeof value.capabilityAvailability === "function" &&
     typeof value.describeNode === "function" &&
     typeof value.describeProvide === "function" &&
     typeof value.invoke === "function"

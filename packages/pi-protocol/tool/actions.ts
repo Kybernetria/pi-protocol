@@ -35,7 +35,11 @@ export async function handleProtocolToolInput(
       const provideName = requireText(input.provide, "protocol action describe_provide requires provide");
       const provide = fabric.describeProvide(nodeId, provideName);
       return provide
-        ? { ok: true, action: "describe_provide", provide: summarizeProvideSnapshot(provide) }
+        ? {
+            ok: true,
+            action: "describe_provide",
+            provide: summarizeProvideSnapshot(provide, fabric.capabilityAvailability(nodeId, provideName)),
+          }
         : {
             ok: false,
             action: "describe_provide",
@@ -131,9 +135,13 @@ function summarizeProvide(provide: ProvideSpec): unknown {
   };
 }
 
-function summarizeProvideSnapshot(provide: ProvideSnapshot): unknown {
+function summarizeProvideSnapshot(
+  provide: ProvideSnapshot,
+  availability: "local" | "remote" | undefined,
+): unknown {
   return {
     nodeId: provide.nodeId,
+    availability,
     globalId: provide.globalId,
     name: provide.name,
     description: provide.description,
