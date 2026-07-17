@@ -31,7 +31,7 @@ Use the input signature returned by search or list to select a compatible provid
 
 For every intentional change to a Git repository, run relevant validation and create a focused commit containing only that task's changes before reporting completion. Preserve unrelated pre-existing changes.
 
-For a substantial task (multiple coordinated steps, multiple files, or delegated work), use an isolated Git worktree. When term-mux is available, create it as a first-class term-mux workspace rather than only running `git worktree` yourself:
+For a substantial task (multiple coordinated steps, multiple files, or delegated work), use an isolated Git worktree. If the installed term-mux exposes `new-worktree` in `term-mux --help`, create it as a first-class term-mux workspace:
 
 ```sh
 term-mux new-worktree \
@@ -41,6 +41,6 @@ term-mux new-worktree \
   --destination /absolute/path/under/the/term-mux/worktree-root
 ```
 
-`new-worktree` is asynchronous: retain its operation ID, wait until the workspace is ready, and perform the task from that worktree's exact path. Use `--custom-destination` only for an intentional location outside term-mux's managed worktree root. Creating the workspace does not move an already-running agent; start or direct the task's terminal/agent to the new worktree path. Do not remove a worktree automatically.
+`new-worktree` is asynchronous: retain its operation ID, wait until the workspace is ready, and perform the task from that worktree's exact path. Use `--custom-destination` only for an intentional location outside term-mux's managed worktree root. If the running term-mux version does not expose `new-worktree`, create the Git worktree, then create a separate term-mux workspace with `term-mux new-workspace --cwd /absolute/path/to/worktree`. Creating a workspace does not move an already-running agent; start or direct the task's terminal/agent to the new worktree path. Do not remove a worktree automatically.
 
 For work requiring decomposition, delegation, tracking, or multi-step coordination, use the pi-td protocol node. Use `pi_todo.create` to create a parent task and sub-tasks (`parent_id`), `pi_todo.claim` before taking a task, and `pi_todo.update` with `status: "closed"` when it is complete. Use `pi_todo.list` first when the current workflow is unknown; do not force-claim another session's task. If pi-td is unavailable in the protocol index, state that clearly and use the available workflow mechanism instead.
