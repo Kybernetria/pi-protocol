@@ -82,22 +82,6 @@ export interface InvocationSessionControl {
 
 export type ProtocolRuntimeEvent =
   | {
-      type: "transport_observation";
-      traceId: string;
-      spanId: string;
-      observation:
-        | "runtime_selected"
-        | "queued"
-        | "transport_connected"
-        | "remote_invocation_started"
-        | "remote_invocation_completed"
-        | "transport_failed"
-        | "cancellation_requested";
-      requestId?: string;
-      runtimeId?: string;
-      message?: string;
-    }
-  | {
       type: "executor_session_model";
       traceId: string;
       spanId: string;
@@ -238,41 +222,22 @@ export interface InvokeRequest {
   abortSignal?: AbortSignal;
 }
 
-export type InvokeErrorCode =
-  | "NOT_FOUND"
-  | "INVALID_INPUT"
-  | "INVALID_OUTPUT"
-  | "EXECUTION_FAILED"
-  | "ABORTED"
-  | "POLICY_DENIED"
-  | "TRANSPORT_FAILED"
-  | "TRANSPORT_TIMEOUT"
-  | "OVERLOADED"
-  | "SESSION_BUSY"
-  | "SESSION_LOST"
-  | "INCOMPATIBLE_RUNTIME"
-  | "LOOP_DETECTED";
+export type InvokeErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "INVALID_OUTPUT" | "EXECUTION_FAILED" | "ABORTED" | "POLICY_DENIED";
 
 export type InvokeResult =
   | { ok: true; nodeId: string; provide: string; output: unknown }
   | { ok: false; error: { code: InvokeErrorCode; message: string } };
 
 export type RecorderUnsubscribe = () => void;
-export type RegistryRecorder = (snapshot: RegistrySnapshot) => void;
 
 export interface ProtocolFabric {
-  setTransport(transport?: import("./transport/types.ts").ProtocolTransport): void;
   setProvenanceRecorder(recorder?: ProvenanceRecorder): void;
   subscribeProvenanceRecorder(recorder: ProvenanceRecorder): RecorderUnsubscribe;
   setRuntimeEventRecorder(recorder?: ProtocolRuntimeEventRecorder): void;
   subscribeRuntimeEventRecorder(recorder: ProtocolRuntimeEventRecorder): RecorderUnsubscribe;
-  subscribeRegistryRecorder(recorder: RegistryRecorder): RecorderUnsubscribe;
   register(input: RegisterNodeInput): void;
   unregister(nodeId: string): void;
-  /** Local registrations only; runtime registrars use this to avoid re-advertising remote cache entries. */
-  localRegistry(): RegistrySnapshot;
   registry(): RegistrySnapshot;
-  capabilityAvailability(nodeId: string, provideName: string): "local" | "remote" | undefined;
   describeNode(nodeId: string): ProtocolNode | undefined;
   describeProvide(nodeId: string, provideName: string): ProvideSnapshot | undefined;
   invoke(request: InvokeRequest): Promise<InvokeResult>;

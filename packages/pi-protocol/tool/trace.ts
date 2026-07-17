@@ -108,7 +108,6 @@ async function invokeAbortable(fabric: ProtocolFabric, request: InvokeRequest): 
 }
 
 function runtimeEventChars(event: ProtocolRuntimeEvent): number {
-  if (event.type === "transport_observation") return event.message?.length ?? 0;
   if (event.type === "executor_output_delta") return event.textDelta.length;
   if (event.type === "executor_input_snapshot") return event.inputPreview.length;
   if (event.type === "executor_output_snapshot") return event.outputPreview.length;
@@ -117,11 +116,6 @@ function runtimeEventChars(event: ProtocolRuntimeEvent): number {
 
 function boundRuntimeEvent(event: ProtocolRuntimeEvent, remaining: number): ProtocolRuntimeEvent | undefined {
   if (event.type === "executor_session_model") return event;
-  if (event.type === "transport_observation") {
-    return event.message && event.message.length > remaining
-      ? { ...event, message: event.message.slice(0, Math.max(0, remaining)) }
-      : event;
-  }
   if (remaining <= 0) return undefined;
   if (event.type === "executor_output_delta") return { ...event, textDelta: event.textDelta.slice(0, remaining) };
   if (event.type === "executor_input_snapshot") return { ...event, inputPreview: event.inputPreview.slice(0, remaining), inputTruncated: event.inputTruncated || event.inputPreview.length > remaining };

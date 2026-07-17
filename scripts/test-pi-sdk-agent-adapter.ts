@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import type { ProtocolRuntimeEvent } from "../packages/pi-protocol/index.ts";
 import {
   createPiSdkAgentExecutor,
@@ -9,6 +10,12 @@ import {
   appendUniquePromptChunks,
   UNIVERSAL_PROTOCOL_AWARENESS_PROMPT,
 } from "../packages/pi-protocol/sdk/agent-session.ts";
+
+const protocolAwarenessMarkdown = await readFile(
+  new URL("../packages/pi-protocol/prompts/protocol-awareness.md", import.meta.url),
+  "utf8",
+);
+assert.equal(UNIVERSAL_PROTOCOL_AWARENESS_PROMPT, protocolAwarenessMarkdown.trim());
 
 function createFakeSession(options: { throwOnPrompt?: boolean } = {}) {
   let listener: ((event: PiSdkAgentSessionEventLike) => void) | undefined;
@@ -218,35 +225,5 @@ controller.abort();
 await assert.rejects(async () => abortPromise, /Invocation aborted/);
 assert.equal(abortListener, undefined);
 assert.equal(abortDisposed, true);
-
-let releaseContinuedPrompt: (() => void) | undefined;
-const busyExecutor = createPiSdkAgentExecutor({
-  createSession: () => ({
-    async prompt() {
-      await new Promise<void>((resolve) => { releaseContinuedPrompt = resolve; });
-    },
-    subscribe() {
-      return () => undefined;
-    },
-    dispose() {},
-  }),
-});
-const busyContext = {
-  nodeId: "busy_agent",
-  provide: "chat",
-  callerNodeId: "caller",
-  session: { id: "busy-thread", mode: "continue" as const },
-};
-const activeContinuedPrompt = busyExecutor("first", busyContext);
-await new Promise((resolve) => setTimeout(resolve, 0));
-await assert.rejects(
-  async () => busyExecutor("concurrent", busyContext),
-  (error: unknown) =>
-    error instanceof Error &&
-    "code" in error &&
-    error.code === "SESSION_BUSY",
-);
-releaseContinuedPrompt?.();
-await activeContinuedPrompt;
 
 console.log("pi sdk agent adapter works");

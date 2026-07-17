@@ -7,7 +7,6 @@ import type {
   ProtocolRuntimeEventEmitter,
   ProvideSpec,
 } from "./types.ts";
-import { ProtocolInvocationError } from "./errors.ts";
 import { validateJsonSchemaLite } from "./validation.ts";
 
 export interface ExecuteProvideInput {
@@ -55,7 +54,7 @@ export async function executeProvide(input: ExecuteProvideInput): Promise<Invoke
     return {
       ok: false,
       error: {
-        code: isAbortError(error) ? "ABORTED" : error instanceof ProtocolInvocationError ? error.code : "EXECUTION_FAILED",
+        code: isAbortError(error) ? "ABORTED" : "EXECUTION_FAILED",
         message: isAbortError(error) ? "Invocation aborted" : error instanceof Error ? error.message : String(error),
       },
     };

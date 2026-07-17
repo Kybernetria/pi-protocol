@@ -1,8 +1,8 @@
 # Pi Protocol
 
-Small capability fabric for Pi packages/extensions/agents, in-process by default with an optional same-user Unix-socket transport.
+Small in-process capability fabric for Pi packages/extensions/agents.
 
-`pi-protocol` lets packages declare capabilities, discover other capabilities, and invoke them through one shared fabric instead of coupling directly to each other. Without a configured transport, behavior remains entirely in-process.
+`pi-protocol` lets packages declare capabilities, discover other capabilities, and invoke them through one shared fabric instead of coupling directly to each other.
 
 Mental model:
 
@@ -14,7 +14,7 @@ P2P = provide invokes provide
 orchestration = handler invokes multiple provides
 ```
 
-There is no special agent messaging or prompt tunnel. Agent-backed provides and handler-backed provides are both normal protocol provides, and both are invoked through `fabric.invoke`. Trace/span/session fields propagate through normal invocation. The optional distributed transport routes that same canonical call to a remote process, whose local fabric performs normal validation, policy, execution, and output validation.
+There is no special agent P2P transport. Agent-backed provides and handler-backed provides are both normal protocol provides, and both are invoked through `fabric.invoke`. Trace/span/session fields propagate through normal invocation.
 
 ## Compact agent interface
 
@@ -39,10 +39,8 @@ The Pi tool projection defaults to four concurrent direct calls per tool instanc
 - `@kybernetria/pi-protocol` - generic registry, describe, invoke, manifest registration, execution type definitions, handler/agent executor interfaces, provenance/session fields
 - `@kybernetria/pi-protocol/sdk` - official Pi SDK `AgentSession` adapter for real agent-backed provides
 - `@kybernetria/pi-protocol/tool` - Pi tool projection named `protocol`
-- `@kybernetria/pi-protocol/transport` - optional remote resolver/invocation interfaces
-- `@kybernetria/pi-protocol-hub` - separately owned same-user Unix-socket hub and runtime/caller clients
 
-Pi SDK-specific behavior does not belong in the core; the local fabric stays generic TypeScript and never owns a mandatory daemon. See [Distributed protocol transport](docs/distributed-transport.md) for operation and security details.
+Pi SDK-specific behavior does not belong in `pi-protocol-minimal`; the core stays generic TypeScript.
 
 ## Compatible package contract
 
@@ -252,7 +250,6 @@ createProtocolFabric
 ensureProtocolFabric
 registerProtocolManifest
 protocolNodeFromManifest
-ProtocolInvocationError
 ```
 
 Core public types include `PiProtocolManifest`, `ProtocolFabric`, `ProtocolNode`, `ProvideSpec`, `ProtocolHandler`, `ProtocolAgentExecutor`, `InvokeRequest`, `InvokeResult`, `RegistrySnapshot`, and `ProvideSnapshot`.
@@ -278,24 +275,6 @@ createProtocolTool
 registerProtocolTool
 handleProtocolToolInput
 ```
-
-### `@kybernetria/pi-protocol/transport`
-
-```ts
-type ProtocolTransport
-type ProtocolTransportObserver
-```
-
-### `@kybernetria/pi-protocol-hub`
-
-```ts
-ProtocolHub
-ProtocolHubTransport
-ProtocolRuntimeClient
-manifestDigest
-```
-
-Cross-process use is opt-in and Unix-socket-only. It preserves logical capability IDs, merges remote discovery without one card per runtime, pins continued sessions to their owning runtime, maps cancellation to explicit request IDs, and never calls `pi.sendUserMessage()`. See [docs/distributed-transport.md](docs/distributed-transport.md).
 
 ## Test
 

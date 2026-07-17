@@ -4,7 +4,6 @@ export {
   invokeFromCurrentContext,
   runWithProtocolInvocationContextValue,
 } from "./context.ts";
-export { ProtocolInvocationError } from "./errors.ts";
 export { createProtocolFabric, ensureProtocolFabric } from "./fabric.ts";
 export { protocolNodeFromManifest, registerProtocolManifest, resolveManifestSystemPrompts } from "./manifest.ts";
 export type { ManifestResolutionOptions, RegisterProtocolManifestInput } from "./manifest.ts";
@@ -39,15 +38,8 @@ export type {
   ProvideSpec,
   RegisterNodeInput,
   RecorderUnsubscribe,
-  RegistryRecorder,
   RegistrySnapshot,
 } from "./types.ts";
-
-export type {
-  ProtocolTransport,
-  ProtocolTransportDiagnostic,
-  ProtocolTransportObserver,
-} from "./transport/index.ts";
 
 // Re-export tool and sdk for convenience (also available via ./tool and ./sdk entry points)
 export { createProtocolTool, registerProtocolTool, handleProtocolToolInput } from "./tool/index.ts";

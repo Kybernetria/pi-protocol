@@ -1,4 +1,3 @@
-import { ProtocolInvocationError } from "../index.ts";
 import type {
   CurrentProtocolInvocationContext,
   ProtocolAgentExecutor,
@@ -11,10 +10,7 @@ const PI_SDK_AGENT_SESSION_CACHE_KEY = Symbol.for("pi-protocol.pi-sdk.agent-sess
 interface CachedPiSdkAgentSession {
   session: PiSdkAgentSessionLike;
   activePrompts: number;
-  lastUsedAt: number;
 }
-
-const MAX_CONTINUED_AGENT_SESSIONS = 128;
 
 /**
  * Pi SDK adapter boundary.
@@ -66,16 +62,18 @@ export function createPiSdkAgentExecutor(
       : { session: await options.createSession(), sessionKey: undefined, cached: false };
     const session = leasedSession.session;
     let text = "";
-    let pendingRuntimeEvents = Promise.resolve();
+    const pendingRuntimeEvents: Promise<void>[] = [];
     const unsubscribe = session.subscribe((event) => {
       if (isTextDeltaMessageUpdate(event)) {
         text += event.assistantMessageEvent.delta;
-        pendingRuntimeEvents = pendingRuntimeEvents.then(() => emitRuntimeEventSafely(context, {
-          type: "executor_output_delta",
-          traceId: context?.traceId,
-          spanId: context?.spanId,
-          textDelta: event.assistantMessageEvent.delta,
-        }));
+        pendingRuntimeEvents.push(
+          emitRuntimeEventSafely(context, {
+            type: "executor_output_delta",
+            traceId: context?.traceId,
+            spanId: context?.spanId,
+            textDelta: event.assistantMessageEvent.delta,
+          }),
+        );
       }
     });
     const removeAbortListener = addAbortListener(context?.abortSignal, () => session.dispose());
@@ -101,7 +99,7 @@ export function createPiSdkAgentExecutor(
       });
       session.setProtocolInvocationContext?.(toCurrentProtocolInvocationContext(context));
       await runAbortable(session.prompt(prompt), context?.abortSignal);
-      await pendingRuntimeEvents;
+      await Promise.all(pendingRuntimeEvents);
       await emitRuntimeEventSafely(context, {
         type: "executor_output_snapshot",
         traceId: context?.traceId,
@@ -262,19 +260,14 @@ async function getOrCreateSessionLease(
   const existing = sessions.get(sessionKey);
   if (existing) {
     if (existing.activePrompts > 0) {
-      throw new ProtocolInvocationError("SESSION_BUSY", "Continued protocol session already has an active prompt");
+      return { session: await options.createSession(), cached: false };
     }
 
     existing.activePrompts += 1;
-    existing.lastUsedAt = Date.now();
     return { session: existing.session, sessionKey, cached: true };
   }
 
-  evictIdleSessions(sessions);
-  if (sessions.size >= MAX_CONTINUED_AGENT_SESSIONS) {
-    throw new ProtocolInvocationError("OVERLOADED", "Continued protocol session cache is full");
-  }
-  const created = { session: await options.createSession(), activePrompts: 1, lastUsedAt: Date.now() };
+  const created = { session: await options.createSession(), activePrompts: 1 };
   sessions.set(sessionKey, created);
   return { session: created.session, sessionKey, cached: true };
 }
@@ -284,21 +277,7 @@ function releaseSessionLease(
   lease: PiSdkAgentSessionLease): void {
   if (!lease.cached || !lease.sessionKey) return;
   const entry = sessions.get(lease.sessionKey);
-  if (entry) {
-    entry.activePrompts = Math.max(0, entry.activePrompts - 1);
-    entry.lastUsedAt = Date.now();
-  }
-}
-
-function evictIdleSessions(sessions: Map<string, CachedPiSdkAgentSession>): void {
-  if (sessions.size < MAX_CONTINUED_AGENT_SESSIONS) return;
-  const idle = [...sessions.entries()]
-    .filter(([, entry]) => entry.activePrompts === 0)
-    .sort((left, right) => left[1].lastUsedAt - right[1].lastUsedAt);
-  const oldest = idle[0];
-  if (!oldest) return;
-  oldest[1].session.dispose();
-  sessions.delete(oldest[0]);
+  if (entry) entry.activePrompts = Math.max(0, entry.activePrompts - 1);
 }
 
 function getSessionKey(context: ProtocolInvocationContext | undefined): string | undefined {

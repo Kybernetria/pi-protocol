@@ -15,16 +15,8 @@
     "test:minimal-pi-tool-projection": "tsx scripts/test-minimal-pi-tool-projection.ts",
     "test:compact-protocol-tool": "tsx scripts/test-compact-protocol-tool.ts",
     "test:file-backed-system-prompts": "tsx scripts/test-file-backed-system-prompts.ts",
-    "test:optional-transport": "tsx scripts/test-optional-transport.ts",
-    "test:unix-protocol-hub": "tsx scripts/test-unix-protocol-hub.ts",
-    "test:distributed-session-affinity": "tsx scripts/test-distributed-session-affinity.ts",
-    "test:distributed-backpressure": "tsx scripts/test-distributed-backpressure.ts",
-    "test:protocol-hub-safety": "tsx scripts/test-protocol-hub-safety.ts",
-    "test:distributed-ambiguous-failure": "tsx scripts/test-distributed-ambiguous-failure.ts",
-    "test:distributed-child-process": "tsx scripts/test-distributed-child-process.ts",
-    "test:distributed-routing-loops": "tsx scripts/test-distributed-routing-loops.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:protocol-agent-p2p-context && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:real-agent-runtime && npm run test:minimal-pi-tool-projection && npm run test:compact-protocol-tool && npm run test:file-backed-system-prompts && npm run test:optional-transport && npm run test:unix-protocol-hub && npm run test:distributed-session-affinity && npm run test:distributed-backpressure && npm run test:protocol-hub-safety && npm run test:distributed-ambiguous-failure && npm run test:distributed-child-process && npm run test:distributed-routing-loops"
+    "test": "npm run typecheck && npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:protocol-agent-p2p-context && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:real-agent-runtime && npm run test:minimal-pi-tool-projection && npm run test:compact-protocol-tool && npm run test:file-backed-system-prompts"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.75.4",
