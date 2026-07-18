@@ -23,6 +23,12 @@ export interface PiSdkCreateAgentSessionOptions {
   [key: string]: unknown;
 }
 
+/** Session settings allowed alongside a manifest-owned agent tool allowlist. */
+export interface PiSdkManifestAgentSessionOptions extends Omit<PiSdkCreateAgentSessionOptions, "tools"> {
+  /** Tool exposure is declared exclusively by `manifest.agents.<name>.tools`. */
+  tools?: never;
+}
+
 interface PiModelRegistryLike {
   find(provider: string, modelId: string): unknown;
   getAll?(): unknown[];
@@ -46,6 +52,8 @@ interface PiCodingAgentSdk {
 }
 
 /** Shared protocol guidance, loaded from the package-local editable Markdown source. */
+export const DEFAULT_PROTOCOL_AGENT_TOOLS = [DEFAULT_PROTOCOL_TOOL_NAME] as const;
+
 export const UNIVERSAL_PROTOCOL_AWARENESS_PROMPT = readFileSync(
   new URL("../prompts/protocol-awareness.md", import.meta.url),
   "utf8",
@@ -69,7 +77,7 @@ export interface CreatePiSdkAgentExecutorsFromManifestOptions {
   /** Required when the manifest uses `systemPrompt.file`; never inferred from process.cwd(). */
   manifestBaseDir?: string;
   createSession?: PiSdkAgentSessionFactory | ((agentName: string, agent: ProtocolAgentSpec) => PiSdkAgentSessionFactory | undefined);
-  sessionOptions?: PiSdkCreateAgentSessionOptions | ((agentName: string, agent: ProtocolAgentSpec) => PiSdkCreateAgentSessionOptions | undefined);
+  sessionOptions?: PiSdkManifestAgentSessionOptions | ((agentName: string, agent: ProtocolAgentSpec) => PiSdkManifestAgentSessionOptions | undefined);
   toPrompt?: CreatePiSdkAgentExecutorOptions["toPrompt"] | ((agentName: string, agent: ProtocolAgentSpec) => CreatePiSdkAgentExecutorOptions["toPrompt"]);
   toOutput?: CreatePiSdkAgentExecutorOptions["toOutput"] | ((agentName: string, agent: ProtocolAgentSpec) => CreatePiSdkAgentExecutorOptions["toOutput"]);
 }
@@ -104,6 +112,7 @@ export function createPiSdkAgentSessionFactory(
       customTools,
       ...(resourceLoader ? { resourceLoader } : {}),
     });
+    assertExactToolAllowlist(session, sessionOptions.tools);
     const protocolAwareSession = session as PiSdkAgentSessionLike;
     protocolAwareSession.setProtocolInvocationContext = (context) => {
       activeProtocolContext = context;
@@ -135,7 +144,10 @@ export function createPiSdkAgentExecutorsFromManifest(
   for (const [agentName, agent] of Object.entries(resolvedManifest.agents ?? {})) {
     executors[agentName] = createDefaultPiSdkAgentExecutor({
       createSession: resolveCreateSession(options.createSession, agentName, agent),
-      sessionOptions: withAgentModelHint(resolveSessionOptions(options.sessionOptions, agentName, agent), agent),
+      sessionOptions: withManifestAgentToolAllowlist(
+        withAgentModelHint(resolveSessionOptions(options.sessionOptions, agentName, agent), agent),
+        agent,
+      ),
       toPrompt: resolveToPrompt(options.toPrompt, agentName, agent),
       toOutput: resolveToOutput(options.toOutput, agentName, agent),
       systemPrompt: agent.systemPrompt?.text,
@@ -159,7 +171,7 @@ function resolveSessionOptions(
   value: CreatePiSdkAgentExecutorsFromManifestOptions["sessionOptions"],
   agentName: string,
   agent: ProtocolAgentSpec,
-): PiSdkCreateAgentSessionOptions | undefined {
+): PiSdkManifestAgentSessionOptions | undefined {
   return typeof value === "function" ? value(agentName, agent) : value;
 }
 
@@ -185,6 +197,43 @@ function resolveToOutput(
 
 function isToolNamed(tool: unknown, name: string): boolean {
   return typeof tool === "object" && tool !== null && (tool as { name?: unknown }).name === name;
+}
+
+function withManifestAgentToolAllowlist(
+  sessionOptions: PiSdkCreateAgentSessionOptions | undefined,
+  agent: ProtocolAgentSpec,
+): PiSdkCreateAgentSessionOptions {
+  // A manifest is the only authority for a spawned protocol agent's capabilities.
+  // Reject a caller-level tools setting rather than silently choosing one source.
+  if (sessionOptions && Object.hasOwn(sessionOptions, "tools")) {
+    throw new Error("Manifest-backed protocol agents must declare tools in manifest.agents.<name>.tools; sessionOptions.tools is not allowed.");
+  }
+  return {
+    ...(sessionOptions ?? {}),
+    tools: [...(agent.tools ?? DEFAULT_PROTOCOL_AGENT_TOOLS)],
+  };
+}
+
+function assertExactToolAllowlist(session: unknown, requestedTools: unknown): void {
+  if (!Array.isArray(requestedTools)) return;
+
+  const getActiveToolNames = (session as { getActiveToolNames?: unknown }).getActiveToolNames;
+  if (typeof getActiveToolNames !== "function") {
+    throw new Error("Pi SDK AgentSession does not expose getActiveToolNames(); cannot verify protocol agent tool allowlist.");
+  }
+
+  const activeTools = getActiveToolNames.call(session);
+  if (!Array.isArray(activeTools) || !activeTools.every((tool) => typeof tool === "string")) {
+    throw new Error("Pi SDK AgentSession returned an invalid active tool list.");
+  }
+
+  const expected = [...requestedTools].sort();
+  const actual = [...activeTools].sort();
+  if (expected.length !== actual.length || expected.some((tool, index) => tool !== actual[index])) {
+    throw new Error(
+      `Protocol agent tool allowlist could not be applied: requested ${JSON.stringify(expected)}, active ${JSON.stringify(actual)}.`,
+    );
+  }
 }
 
 function withAgentModelHint(

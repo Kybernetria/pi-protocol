@@ -73,6 +73,45 @@ assert.throws(() => {
   isolatedProvideSnapshot.description = "mutated direct provide snapshot";
 }, TypeError);
 isolatedProvenanceEvents.length = 0;
+const undefinedInputResult = await isolatedFabric.invoke({ nodeId: "missing", provide: "missing", input: undefined });
+assert.deepEqual(undefinedInputResult, {
+  ok: false,
+  error: { code: "NOT_FOUND", message: "Node not found: missing" },
+});
+assert.equal(isolatedProvenanceEvents.length, 2);
+assert.equal(isolatedProvenanceEvents[0]?.inputPreview, "undefined");
+assert.equal(isolatedProvenanceEvents[1]?.inputPreview, "undefined");
+isolatedFabric.register({
+  node: {
+    nodeId: "isolated_undefined_output",
+    purpose: "Verify undefined values produce safe provenance previews.",
+    provides: [
+      {
+        name: "return_undefined",
+        description: "Return undefined.",
+        inputSchema: {},
+        outputSchema: {},
+        execution: { type: "handler", handler: "return_undefined" },
+      },
+    ],
+  },
+  handlers: { return_undefined: async () => undefined },
+});
+isolatedProvenanceEvents.length = 0;
+const undefinedOutputResult = await isolatedFabric.invoke({
+  nodeId: "isolated_undefined_output",
+  provide: "return_undefined",
+  input: {},
+});
+assert.deepEqual(undefinedOutputResult, {
+  ok: true,
+  nodeId: "isolated_undefined_output",
+  provide: "return_undefined",
+  output: undefined,
+});
+assert.equal(isolatedProvenanceEvents.length, 2);
+assert.equal(isolatedProvenanceEvents[1]?.outputPreview, "undefined");
+isolatedProvenanceEvents.length = 0;
 await isolatedFabric.invoke({ nodeId: "isolated", provide: "echo", input: { text: "hi" } });
 assert.equal(isolatedProvenanceEvents.length, 2);
 unsubscribeIsolatedProvenance();

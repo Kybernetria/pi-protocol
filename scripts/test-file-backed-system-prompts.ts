@@ -46,6 +46,25 @@ try {
     /exactly one of "text" or "file"/,
   );
 
+  const toolManifest = manifest({ text: "inline" });
+  toolManifest.agents!.agent!.tools = ["read", "protocol"];
+  assert.deepEqual(protocolNodeFromManifest(toolManifest).agents?.agent.tools, ["read", "protocol"]);
+
+  const duplicateToolManifest = manifest({ text: "inline" });
+  duplicateToolManifest.agents!.agent!.tools = ["read", "read"];
+  assert.throws(() => protocolNodeFromManifest(duplicateToolManifest), /duplicate tool/);
+
+  const paddedToolManifest = manifest({ text: "inline" });
+  paddedToolManifest.agents!.agent!.tools = [" read"];
+  assert.throws(() => createPiSdkAgentExecutorsFromManifest(paddedToolManifest), /unpadded tool names/);
+
+  assert.throws(
+    () => createPiSdkAgentExecutorsFromManifest(manifest({ text: "inline" }), {
+      sessionOptions: { tools: ["read"] } as never,
+    }),
+    /sessionOptions\.tools is not allowed/,
+  );
+
   // The SDK factory resolves the same content up front rather than leaving a file path for session creation.
   assert.doesNotThrow(() => createPiSdkAgentExecutorsFromManifest(append, { manifestBaseDir: baseDir }));
   assert.throws(

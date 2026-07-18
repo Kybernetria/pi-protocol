@@ -35,12 +35,15 @@ export function resolveManifestSystemPrompts(
   manifest: PiProtocolManifest,
   options: ManifestResolutionOptions = {},
 ): PiProtocolManifest {
-  const agents = Object.fromEntries(Object.entries(manifest.agents ?? {}).map(([name, agent]) => [
-    name,
-    agent.systemPrompt
-      ? { ...agent, systemPrompt: resolveSystemPrompt(manifest.nodeId, name, agent.systemPrompt, options) }
-      : { ...agent },
-  ]));
+  const agents = Object.fromEntries(Object.entries(manifest.agents ?? {}).map(([name, agent]) => {
+    validateAgentTools(manifest.nodeId, name, agent.tools);
+    return [
+      name,
+      agent.systemPrompt
+        ? { ...agent, systemPrompt: resolveSystemPrompt(manifest.nodeId, name, agent.systemPrompt, options) }
+        : { ...agent },
+    ];
+  }));
   return { ...manifest, ...(manifest.agents ? { agents } : {}) };
 }
 
@@ -130,6 +133,24 @@ function resolveSystemPrompt(
 function isWithin(baseDir: string, candidate: string): boolean {
   const path = relative(baseDir, candidate);
   return path === "" || (!path.startsWith("..") && !isAbsolute(path));
+}
+
+function validateAgentTools(nodeId: string, agentName: string, tools: unknown): void {
+  if (tools === undefined) return;
+  if (!Array.isArray(tools)) {
+    throw new Error(`Manifest ${nodeId} agent ${agentName} tools must be an array of tool names.`);
+  }
+
+  const seen = new Set<string>();
+  for (const tool of tools) {
+    if (typeof tool !== "string" || !tool.trim() || tool !== tool.trim()) {
+      throw new Error(`Manifest ${nodeId} agent ${agentName} tools must contain non-empty, unpadded tool names.`);
+    }
+    if (seen.has(tool)) {
+      throw new Error(`Manifest ${nodeId} agent ${agentName} tools contains duplicate tool ${JSON.stringify(tool)}.`);
+    }
+    seen.add(tool);
+  }
 }
 
 function validateManifestAgentReferences(manifest: PiProtocolManifest): void {

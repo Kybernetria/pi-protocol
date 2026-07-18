@@ -1,6 +1,6 @@
 {
   "name": "@kybernetria/pi-protocol",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Pi Protocol — shared in-memory fabric with handler/agent execution, protocol tool, and pi SDK adapter",
   "type": "module",
   "main": "./index.ts",

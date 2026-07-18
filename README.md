@@ -120,6 +120,24 @@ Supported hex fields are `accentHex`, `outputHex`, and `urlHex`. Hex values must
 
 Do not return ANSI/colorized text from handlers or agents. Styling belongs only in the Pi protocol tool renderer/UI adapter layer.
 
+## Agent tool allowlists
+
+Agent tool exposure is declared per agent in `pi.protocol.json`:
+
+```json
+{
+  "agents": {
+    "project_reviewer": {
+      "tools": ["read", "protocol"]
+    }
+  }
+}
+```
+
+`tools` is an exact Pi SDK tool allowlist, covering built-in, extension, and custom tool names. For manifest-backed agents, `sessionOptions.tools` is rejected: the manifest is the sole authority. The adapter verifies that the created session exposes exactly that list. Unknown or unavailable tool names therefore fail session creation rather than being silently ignored.
+
+If `tools` is omitted, protocol-backed SDK agents receive only `protocol`. Use `"tools": []` for an agent with no tools. This is capability hygiene, not an authorization boundary: sensitive protocol provides and handlers must still enforce their own policies.
+
 ## Agent model provider selection
 
 Agent-backed provides normally use standard Pi model selection: explicit SDK `sessionOptions.model`, Pi settings (`defaultProvider` / `defaultModel`), then Pi's usual available-model fallback. If a manifest does not declare a model preference, protocol does not override that behavior.
@@ -176,6 +194,7 @@ File paths are resolved under an explicit `manifestBaseDir`, not the host proces
   "agents": {
     "project_reviewer": {
       "description": "Concise project/task reviewer.",
+      "tools": ["read", "protocol"],
       "systemPrompt": {
         "text": "Review tasks concisely.",
         "mode": "append"

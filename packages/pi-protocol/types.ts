@@ -40,6 +40,11 @@ export type ProtocolAgentInstructionSpec =
 
 export interface ProtocolAgentSpec {
   description?: string;
+  /**
+   * Exact Pi SDK tool allowlist for this agent. When omitted, protocol-backed
+   * SDK agents receive only the `protocol` tool.
+   */
+  tools?: string[];
   systemPrompt?: ProtocolAgentInstructionSpec;
   modelHint?: {
     /** Advisory strength class for UIs/routing layers. */
