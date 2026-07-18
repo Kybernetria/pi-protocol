@@ -30,7 +30,15 @@ When the target is not known, agents can search compact capability cards contain
 { "op": "search", "query": "review TypeScript security" }
 ```
 
-`{ "op": "list" }` returns the full compact index. The legacy `registry`, `describe_node`, `describe_provide`, and `invoke` actions remain available for diagnostics and compatibility. Advanced trace and session controls remain optional under `request`; ordinary calls inherit their invocation context automatically.
+`{ "op": "list" }` returns the full compact index. `list`, `search`, and `describe_node` intentionally stay compact and do not dump registry-wide schemas. When a compact signature is not enough, describe that single provide before invoking it:
+
+```json
+{ "action": "describe_provide", "nodeId": "task_reviewer", "provide": "review_task" }
+```
+
+The result retains the backward-compatible `input` and `output` signature strings and also includes the full declared `inputSchema` and `outputSchema` as structured JSON. This exposes nested shapes, required fields, enums, constraints, defaults, examples, composition rules, and `additionalProperties` for the selected provide only. The intended discovery flow is `list/search -> describe_provide -> invoke`.
+
+The legacy `registry` and `invoke` actions remain available for diagnostics and compatibility. Advanced trace and session controls remain optional under `request`; ordinary calls inherit their invocation context automatically.
 
 The Pi tool projection defaults to four concurrent direct calls per tool instance. Excess calls queue FIFO and can be cancelled while queued. Live results expose `queued`, `running`, `completed`, `failed`, and `aborted` states together with the initiating Pi `toolCallId`. Trace rendering keeps recursive calls grouped by parent span, and runtime/input/output previews are bounded.
 

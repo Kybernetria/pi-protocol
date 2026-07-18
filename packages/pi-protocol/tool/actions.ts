@@ -141,6 +141,8 @@ function summarizeProvideSnapshot(provide: ProvideSnapshot): unknown {
     policy: provide.policy,
     input: summarizeSchema(provide.inputSchema),
     output: summarizeSchema(provide.outputSchema),
+    inputSchema: provide.inputSchema,
+    outputSchema: provide.outputSchema,
     execution: provide.execution.type,
     invocationControls: summarizeInvocationControls(provide),
     invoke: {
