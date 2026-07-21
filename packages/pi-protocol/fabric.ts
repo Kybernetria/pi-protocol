@@ -12,7 +12,11 @@ import type {
   RecorderUnsubscribe,
   RegistrySnapshot,
 } from "./types.ts";
-import { runWithProtocolInvocationContext } from "./context.ts";
+import {
+  hasProtocolAccessRestrictionInCurrentContext,
+  isProtocolTargetAllowedFromCurrentContext,
+  runWithProtocolInvocationContext,
+} from "./context.ts";
 import { executeProvide } from "./execution.ts";
 import { validateRegistration } from "./validation.ts";
 
@@ -20,7 +24,7 @@ import { validateRegistration } from "./validation.ts";
 // can find the same fabric through globalThis.
 const FABRIC_KEY = Symbol.for("pi-protocol.minimal.fabric");
 const FABRIC_VERSION_KEY = Symbol.for("pi-protocol.minimal.fabric.version");
-const FABRIC_VERSION = 2;
+const FABRIC_VERSION = 3;
 const INPUT_PREVIEW_MAX_CHARS = 20_000;
 const OUTPUT_PREVIEW_MAX_CHARS = 40_000;
 
@@ -75,7 +79,9 @@ export function createProtocolFabric(): ProtocolFabric {
     },
 
     registry() {
-      const registeredNodes = [...nodes.values()].map((entry) => cloneProtocolNode(entry.node));
+      const registeredNodes = [...nodes.values()]
+        .map((entry) => cloneProtocolNodeWithAllowedProvides(entry.node))
+        .filter((node) => node.provides.length > 0);
 
       return freezeSnapshot({
         nodes: registeredNodes,
@@ -85,10 +91,13 @@ export function createProtocolFabric(): ProtocolFabric {
 
     describeNode(nodeId) {
       const node = nodes.get(nodeId)?.node;
-      return node ? freezeSnapshot(cloneProtocolNode(node)) : undefined;
+      if (!node) return undefined;
+      const filtered = cloneProtocolNodeWithAllowedProvides(node);
+      return filtered.provides.length > 0 ? freezeSnapshot(filtered) : undefined;
     },
 
     describeProvide(nodeId, provideName) {
+      if (!isProtocolTargetAllowedFromCurrentContext(nodeId, provideName)) return undefined;
       const node = nodes.get(nodeId)?.node;
       const provide = node?.provides.find((item) => item.name === provideName);
       if (!node || !provide) return undefined;
@@ -107,6 +116,21 @@ export function createProtocolFabric(): ProtocolFabric {
       await recordProvenance(provenanceRecorder, provenanceSubscribers, { ...provenance, status: "started", ...inputPreview });
 
       const durationMs = () => Date.now() - startedAt;
+      if (!isProtocolTargetAllowedFromCurrentContext(request.nodeId, request.provide)) {
+        const error = {
+          code: "POLICY_DENIED" as const,
+          message: `Protocol access denied for target ${request.nodeId}.${request.provide}`,
+        };
+        await recordProvenance(provenanceRecorder, provenanceSubscribers, {
+          ...provenance,
+          status: "failed",
+          durationMs: durationMs(),
+          ...inputPreview,
+          error,
+        });
+        return { ok: false, error };
+      }
+
       const registered = nodes.get(request.nodeId);
       if (!registered) {
         const error = { code: "NOT_FOUND" as const, message: `Node not found: ${request.nodeId}` };
@@ -148,8 +172,13 @@ export function createProtocolFabric(): ProtocolFabric {
         return { ok: false, error };
       }
 
-      const result = await runWithProtocolInvocationContext(request, provenance, () =>
-        executeProvide({
+      const localProtocolAccess = provide.execution.type === "agent"
+        ? registered.node.agents?.[provide.execution.agent]?.protocolAccess
+        : undefined;
+      const result = await runWithProtocolInvocationContext(
+        request,
+        provenance,
+        () => executeProvide({
           request,
           provenance,
           provide,
@@ -157,6 +186,7 @@ export function createProtocolFabric(): ProtocolFabric {
           agentExecutors: registered.agentExecutors,
           emitRuntimeEvent: createRuntimeEventEmitter(runtimeEventRecorder, runtimeEventSubscribers),
         }),
+        localProtocolAccess,
       );
       await recordProvenance(provenanceRecorder, provenanceSubscribers, {
         ...provenance,
@@ -293,8 +323,18 @@ function stringifyPreviewValue(value: unknown): string {
 function cloneProtocolNode(node: ProtocolNode): ProtocolNode {
   return {
     ...node,
+    ...(node.agents ? { agents: cloneJsonLike(node.agents) } : {}),
     provides: node.provides.map(cloneProvide),
   };
+}
+
+function cloneProtocolNodeWithAllowedProvides(node: ProtocolNode): ProtocolNode {
+  const cloned = cloneProtocolNode(node);
+  if (hasProtocolAccessRestrictionInCurrentContext()) delete cloned.agents;
+  cloned.provides = cloned.provides.filter((provide) =>
+    isProtocolTargetAllowedFromCurrentContext(cloned.nodeId, provide.name)
+  );
+  return cloned;
 }
 
 function cloneProvide<T extends ProtocolNode["provides"][number]>(provide: T): T {

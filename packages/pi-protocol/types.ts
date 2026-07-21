@@ -38,8 +38,17 @@ export type ProtocolAgentInstructionSpec =
   | { /** Inline agent instructions. */ text: string; file?: never; mode?: "append" | "replace" }
   | { /** Prompt file, resolved relative to an explicit manifestBaseDir. */ file: string; text?: never; mode?: "append" | "replace" };
 
+export interface ProtocolAccessPolicySpec {
+  /** Exact capability ids (node.provide) this agent may access. When present, nonmatches are denied. */
+  allowedTargets?: string[];
+  /** Exact capability ids (node.provide) this agent may not access. Deny rules take precedence. */
+  deniedTargets?: string[];
+}
+
 export interface ProtocolAgentSpec {
   description?: string;
+  /** Caller-side discovery and invocation policy for this agent's protocol calls. */
+  protocolAccess?: ProtocolAccessPolicySpec;
   /**
    * Exact Pi SDK tool allowlist for this agent. When omitted, protocol-backed
    * SDK agents receive only the `protocol` tool.

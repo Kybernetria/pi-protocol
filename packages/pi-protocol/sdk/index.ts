@@ -1,3 +1,4 @@
+import { getCurrentProtocolInvocationContext } from "../context.ts";
 import type {
   CurrentProtocolInvocationContext,
   ProtocolAgentExecutor,
@@ -212,6 +213,10 @@ function toCurrentProtocolInvocationContext(
   context: ProtocolInvocationContext | undefined,
 ): CurrentProtocolInvocationContext | undefined {
   if (!context?.traceId || !context.spanId) return undefined;
+  const trustedCurrent = getCurrentProtocolInvocationContext();
+  if (trustedCurrent?.traceId === context.traceId && trustedCurrent.spanId === context.spanId) {
+    return trustedCurrent;
+  }
   return {
     nodeId: context.nodeId,
     provide: context.provide,

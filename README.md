@@ -136,7 +136,30 @@ Agent tool exposure is declared per agent in `pi.protocol.json`:
 
 `tools` is an exact Pi SDK tool allowlist, covering built-in, extension, and custom tool names. For manifest-backed agents, `sessionOptions.tools` is rejected: the manifest is the sole authority. The adapter verifies that the created session exposes exactly that list. Unknown or unavailable tool names therefore fail session creation rather than being silently ignored.
 
-If `tools` is omitted, protocol-backed SDK agents receive only `protocol`. Use `"tools": []` for an agent with no tools. This is capability hygiene, not an authorization boundary: sensitive protocol provides and handlers must still enforce their own policies.
+If `tools` is omitted, protocol-backed SDK agents receive only `protocol`. Use `"tools": []` for an agent with no tools.
+
+## Caller-side protocol access
+
+Manifest agents can restrict which protocol capabilities their `protocol` tool and nested fabric calls may discover or invoke:
+
+```json
+{
+  "agents": {
+    "implementation_worker": {
+      "tools": ["read", "edit", "protocol"],
+      "protocolAccess": {
+        "allowedTargets": ["pi_dev.scout"]
+      }
+    }
+  }
+}
+```
+
+Targets are exact lowercase `node.provide` ids; wildcards are not supported. `allowedTargets` is an explicit allowlist, so nonmatches are denied. `deniedTargets` denies listed targets, and deny wins when both lists match. Omitting `protocolAccess` preserves unrestricted behavior. An empty `allowedTargets` list denies all protocol capabilities.
+
+This is caller-side policy and is separate from a target provide's `policy.blacklistedCallers`. It filters `list`, legacy flat list/`registry`, `search`, `describe_node`, and `describe_provide`; disallowed nodes and provides appear not found. Every call form is also authorized inside the fabric and returns the stable `POLICY_DENIED` error `Protocol access denied for target node.provide`. Setting `request.callerNodeId`, using legacy `action: "invoke"`, or supplying conflicting `target` and `request` fields cannot broaden access.
+
+The SDK manifest adapter binds the policy from the registered agent definition to an out-of-band runtime grant. The grant is not part of the model-facing tool schema or `InvokeRequest`, and inherited grants are intersected through nested calls so a child cannot broaden its parent. The trust boundary is the in-process extension host: trusted host code can make an unrestricted root fabric call outside an agent context, while model/tool arguments and calls made within a restricted agent context cannot forge or remove the grant. Target-side authorization remains appropriate for protecting a provide from other unrestricted host callers.
 
 ## Agent model provider selection
 
@@ -195,6 +218,9 @@ File paths are resolved under an explicit `manifestBaseDir`, not the host proces
     "project_reviewer": {
       "description": "Concise project/task reviewer.",
       "tools": ["read", "protocol"],
+      "protocolAccess": {
+        "allowedTargets": ["pi_dev.scout"]
+      },
       "systemPrompt": {
         "text": "Review tasks concisely.",
         "mode": "append"

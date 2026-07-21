@@ -9,6 +9,7 @@ import type {
   ProtocolNode,
   ProvideSpec,
 } from "./types.ts";
+import { validateProtocolAccessPolicy } from "./validation.ts";
 
 /** Options for loading a manifest whose agent prompts may reference files. */
 export interface ManifestResolutionOptions {
@@ -37,6 +38,7 @@ export function resolveManifestSystemPrompts(
 ): PiProtocolManifest {
   const agents = Object.fromEntries(Object.entries(manifest.agents ?? {}).map(([name, agent]) => {
     validateAgentTools(manifest.nodeId, name, agent.tools);
+    validateProtocolAccessPolicy(manifest.nodeId, name, agent.protocolAccess);
     return [
       name,
       agent.systemPrompt

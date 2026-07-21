@@ -19,6 +19,7 @@ export type {
   InvocationStatus,
   JsonSchemaLite,
   PiProtocolManifest,
+  ProtocolAccessPolicySpec,
   ProtocolAgentExecutor,
   ProtocolAgentInstructionSpec,
   ProtocolAgentSpec,
