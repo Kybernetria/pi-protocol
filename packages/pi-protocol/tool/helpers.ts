@@ -21,13 +21,26 @@ export function createTextComponent(text: string, previous?: unknown): MutableTe
   }
 
   let currentText = text;
+  let cachedWidth: number | undefined;
+  let cachedLines: string[] | undefined;
   return {
     render(width) {
-      return currentText.split("\n").flatMap((line) => wrapLine(line, Math.max(1, width)));
+      const normalizedWidth = Math.max(1, width);
+      if (cachedWidth === normalizedWidth && cachedLines) return cachedLines;
+
+      cachedWidth = normalizedWidth;
+      cachedLines = currentText.split("\n").flatMap((line) => wrapLine(line, normalizedWidth));
+      return cachedLines;
     },
-    invalidate() {},
+    invalidate() {
+      cachedWidth = undefined;
+      cachedLines = undefined;
+    },
     setText(nextText) {
+      if (nextText === currentText) return;
       currentText = nextText;
+      cachedWidth = undefined;
+      cachedLines = undefined;
     },
   };
 }
@@ -56,7 +69,18 @@ function wrapLine(line: string, width: number): string[] {
     const { head, tail } = splitVisible(remaining, available);
     const activeStyle = activeSgrAtEnd(head);
     wrapped.push(ensureFitsWidth(prefix + (activeStyle ? `${head.trimEnd()}\x1b[39m` : head.trimEnd()), width));
-    remaining = (activeStyle ? activeStyle + tail : tail).trimStart();
+
+    // Trim the tail before restoring ANSI state. If a styled line breaks on
+    // whitespace immediately before a long URL/token, prefixing the style
+    // first makes trimStart() ineffective and can leave `remaining` unchanged
+    // forever. That caused resumed transcripts to spin and grow until OOM.
+    const trimmedTail = tail.trimStart();
+    if (trimmedTail.length >= remaining.length) {
+      // Defensive progress guarantee for malformed/unsupported escape input.
+      remaining = remaining.slice(Math.max(1, head.length)).trimStart();
+    } else {
+      remaining = activeStyle && trimmedTail ? activeStyle + trimmedTail : trimmedTail;
+    }
   }
 
   wrapped.push(ensureFitsWidth((wrapped.length > 0 ? continuationIndent : "") + remaining, width));
@@ -122,8 +146,17 @@ export function formatOneLinePreview(preview: string, truncated: boolean | undef
   return truncated && !clipped.endsWith("…") ? `${clipped}…` : clipped;
 }
 
-export function indentPreviewLines(preview: string, indent: string, truncated: boolean | undefined): string[] {
-  const lines = preview.split("\n").map((line) => `${indent}${line}`);
-  if (truncated) lines.push(`${indent}…`);
+export function indentPreviewLines(
+  preview: string,
+  indent: string,
+  truncated: boolean | undefined,
+  limits: { maxChars?: number; maxLines?: number } = {},
+): string[] {
+  const maxChars = limits.maxChars ?? 2_000;
+  const maxLines = limits.maxLines ?? 32;
+  const clipped = preview.slice(0, maxChars);
+  const sourceLines = clipped.split("\n");
+  const lines = sourceLines.slice(0, maxLines).map((line) => `${indent}${line}`);
+  if (truncated || preview.length > clipped.length || sourceLines.length > maxLines) lines.push(`${indent}…`);
   return lines;
 }
