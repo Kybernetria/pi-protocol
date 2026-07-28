@@ -1,4 +1,4 @@
-import type { RegistrySnapshot } from "../index.ts";
+import type { RegistrySnapshot } from "../types.ts";
 import type { ProtocolTraceDetails } from "./trace.ts";
 
 export function isInvokeToolResult(

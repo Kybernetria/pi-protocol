@@ -10,12 +10,18 @@
   },
   "exports": {
     ".": "./index.ts",
+    "./contract": "./contract/index.ts",
+    "./core": "./core/index.ts",
+    "./pi": "./tool/index.ts",
+    "./pi/agents": "./sdk/agent-session.ts",
     "./tool": "./tool/index.ts",
     "./sdk": "./sdk/index.ts",
     "./sdk/agent-session": "./sdk/agent-session.ts"
   },
   "files": [
     "*.ts",
+    "contract/*",
+    "core/*.ts",
     "tool/*.ts",
     "sdk/*.ts",
     "prompts/*.md",
@@ -50,5 +56,8 @@
     "@mariozechner/pi-ai": {
       "optional": true
     }
+  },
+  "dependencies": {
+    "ajv": "8.18.0"
   }
 }

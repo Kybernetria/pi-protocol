@@ -1,14 +1,14 @@
 import { readFileSync } from "node:fs";
 
-import {
-  ensureProtocolFabric,
-  resolveManifestSystemPrompts,
-  runWithProtocolInvocationContextValue,
-  type CurrentProtocolInvocationContext,
-  type PiProtocolManifest,
-  type ProtocolAgentExecutor,
-  type ProtocolAgentSpec,
-} from "../index.ts";
+import { runWithProtocolInvocationContextValue } from "../context.ts";
+import type { CurrentProtocolInvocationContext } from "../context.ts";
+import { ensureProtocolFabric } from "../fabric.ts";
+import { resolveManifestSystemPrompts } from "../manifest.ts";
+import type {
+  PiProtocolManifest,
+  ProtocolAgentExecutor,
+  ProtocolAgentSpec,
+} from "../types.ts";
 import { createProtocolTool, DEFAULT_PROTOCOL_TOOL_NAME } from "../tool/index.ts";
 import {
   createPiSdkAgentExecutor,

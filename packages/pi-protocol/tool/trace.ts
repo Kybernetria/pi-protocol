@@ -1,11 +1,11 @@
-import {
-  createChildInvokeRequest,
-  type InvocationProvenanceEvent,
-  type InvokeRequest,
-  type ProtocolFabric,
-  type ProtocolRuntimeEvent,
-  type RegistrySnapshot,
-} from "../index.ts";
+import { createChildInvokeRequest } from "../context.ts";
+import type {
+  InvocationProvenanceEvent,
+  InvokeRequest,
+  ProtocolFabric,
+  ProtocolRuntimeEvent,
+  RegistrySnapshot,
+} from "../types.ts";
 import { createProtocolToolId } from "./helpers.ts";
 import type { ProtocolToolExecutionResult, ProtocolToolUpdateCallback } from "./types.ts";
 

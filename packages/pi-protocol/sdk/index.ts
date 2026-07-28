@@ -1,10 +1,10 @@
 import { getCurrentProtocolInvocationContext } from "../context.ts";
+import type { CurrentProtocolInvocationContext } from "../context.ts";
 import type {
-  CurrentProtocolInvocationContext,
   ProtocolAgentExecutor,
   ProtocolInvocationContext,
   ProtocolRuntimeEvent,
-} from "../index.ts";
+} from "../types.ts";
 
 const PI_SDK_AGENT_SESSION_CACHE_KEY = Symbol.for("pi-protocol.pi-sdk.agent-session-cache");
 

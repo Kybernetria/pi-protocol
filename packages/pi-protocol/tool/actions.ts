@@ -1,4 +1,5 @@
-import { createChildInvokeRequest, type InvokeRequest, type ProtocolFabric, type ProtocolNode, type ProvideSnapshot, type ProvideSpec } from "../index.ts";
+import { createChildInvokeRequest } from "../context.ts";
+import type { InvokeRequest, ProtocolFabric, ProtocolNode, ProvideSnapshot, ProvideSpec } from "../types.ts";
 import { requireText } from "./helpers.ts";
 import { invokeWithTraceUpdates } from "./trace.ts";
 import type { ProtocolInvocationScheduler, ProtocolToolInput, ProtocolToolUpdateCallback } from "./types.ts";

@@ -1,4 +1,4 @@
-import type { InvokeRequest } from "../index.ts";
+import type { InvokeRequest } from "../types.ts";
 
 export const DEFAULT_PROTOCOL_TOOL_NAME = "protocol";
 

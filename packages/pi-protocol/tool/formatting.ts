@@ -4,7 +4,7 @@ import type {
   ProtocolDisplaySpec,
   ProtocolRuntimeEvent,
   RegistrySnapshot,
-} from "../index.ts";
+} from "../types.ts";
 import { formatTarget, formatValue, indentPreviewLines } from "./helpers.ts";
 import { isInvokeToolResult, isRegistryToolResult, isSuccessfulInvokeToolResult, isTextObject } from "./guards.ts";
 import type { ProtocolTraceDetails } from "./trace.ts";

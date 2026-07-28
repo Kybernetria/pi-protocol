@@ -1,0 +1,28 @@
+{
+  "protocolVersion": "0.2.0",
+  "nodeId": "fixture_node",
+  "purpose": "Canonical contract fixture.",
+  "tags": ["fixture"],
+  "provides": [
+    {
+      "name": "echo",
+      "description": "Return validated text.",
+      "tags": ["fixture"],
+      "inputSchema": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": { "type": "string" }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": { "type": "string" }
+        }
+      },
+      "execution": { "type": "handler", "handler": "echo" }
+    }
+  ]
+}

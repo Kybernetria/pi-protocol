@@ -1,10 +1,8 @@
-export {
-  createChildInvokeRequest,
-  getCurrentProtocolInvocationContext,
-  invokeFromCurrentContext,
-  runWithProtocolInvocationContextValue,
-} from "./context.ts";
-export { createProtocolFabric, ensureProtocolFabric } from "./fabric.ts";
+export * from "./core/index.ts";
+
+// v0.2 compatibility surface. New packages should import canonical admission
+// from `@kybernetria/pi-protocol/contract` and keep private agent profiles out
+// of public manifests.
 export {
   createProtocolNamespace,
   parseProtocolManifest,
@@ -20,52 +18,41 @@ export type {
   RegisterProtocolManifestInput,
 } from "./manifest.ts";
 
-export type { CurrentProtocolInvocationContext } from "./context.ts";
-
+export {
+  CANONICAL_MANIFEST_SCHEMA_ID,
+  CANONICAL_MANIFEST_SCHEMA_VERSION,
+  PROTOCOL_CONTRACT_LIMITS,
+  ProtocolContractError,
+  STANDARD_EFFECTS,
+  canonicalJson,
+  fingerprintProtocolManifest,
+  normalizeJsonValue,
+  parseProtocolDefinition,
+  resolveContractLimits,
+  validateCanonicalProtocolManifest,
+} from "./contract/index.ts";
 export type {
-  ExecutionSpec,
-  InvokeErrorCode,
-  InvokeRequest,
-  InvokeResult,
-  InvocationProvenanceEvent,
-  InvocationStatus,
-  JsonSchemaLite,
-  PiProtocolManifest,
-  ProtocolAccessPolicySpec,
-  ProtocolAgentExecutor,
-  ProtocolAgentInstructionSpec,
-  ProtocolAgentSpec,
-  ProtocolDisplaySpec,
-  ProtocolSettingSpec,
-  ProtocolFabric,
-  ProtocolHandler,
-  ProtocolInvocationContext,
-  ProtocolNode,
-  ProtocolRuntimeEvent,
-  ProtocolRuntimeEventEmitter,
-  ProtocolRuntimeEventRecorder,
-  ProtocolUiSpec,
-  ProvenanceRecorder,
-  ProvidePolicySpec,
-  ProvideSnapshot,
-  ProvideSpec,
-  RegisterNodeInput,
-  RecorderUnsubscribe,
-  RegistrySnapshot,
-} from "./types.ts";
-
-// Re-export tool and sdk for convenience (also available via ./tool and ./sdk entry points)
-export { createProtocolTool, registerProtocolTool, handleProtocolToolInput } from "./tool/index.ts";
-export type {
-  ProtocolToolAction,
-  ProtocolToolExecutionResult,
-  ProtocolToolInput,
-  ProtocolToolLike,
-  ProtocolToolOptions,
-  ProtocolToolRegistrationTarget,
-  ProtocolToolResultContent,
-  ProtocolToolThemeLike,
-  ProtocolToolUpdateCallback,
-} from "./tool/index.ts";
-
-export { createPiSdkAgentExecutor } from "./sdk/index.ts";
+  CompatibilityDiagnostic,
+  CompatibilityDiagnosticCode,
+  CompiledContractValidator,
+  CompiledProvideContract,
+  ContractIssue,
+  ContractValidationResult,
+  JsonPrimitive,
+  JsonSchemaScalarType,
+  JsonValue,
+  LegacyV02Compatibility,
+  NullableJsonSchemaType,
+  ParseProtocolManifestOptions,
+  ProtocolContractErrorCode,
+  ProtocolContractLimitOverrides,
+  ProtocolContractLimits,
+  ProtocolDefinition,
+  ProtocolJsonSchema,
+  ProtocolLifecycle,
+  ProtocolManifestV1,
+  ProtocolNodeContract,
+  ProtocolProvideContract,
+  ProvideTraits,
+  StandardEffect,
+} from "./contract/index.ts";

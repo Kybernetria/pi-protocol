@@ -1,5 +1,5 @@
 import { Type } from "@mariozechner/pi-ai";
-import type { ProtocolFabric } from "../index.ts";
+import type { ProtocolFabric } from "../types.ts";
 import { handleProtocolToolInput } from "./actions.ts";
 import {
   formatProtocolToolCallDisplay,
