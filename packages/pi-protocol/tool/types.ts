@@ -6,9 +6,20 @@ export type ProtocolToolAction = "list" | "search" | "call" | "registry" | "desc
 
 export interface ProtocolToolInput {
   /** Compact API: omit op/action to call target directly. Legacy action remains supported. */
-  op?: "list" | "search" | "call";
+  op?: "list" | "search" | "call" | "describe_node" | "describe_provide";
   action?: ProtocolToolAction;
   query?: string;
+  /** Legacy flat capability listing. Default list output is node-first. */
+  expandProvides?: boolean;
+  /** Bounded search result count (default 12, maximum 50). */
+  limit?: number;
+  /** Optional search filters. */
+  filters?: {
+    nodeId?: string;
+    tags?: string[];
+    execution?: "handler" | "agent";
+    effects?: string[];
+  };
   target?: string;
   nodeId?: string;
   provide?: string;

@@ -1,10 +1,13 @@
 {
   "name": "@kybernetria/pi-protocol",
-  "version": "1.0.2",
+  "version": "1.0.10",
   "description": "Pi Protocol — shared in-memory fabric with handler/agent execution, protocol tool, and pi SDK adapter",
   "type": "module",
   "main": "./index.ts",
   "types": "./index.ts",
+  "bin": {
+    "pi-protocol-link-runtime": "scripts/link-shared-runtime.mjs"
+  },
   "exports": {
     ".": "./index.ts",
     "./tool": "./tool/index.ts",
@@ -16,6 +19,7 @@
     "tool/*.ts",
     "sdk/*.ts",
     "prompts/*.md",
+    "scripts/*.mjs",
     "LICENSE"
   ],
   "pi": {

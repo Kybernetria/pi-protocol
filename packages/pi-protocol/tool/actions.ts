@@ -14,10 +14,15 @@ export async function handleProtocolToolInput(
   const action = input.op ?? input.action ?? (input.target ? "call" : "list");
   switch (action) {
     case "list":
-      return compactCapabilityIndex(fabric);
+      return compactNodeCatalog(fabric, input.expandProvides === true);
 
     case "search":
-      return searchCapabilities(fabric, requireText(input.query, "protocol search requires query"));
+      return searchCapabilities(
+        fabric,
+        requireText(input.query, "protocol search requires query"),
+        input.limit,
+        input.filters,
+      );
 
     case "registry":
       return { ok: true, action: "registry", registry: fabric.registry() };
@@ -60,29 +65,80 @@ export async function handleProtocolToolInput(
   }
 }
 
-function compactCapabilityIndex(fabric: ProtocolFabric): unknown {
+function compactNodeCatalog(fabric: ProtocolFabric, expandProvides: boolean): unknown {
+  const registry = fabric.registry();
+  if (expandProvides) {
+    return {
+      ok: true,
+      action: "list",
+      legacy: true,
+      capabilities: registry.provides.map((provide) => ({
+        target: provide.globalId,
+        description: provide.description,
+        input: summarizeSchema(provide.inputSchema),
+      })),
+      usage: { target: "node.provide", input: "matching input" },
+    };
+  }
   return {
     ok: true,
     action: "list",
-    capabilities: fabric.registry().provides.map((provide) => ({
-      target: provide.globalId,
-      description: provide.description,
-      input: summarizeSchema(provide.inputSchema),
+    nodes: registry.nodes.map((node) => ({
+      nodeId: node.nodeId,
+      purpose: node.purpose,
+      packageId: node.packageId ?? null,
+      version: node.version ?? null,
+      tags: node.tags ?? [],
+      provideCount: node.provides.length,
     })),
-    usage: { target: "node.provide", input: "matching input" },
+    discovery: {
+      expandNode: { action: "describe_node", nodeId: "..." },
+      search: { op: "search", query: "...", limit: 12 },
+      invokeKnown: { target: "node.provide", input: "matching input" },
+      inspectExactContractOnlyIfNeeded: { action: "describe_provide", nodeId: "...", provide: "..." },
+      legacyFlatList: { op: "list", expandProvides: true },
+    },
   };
 }
 
-function searchCapabilities(fabric: ProtocolFabric, query: string): unknown {
+function compactProvideCard(provide: ProvideSnapshot): unknown {
+  return {
+    target: provide.globalId,
+    description: provide.description,
+    input: summarizeSchema(provide.inputSchema),
+    execution: provide.execution.type,
+    effects: provide.effects ?? [],
+  };
+}
+
+function searchCapabilities(
+  fabric: ProtocolFabric,
+  query: string,
+  requestedLimit?: number,
+  filters?: ProtocolToolInput["filters"],
+): unknown {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const capabilities = fabric.registry().provides
-    .map((provide) => ({ target: provide.globalId, description: provide.description, input: summarizeSchema(provide.inputSchema), tags: provide.tags ?? [] }))
-    .map((card) => ({ card, score: terms.reduce((score, term) => score + (`${card.target} ${card.description} ${card.tags.join(" ")}`.toLowerCase().includes(term) ? 1 : 0), 0) }))
-    .filter(({ score }) => score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 12)
-    .map(({ card: { tags: _tags, ...card } }) => card);
-  return { ok: true, action: "search", query, capabilities };
+  const limit = Number.isInteger(requestedLimit) ? Math.max(1, Math.min(50, requestedLimit!)) : 12;
+  const matches = fabric.registry().provides
+    .filter((provide) => !filters?.nodeId || provide.nodeId === filters.nodeId)
+    .filter((provide) => !filters?.execution || provide.execution.type === filters.execution)
+    .filter((provide) => !filters?.tags?.length || filters.tags.every((tag) => provide.tags?.includes(tag)))
+    .filter((provide) => !filters?.effects?.length || filters.effects.every((effect) => provide.effects?.includes(effect)))
+    .map((provide) => ({
+      provide,
+      score: terms.reduce((score, term) => score + (`${provide.globalId} ${provide.description} ${(provide.tags ?? []).join(" ")} ${(provide.effects ?? []).join(" ")}`.toLowerCase().includes(term) ? 1 : 0), 0),
+    }))
+    .filter(({ score }) => terms.length === 0 || score > 0)
+    .sort((a, b) => b.score - a.score || (a.provide.globalId < b.provide.globalId ? -1 : a.provide.globalId > b.provide.globalId ? 1 : 0));
+  return {
+    ok: true,
+    action: "search",
+    query,
+    limit,
+    totalMatches: matches.length,
+    capabilities: matches.slice(0, limit).map(({ provide }) => compactProvideCard(provide)),
+    next: "invoke directly when the compact input signature is sufficient; describe_provide only for exact schema details",
+  };
 }
 
 function emitQueued(onUpdate: ProtocolToolUpdateCallback | undefined, _fabric: ProtocolFabric, request: InvokeRequest, toolCallId?: string): void {
@@ -108,26 +164,23 @@ function summarizeNode(node: ProtocolNode): unknown {
   return {
     nodeId: node.nodeId,
     purpose: node.purpose,
-    packageId: node.packageId,
-    version: node.version,
-    provides: node.provides.map(summarizeProvide),
-    agents: node.agents
-      ? Object.fromEntries(
-          Object.entries(node.agents).map(([name, agent]) => [name, { description: agent.description }]),
-        )
-      : undefined,
-    invocationControls: summarizeInvocationControls(),
-    next: "describe_provide -> invoke",
+    packageId: node.packageId ?? null,
+    version: node.version ?? null,
+    tags: node.tags ?? [],
+    provideCount: node.provides.length,
+    provides: node.provides.map((provide) => summarizeProvide(node.nodeId, provide)),
+    next: "invoke directly when the compact input signature is sufficient; describe_provide only for exact schema details",
   };
 }
 
-function summarizeProvide(provide: ProvideSpec): unknown {
+function summarizeProvide(nodeId: string, provide: ProvideSpec): unknown {
   return {
+    target: `${nodeId}.${provide.name}`,
     name: provide.name,
     description: provide.description,
     input: summarizeSchema(provide.inputSchema),
-    output: summarizeSchema(provide.outputSchema),
     execution: provide.execution.type,
+    effects: provide.effects ?? [],
   };
 }
 
@@ -137,13 +190,17 @@ function summarizeProvideSnapshot(provide: ProvideSnapshot): unknown {
     globalId: provide.globalId,
     name: provide.name,
     description: provide.description,
+    version: provide.version,
+    tags: provide.tags,
     effects: provide.effects,
     policy: provide.policy,
+    display: provide.display,
     input: summarizeSchema(provide.inputSchema),
     output: summarizeSchema(provide.outputSchema),
     inputSchema: provide.inputSchema,
     outputSchema: provide.outputSchema,
     execution: provide.execution.type,
+    executionSpec: provide.execution,
     invocationControls: summarizeInvocationControls(provide),
     invoke: {
       action: "invoke",

@@ -30,19 +30,35 @@ export function createProtocolTool(fabric: ProtocolFabric, options: ProtocolTool
     label: options.label ?? "Protocol",
     description:
       options.description ??
-      "Call a protocol capability by target, or search the compact capability index.",
-    promptSnippet: `${toolName}: call target capabilities or search the capability index`,
+      "Call a protocol capability by target, or lazily discover capabilities by node.",
+    promptSnippet: `${toolName}: call targets or discover nodes, then provides`,
     promptGuidelines: [
       `Call a known capability with { target: "node.provide", input }. The fabric selects its handler or agent automatically.`,
-      `Use { op: "search", query } only when no known capability clearly fits; use { op: "list" } for the compact index.`,
+      `Use { op: "list" } for compact node summaries, then { op: "describe_node", nodeId } to expand one node.`,
+      `Use { op: "search", query } only when no known capability clearly fits. Invoke directly from a compact card when its input signature is sufficient.`,
+      `Use { op: "describe_provide", nodeId, provide } only when exact schema fields, constraints, or enums are needed.`,
       `Trace, caller, span, cancellation, and ephemeral session defaults are automatic. Put advanced controls in request only when needed.`,
       `Avoid accidental unbounded self-recursion; intentional recursion needs an explicit stop condition.`,
       `To continue an agent conversation, reuse request.session.id with request.session.mode = "continue"; use mode "end" to dispose it.`,
     ],
     parameters: Type.Object({
-      op: Type.Optional(Type.Union([Type.Literal("list"), Type.Literal("search"), Type.Literal("call")])),
+      op: Type.Optional(Type.Union([
+        Type.Literal("list"),
+        Type.Literal("search"),
+        Type.Literal("describe_node"),
+        Type.Literal("describe_provide"),
+        Type.Literal("call"),
+      ])),
       target: Type.Optional(Type.String({ description: "Capability id: node.provide" })),
       query: Type.Optional(Type.String()),
+      expandProvides: Type.Optional(Type.Boolean({ description: "Legacy: include every provide in list output" })),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
+      filters: Type.Optional(Type.Object({
+        nodeId: Type.Optional(Type.String()),
+        tags: Type.Optional(Type.Array(Type.String())),
+        execution: Type.Optional(Type.Union([Type.Literal("handler"), Type.Literal("agent")])),
+        effects: Type.Optional(Type.Array(Type.String())),
+      })),
       input: Type.Optional(Type.Any()),
       action: Type.Optional(Type.Union([
         Type.Literal("list"),

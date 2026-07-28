@@ -5,8 +5,20 @@ export {
   runWithProtocolInvocationContextValue,
 } from "./context.ts";
 export { createProtocolFabric, ensureProtocolFabric } from "./fabric.ts";
-export { protocolNodeFromManifest, registerProtocolManifest, resolveManifestSystemPrompts } from "./manifest.ts";
-export type { ManifestResolutionOptions, RegisterProtocolManifestInput } from "./manifest.ts";
+export {
+  createProtocolNamespace,
+  parseProtocolManifest,
+  protocolNodeFromManifest,
+  registerProtocolManifest,
+  resolveManifestSystemPrompts,
+  validateProtocolManifest,
+} from "./manifest.ts";
+export type {
+  ManifestResolutionOptions,
+  ProtocolNamespace,
+  ProtocolTarget,
+  RegisterProtocolManifestInput,
+} from "./manifest.ts";
 
 export type { CurrentProtocolInvocationContext } from "./context.ts";
 

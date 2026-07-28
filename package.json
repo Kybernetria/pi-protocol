@@ -16,9 +16,12 @@
     "test:compact-protocol-tool": "tsx scripts/test-compact-protocol-tool.ts",
     "test:protocol-renderer-bounds": "tsx scripts/test-protocol-renderer-bounds.ts",
     "test:file-backed-system-prompts": "tsx scripts/test-file-backed-system-prompts.ts",
+    "test:link-shared-runtime": "tsx scripts/test-link-shared-runtime.ts",
     "test:protocol-access": "tsx scripts/test-protocol-access.ts",
+    "test:manifest-namespace": "tsx scripts/test-manifest-namespace.ts",
+    "audit:extensions": "tsx scripts/audit-extension-manifests.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:protocol-agent-p2p-context && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:real-agent-runtime && npm run test:minimal-pi-tool-projection && npm run test:compact-protocol-tool && npm run test:protocol-renderer-bounds && npm run test:file-backed-system-prompts && npm run test:protocol-access"
+    "test": "npm run typecheck && npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:protocol-agent-p2p-context && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:real-agent-runtime && npm run test:minimal-pi-tool-projection && npm run test:compact-protocol-tool && npm run test:protocol-renderer-bounds && npm run test:file-backed-system-prompts && npm run test:link-shared-runtime && npm run test:protocol-access && npm run test:manifest-namespace"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.75.4",

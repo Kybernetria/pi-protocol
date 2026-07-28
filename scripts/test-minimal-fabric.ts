@@ -223,7 +223,7 @@ policyFabric.setProvenanceRecorder((event) => {
 });
 policyFabric.register({
   node: protocolNodeFromManifest({
-    protocolVersion: "0.1.0",
+    protocolVersion: "0.2.0",
     nodeId: "policy_target",
     purpose: "Verify provide policy preservation and blacklist enforcement.",
     provides: [

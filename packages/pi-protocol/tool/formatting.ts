@@ -554,7 +554,7 @@ function formatRegistrySummary(registry: RegistrySnapshot): string {
   lines.push(
     "",
     "invoke controls: use request.session { id, mode: ephemeral|continue|end } for protocol session continuation",
-    "next: describe_node -> describe_provide -> invoke",
+    "next: describe_node -> invoke (describe_provide only when exact schema details are needed)",
   );
   return lines.join("\n");
 }

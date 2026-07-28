@@ -24,23 +24,52 @@ Agents normally call a known capability directly. They do not need to know wheth
 { "target": "task_reviewer.review_task", "input": "Review this change" }
 ```
 
-When the target is not known, agents can search compact capability cards containing only the stable target, description, and input signature:
+When the target is not known, start with the compact node catalog, then expand only a relevant node:
 
 ```json
-{ "op": "search", "query": "review TypeScript security" }
+{ "op": "list" }
+{ "op": "describe_node", "nodeId": "task_reviewer" }
 ```
 
-`{ "op": "list" }` returns the full compact index. `list`, `search`, and `describe_node` intentionally stay compact and do not dump registry-wide schemas. When a compact signature is not enough, describe that single provide before invoking it:
+The catalog includes node identity, purpose, package/version, tags, and provide count. Node expansion returns compact provide cards (target, description, input signature, execution type, and effects), never full schemas. A bounded global search is also available:
 
 ```json
-{ "action": "describe_provide", "nodeId": "task_reviewer", "provide": "review_task" }
+{ "op": "search", "query": "review TypeScript security", "limit": 12 }
 ```
 
-The result retains the backward-compatible `input` and `output` signature strings and also includes the full declared `inputSchema` and `outputSchema` as structured JSON. This exposes nested shapes, required fields, enums, constraints, defaults, examples, composition rules, and `additionalProperties` for the selected provide only. The intended discovery flow is `list/search -> describe_provide -> invoke`.
+Invoke directly from a compact card when its input signature is sufficient. Only when exact fields, constraints, or enums are needed, describe that single provide before invoking it:
 
-The legacy `registry` and `invoke` actions remain available for diagnostics and compatibility. Advanced trace and session controls remain optional under `request`; ordinary calls inherit their invocation context automatically.
+```json
+{ "op": "describe_provide", "nodeId": "task_reviewer", "provide": "review_task" }
+```
+
+The result retains the backward-compatible `input` and `output` signature strings and also includes the full declared `inputSchema` and `outputSchema` as structured JSON. This exposes nested shapes, required fields, enums, constraints, defaults, examples, composition rules, and `additionalProperties` for the selected provide only. The normal discovery flow is `list -> describe_node -> invoke`, with search as a bounded shortcut. `describe_provide` is an optional expansion for exact contract details, not a routine prerequisite to invocation.
+
+For legacy clients, `{ "op": "list", "expandProvides": true }` retains the flat compact provide list. The legacy `registry` and `invoke` actions remain available for diagnostics and compatibility. Advanced trace and session controls remain optional under `request`; ordinary calls inherit their invocation context automatically.
 
 The Pi tool projection defaults to four concurrent direct calls per tool instance. Excess calls queue FIFO and can be cancelled while queued. Live results expose `queued`, `running`, `completed`, `failed`, and `aborted` states together with the initiating Pi `toolCallId`. Trace rendering keeps recursive calls grouped by parent span, and runtime/input/output previews are bounded.
+
+### Share Pi's official runtime across local extensions
+
+Pi installs npm packages in isolated module roots, so separately developed extensions can otherwise retain stale nested copies of `@kybernetria/pi-protocol`. After installing the official protocol package through Pi, link local extensions to that one Pi-managed installation:
+
+```bash
+~/.pi/agent/npm/node_modules/.bin/pi-protocol-link-runtime
+# or: npx --prefix ~/.pi/agent/npm pi-protocol-link-runtime
+```
+
+The command discovers protocol-dependent packages under `~/.pi/agent/extensions` and `~/.pi/agent/extensions-autonomous`, replaces only their generated `node_modules/@kybernetria/pi-protocol` entry with a symlink to `~/.pi/agent/npm/node_modules/@kybernetria/pi-protocol`, and reports the effective version. Use `--dry-run` to preview or `--agent-dir PATH` for a non-default agent directory.
+
+Because the links target Pi's stable npm installation path, a subsequent official package update is immediately shared by all linked extensions. Running `npm install` inside an extension may replace its link; rerun the linker afterward. Published extension manifests should still declare a compatible normal semver dependency for standalone installation and reproducible tests.
+
+Node and TypeScript normally resolve a package symlink through its real path. For standalone extension tests, preserve the extension's module root so protocol peer dependencies continue to resolve there:
+
+```bash
+NODE_OPTIONS=--preserve-symlinks npm test
+npx tsc --noEmit --preserveSymlinks
+```
+
+Pi's extension loader supplies its bundled peer APIs independently.
 
 ## Packages
 
@@ -55,10 +84,11 @@ Pi SDK-specific behavior does not belong in `pi-protocol-minimal`; the core stay
 A compatible package:
 
 1. ships a `pi.protocol.json` manifest
-2. registers it from its Pi extension with `ensureProtocolFabric()` + `registerProtocolManifest()`
-3. declares each provide with canonical `execution`
-4. for agent provides, supplies executors from `@kybernetria/pi-protocol/sdk/agent-session`
-5. communicates through `registry`, `describeNode`, `describeProvide`, and `invoke`
+2. validates it with `parseProtocolManifest()` and derives its own identity with `createProtocolNamespace()`
+3. registers it from its Pi extension with `ensureProtocolFabric()` + `registerProtocolManifest()`
+4. declares each provide with canonical `execution`
+5. for agent provides, supplies executors from `@kybernetria/pi-protocol/sdk/agent-session`
+6. derives own targets from the manifest namespace and communicates through `registry`, `describeNode`, `describeProvide`, and `invoke`
 
 Handler provide:
 
@@ -249,23 +279,25 @@ File paths are resolved under an explicit `manifestBaseDir`, not the host proces
 Canonical extension:
 
 ```ts
+import { readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { fileURLToPath } from "node:url";
 import {
+  createProtocolNamespace,
   ensureProtocolFabric,
+  parseProtocolManifest,
   registerProtocolManifest,
-  type PiProtocolManifest,
 } from "@kybernetria/pi-protocol";
 import { createPiSdkAgentExecutorsFromManifest } from "@kybernetria/pi-protocol/sdk/agent-session";
-import manifestJson from "./pi.protocol.json" with { type: "json" };
 
-const manifest = manifestJson as PiProtocolManifest;
+const manifest = parseProtocolManifest(readFileSync(new URL("./pi.protocol.json", import.meta.url), "utf8"));
+const protocol = createProtocolNamespace(manifest);
 const manifestBaseDir = fileURLToPath(new URL(".", import.meta.url));
 
 export default function extension(_pi: ExtensionAPI): void {
   const fabric = ensureProtocolFabric();
 
-  fabric.unregister(manifest.nodeId);
+  fabric.unregister(protocol.nodeId);
 
   registerProtocolManifest(fabric, {
     manifest,
@@ -301,6 +333,9 @@ await fabric.invoke({
 ```ts
 createProtocolFabric
 ensureProtocolFabric
+parseProtocolManifest
+validateProtocolManifest
+createProtocolNamespace
 registerProtocolManifest
 protocolNodeFromManifest
 ```

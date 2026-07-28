@@ -1,9 +1,10 @@
-import type {
-  InvocationProvenanceEvent,
-  InvokeRequest,
-  ProtocolFabric,
-  ProtocolRuntimeEvent,
-  RegistrySnapshot,
+import {
+  createChildInvokeRequest,
+  type InvocationProvenanceEvent,
+  type InvokeRequest,
+  type ProtocolFabric,
+  type ProtocolRuntimeEvent,
+  type RegistrySnapshot,
 } from "../index.ts";
 import { createProtocolToolId } from "./helpers.ts";
 import type { ProtocolToolExecutionResult, ProtocolToolUpdateCallback } from "./types.ts";
@@ -30,11 +31,12 @@ export async function invokeWithTraceUpdates(
   signal?: AbortSignal,
   toolCallId?: string,
 ): Promise<ProtocolInvokeToolDetails> {
+  const contextualRequest = createChildInvokeRequest(request);
   const tracedRequest: InvokeRequest = {
-    ...request,
-    traceId: request.traceId ?? createProtocolToolId("trace"),
-    spanId: request.spanId ?? createProtocolToolId("span"),
-    abortSignal: request.abortSignal ?? signal,
+    ...contextualRequest,
+    traceId: contextualRequest.traceId ?? createProtocolToolId("trace"),
+    spanId: contextualRequest.spanId ?? createProtocolToolId("span"),
+    abortSignal: contextualRequest.abortSignal ?? signal,
   };
   const traceId = tracedRequest.traceId;
   const events: InvocationProvenanceEvent[] = [];

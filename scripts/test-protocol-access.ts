@@ -105,6 +105,7 @@ const executors: Record<string, ProtocolAgentExecutor> = {
     architect: await fabric.invoke({ nodeId: "pi_dev", provide: "architect", input: {} }),
   }),
   unrestricted: async () => ({ secret: await fabric.invoke({ nodeId: "secret", provide: "read", input: {} }), registry: fabric.registry() }),
+  tool_nested: async () => handleProtocolToolInput(fabric, { target: "pi_dev.scout", input: {} }),
 };
 
 fabric.register({
@@ -123,6 +124,7 @@ fabric.register({
       empty_allow: { protocolAccess: { allowedTargets: [] } },
       deny_only: { protocolAccess: { deniedTargets: ["pi_dev.architect"] } },
       unrestricted: {},
+      tool_nested: { protocolAccess: { allowedTargets: ["pi_dev.scout"] } },
     },
     provides: Object.keys(executors).map((name) => ({
       name,
@@ -185,6 +187,25 @@ if (!unrestricted.ok) throw new Error("unrestricted failed");
 assert.equal((unrestricted.output as any).secret.ok, true);
 assert.ok((unrestricted.output as any).registry.provides.some((item: any) => item.globalId === "secret.read"));
 assert.equal((await fabric.invoke({ nodeId: "secret", provide: "read", input: {} })).ok, true);
+
+const provenanceEvents: Array<{ traceId: string; spanId: string; parentSpanId?: string; callerNodeId?: string; nodeId: string; provide: string; status: string }> = [];
+const unsubscribeProvenance = fabric.subscribeProvenanceRecorder((event) => { provenanceEvents.push(event); });
+const toolNested = await fabric.invoke({
+  nodeId: "callers",
+  provide: "tool_nested",
+  input: {},
+  traceId: "delegation_trace",
+  spanId: "architect_span",
+});
+unsubscribeProvenance();
+assert.equal(toolNested.ok, true);
+const nestedScoutStarted = provenanceEvents.find((event) =>
+  event.nodeId === "pi_dev" && event.provide === "scout" && event.status === "started"
+);
+assert.ok(nestedScoutStarted, "protocol-tool delegation must emit Scout provenance");
+assert.equal(nestedScoutStarted.traceId, "delegation_trace");
+assert.equal(nestedScoutStarted.parentSpanId, "architect_span");
+assert.equal(nestedScoutStarted.callerNodeId, "callers.tool_nested");
 
 const malformedManifest = (protocolAccess: unknown): PiProtocolManifest => ({
   protocolVersion: "0.2.0",
