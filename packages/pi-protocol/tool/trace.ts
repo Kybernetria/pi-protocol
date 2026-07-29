@@ -6,6 +6,7 @@ import type {
   ProtocolRuntimeEvent,
 } from "../types.ts";
 import type { InvocationReceiptSummary } from "../provenance/receipt.ts";
+import type { CanonicalProvenanceEventV1, ProvenanceEventV1 } from "../provenance/events.ts";
 import { createProtocolToolId } from "./helpers.ts";
 import type { ProtocolToolExecutionResult, ProtocolToolUpdateCallback } from "./types.ts";
 
@@ -13,6 +14,18 @@ export interface ProtocolTraceDetails {
   events: InvocationProvenanceEvent[];
   /** Present only in transient partial updates; final details omit streamed deltas. */
   runtimeEvents?: ProtocolRuntimeEvent[];
+}
+
+export interface ProtocolCausalDetails {
+  readonly invocations: readonly {
+    readonly invocationId: string;
+    readonly parentInvocationId?: string;
+    readonly target: string;
+    readonly state: string;
+    readonly outcomeCode?: string;
+    readonly effectsMayHaveOccurred: boolean;
+  }[];
+  readonly truncated: boolean;
 }
 
 export interface ProtocolInvokeToolDetails {
@@ -24,6 +37,7 @@ export interface ProtocolInvokeToolDetails {
   toolCallId?: string;
   result: unknown;
   receipt?: InvocationReceiptSummary;
+  causal?: ProtocolCausalDetails;
   presentation?: { contentType: "text/markdown" };
   trace?: ProtocolTraceDetails;
 }
@@ -50,6 +64,8 @@ export async function invokeWithTraceUpdates(
   const contentType = outputSchema?.contentMediaType === "text/markdown" ? "text/markdown" : undefined;
   const events: InvocationProvenanceEvent[] = [];
   const runtimeEvents: ProtocolRuntimeEvent[] = [];
+  const canonicalEvents: ProvenanceEventV1[] = [];
+  let canonicalTruncated = false;
   let runtimeChars = 0;
   let lastRuntimeUpdateAt = 0;
   const flush = (text: string) => {
@@ -74,6 +90,11 @@ export async function invokeWithTraceUpdates(
     if (events.length > 256) events.shift();
     flush("protocol running...");
   });
+  const unsubscribeAudit = fabric.subscribeAudit((event: CanonicalProvenanceEventV1) => {
+    if (!("invocationId" in event)) return;
+    if (canonicalEvents.length >= 512) { canonicalEvents.shift(); canonicalTruncated = true; }
+    canonicalEvents.push(event);
+  });
   const unsubscribeRuntimeEvents = fabric.subscribeRuntimeEventRecorder((event) => {
     if (traceId && event.traceId !== traceId) return;
     const bounded = boundRuntimeEvent(event, Math.max(0, 40_000 - runtimeChars));
@@ -90,6 +111,8 @@ export async function invokeWithTraceUpdates(
   try {
     const tracked = await fabric.invokeTracked(tracedRequest);
     const result = tracked.result;
+    await Promise.resolve();
+    const causal = projectObservedCausalChain(tracked.receipt.invocationId, canonicalEvents, canonicalTruncated);
     return {
       ok: true,
       schemaVersion: 1,
@@ -99,13 +122,55 @@ export async function invokeWithTraceUpdates(
       ...(toolCallId ? { toolCallId } : {}),
       result,
       receipt: tracked.receipt,
+      causal,
       trace: { events: [...events], runtimeEvents: runtimeEvents.filter((event) => event.type === "executor_session_model") },
       ...(contentType ? { presentation: { contentType } } : {}),
     };
   } finally {
     unsubscribeProvenance();
+    unsubscribeAudit();
     unsubscribeRuntimeEvents();
   }
+}
+
+function projectObservedCausalChain(
+  rootInvocationId: string,
+  events: readonly ProvenanceEventV1[],
+  alreadyTruncated: boolean,
+): ProtocolCausalDetails {
+  const included = new Set([rootInvocationId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const event of events) {
+      if (included.has(event.invocationId) || !event.parentInvocationId || !included.has(event.parentInvocationId)) continue;
+      included.add(event.invocationId);
+      changed = true;
+    }
+  }
+  const grouped = new Map<string, ProvenanceEventV1[]>();
+  for (const event of events) {
+    if (!included.has(event.invocationId)) continue;
+    const list = grouped.get(event.invocationId) ?? [];
+    list.push(event);
+    grouped.set(event.invocationId, list);
+  }
+  const invocations = [...grouped.values()].slice(0, 100).map((list) => {
+    const first = list[0]!;
+    const last = list[list.length - 1]!;
+    return {
+      invocationId: first.invocationId,
+      ...(first.parentInvocationId ? { parentInvocationId: first.parentInvocationId } : {}),
+      target: first.target,
+      state: last.type.replace(/^invocation\./, ""),
+      ...(last.outcomeCode ? { outcomeCode: last.outcomeCode } : {}),
+      effectsMayHaveOccurred: list.some((event) => event.effectsMayHaveOccurred === true),
+    };
+  });
+  return Object.freeze({
+    invocations: Object.freeze(invocations.map((invocation) => Object.freeze(invocation))),
+    truncated: alreadyTruncated || grouped.size > invocations.length,
+  });
 }
 
 function safeUpdate(callback: ProtocolToolUpdateCallback | undefined, update: ProtocolToolExecutionResult): void {
