@@ -133,6 +133,7 @@ New manifests, fixtures, generated artifacts, and documentation use v1 only. The
 - `@kybernetria/pi-protocol/core` — Pi-independent local fabric only
 - `@kybernetria/pi-protocol/pi` — Pi tool projection (`/tool` compatibility alias)
 - `@kybernetria/pi-protocol/pi/agents` — Pi agent adapter (`/sdk/agent-session` compatibility alias)
+- `@kybernetria/pi-protocol/sdk/agent-profile` — private profile admission and prompt resolution
 
 The core import graph does not load Ajv, Pi coding-agent/model/TUI APIs, tools, rendering, agent sessions, or filesystem manifest resolution. The package root does not eagerly load Pi APIs. Prior root convenience imports for Pi tool/SDK runtime functions must move to the existing `/pi` (`/tool`) or `/pi/agents` (`/sdk`) entrypoints; vNext is held from a compatible 1.x publication until ecosystem migration and the major-release gate.
 
@@ -198,7 +199,26 @@ Handlers receive `context.invoke()`, the principal, linked cancellation, an abso
 
 Confirmation-required effects are approved only through the host confirmation broker, bound to principal, target, contract/input digests, effects, and expiry. Headless calls without authority fail closed.
 
-Hardened agent profiles/sessions and the simplified Pi projection are delivered in later vNext phases.
+## Private agent profiles and bounded sessions
+
+Pi implementation policy is loaded separately from the public contract:
+
+```ts
+import { parsePiAgentProfiles, resolvePiAgentProfiles } from "@kybernetria/pi-protocol/sdk/agent-profile";
+import { createPiSdkAgentExecutorsFromProfiles } from "@kybernetria/pi-protocol/pi/agents";
+
+const profiles = resolvePiAgentProfiles(parsePiAgentProfiles(profileSource), packageDirectory);
+const agents = createPiSdkAgentExecutorsFromProfiles(definition, profiles, {
+  agentByProvide: { notify: "notification_agent" },
+  modelOverrides: { notification_agent: "deployment/model-id" }
+});
+```
+
+Prompt paths are contained below an explicit base directory and resolved prompt text never enters public discovery. Agent factories use explicit `createSessionForAgent`, `toPromptByAgent`, and `toOutputByAgent` options; callback arity is never interpreted.
+
+Continuation sessions are keyed by principal, target, pinned contract digest, and opaque session ID. Creation is atomic, same-session prompts serialize, and TTL/LRU bounds apply. End, abort, contract replacement, eviction, and `disposeAllProtocolAgentSessions()` dispose retained SDK sessions. Protocol guidance is injected only for profiles whose tool list includes `protocol`; their nested calls inherit and attenuate the current invocation authority.
+
+The simplified Pi projection is delivered in the next vNext phase.
 
 ## Current v0.2 runtime compatibility
 

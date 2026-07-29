@@ -390,6 +390,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
       },
       invocationId: receipt.invocationId,
       callingTarget: safeTarget,
+      contractDigest: selected.contractDigest,
       invokeChild,
       progress: (event) => audit.progress({ schemaVersion: 1, invocationId: receipt.invocationId, sequence: Date.now(), ...event }),
     };

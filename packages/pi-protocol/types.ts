@@ -169,6 +169,7 @@ export interface ProtocolInvocationContext {
   abortSignal?: AbortSignal;
   emitRuntimeEvent?: ProtocolRuntimeEventEmitter;
   invocationId?: string;
+  contractDigest?: string;
   signal?: AbortSignal;
   deadline?: number;
   principal?: ProtocolPrincipal;

@@ -67,9 +67,8 @@ const composedPromptChunks = appendUniquePromptChunks(["base prompt"], [
 ]);
 assert.equal(composedPromptChunks.length, 3);
 assert.equal(composedPromptChunks[1], UNIVERSAL_PROTOCOL_AWARENESS_PROMPT);
-assert.match(composedPromptChunks[1], /## Pi Protocol ecosystem/);
-assert.match(composedPromptChunks[1], /Protocol agent sessions can be continued/);
-assert.match(composedPromptChunks[1], /"mode": "continue"/);
+assert.match(composedPromptChunks[1], /## Pi Protocol/);
+assert.match(composedPromptChunks[1], /current principal, grant, deadline, cancellation/);
 assert.equal(composedPromptChunks[2], "## Protocol agent instructions\nReview tasks concisely.");
 assert.deepEqual(
   appendUniquePromptChunks(composedPromptChunks, [UNIVERSAL_PROTOCOL_AWARENESS_PROMPT]),

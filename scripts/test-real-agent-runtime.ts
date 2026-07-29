@@ -91,7 +91,7 @@ registerProtocolManifest(fabric, {
     start: async (input, context) => runChain(String(input), context),
   },
   agentExecutors: createPiSdkAgentExecutorsFromManifest(manifest, {
-    createSession: (agentName) => () => new FakePiAgentSession(agentName),
+    createSessionForAgent: (agentName) => () => new FakePiAgentSession(agentName),
     toPrompt: (input: unknown) => String(input),
     toOutput: (text: string) => text,
   }),

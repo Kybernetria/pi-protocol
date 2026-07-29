@@ -24,6 +24,7 @@ export interface InvocationControlState {
   readonly suspendConcurrency?: () => Promise<() => Promise<void>>;
   readonly invocationId?: string;
   readonly callingTarget?: string;
+  readonly contractDigest?: string;
   readonly invokeChild: (target: string, input: unknown, options?: ChildInvokeOptions) => Promise<InvokeTrackedResult>;
   readonly progress: (event: { message?: string; completed?: number; total?: number }) => void;
 }
@@ -78,6 +79,7 @@ export function createHandlerInvocationContext(
     provide,
     ...trace,
     invocationId: control.invocationId,
+    contractDigest: control.contractDigest,
     signal: control.signal,
     abortSignal: control.signal,
     deadline: control.deadline,

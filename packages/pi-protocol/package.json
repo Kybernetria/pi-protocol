@@ -17,7 +17,8 @@
     "./pi/agents": "./sdk/agent-session.ts",
     "./tool": "./tool/index.ts",
     "./sdk": "./sdk/index.ts",
-    "./sdk/agent-session": "./sdk/agent-session.ts"
+    "./sdk/agent-session": "./sdk/agent-session.ts",
+    "./sdk/agent-profile": "./sdk/agent-profile.ts"
   },
   "files": [
     "*.ts",

@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
+import type { ProtocolDefinition } from "../contract/types.ts";
 
 import { runWithProtocolInvocationContextValue } from "../context.ts";
+import { runWithInvocationControl, type InvocationControlState } from "../control.ts";
 import type { CurrentProtocolInvocationContext } from "../context.ts";
 import { ensureProtocolFabric } from "../fabric.ts";
 import { resolveManifestSystemPrompts } from "../manifest.ts";
@@ -16,6 +18,12 @@ import {
   type PiSdkAgentSessionFactory,
   type PiSdkAgentSessionLike,
 } from "./index.ts";
+import { validateAgentProvideBindings } from "./agent-profile.ts";
+import type {
+  PiAgentProvideBindings,
+  ResolvedPiAgentProfile,
+  ResolvedPiAgentProfiles,
+} from "./agent-profile.ts";
 
 export interface PiSdkCreateAgentSessionOptions {
   cwd?: string;
@@ -63,6 +71,7 @@ export interface CreatePiSdkAgentSessionFactoryOptions {
   sessionOptions?: PiSdkCreateAgentSessionOptions;
   systemPrompt?: string;
   systemPromptMode?: "append" | "replace";
+  protocolAvailable?: boolean;
 }
 
 export interface CreateDefaultPiSdkAgentExecutorOptions
@@ -76,10 +85,25 @@ export interface CreateDefaultPiSdkAgentExecutorOptions
 export interface CreatePiSdkAgentExecutorsFromManifestOptions {
   /** Required when the manifest uses `systemPrompt.file`; never inferred from process.cwd(). */
   manifestBaseDir?: string;
-  createSession?: PiSdkAgentSessionFactory | ((agentName: string, agent: ProtocolAgentSpec) => PiSdkAgentSessionFactory | undefined);
+  /** Direct factory shared by every legacy agent. */
+  createSession?: PiSdkAgentSessionFactory;
+  /** Explicit per-agent factory; never inferred from callback arity. */
+  createSessionForAgent?: (agentName: string, agent: ProtocolAgentSpec) => PiSdkAgentSessionFactory | undefined;
   sessionOptions?: PiSdkManifestAgentSessionOptions | ((agentName: string, agent: ProtocolAgentSpec) => PiSdkManifestAgentSessionOptions | undefined);
-  toPrompt?: CreatePiSdkAgentExecutorOptions["toPrompt"] | ((agentName: string, agent: ProtocolAgentSpec) => CreatePiSdkAgentExecutorOptions["toPrompt"]);
-  toOutput?: CreatePiSdkAgentExecutorOptions["toOutput"] | ((agentName: string, agent: ProtocolAgentSpec) => CreatePiSdkAgentExecutorOptions["toOutput"]);
+  toPrompt?: CreatePiSdkAgentExecutorOptions["toPrompt"];
+  toPromptByAgent?: (agentName: string, agent: ProtocolAgentSpec) => CreatePiSdkAgentExecutorOptions["toPrompt"];
+  toOutput?: CreatePiSdkAgentExecutorOptions["toOutput"];
+  toOutputByAgent?: (agentName: string, agent: ProtocolAgentSpec) => CreatePiSdkAgentExecutorOptions["toOutput"];
+}
+
+export interface CreatePiSdkAgentExecutorsFromProfilesOptions {
+  readonly agentByProvide: PiAgentProvideBindings;
+  readonly createSessionForAgent?: (agentName: string, profile: ResolvedPiAgentProfile) => PiSdkAgentSessionFactory | undefined;
+  readonly sessionOptionsByAgent?: (agentName: string, profile: ResolvedPiAgentProfile) => PiSdkCreateAgentSessionOptions | undefined;
+  readonly toPromptByAgent?: (agentName: string, profile: ResolvedPiAgentProfile) => CreatePiSdkAgentExecutorOptions["toPrompt"];
+  readonly toOutputByAgent?: (agentName: string, profile: ResolvedPiAgentProfile) => CreatePiSdkAgentExecutorOptions["toOutput"];
+  readonly modelOverrides?: Readonly<Record<string, string>>;
+  readonly modelClassOverrides?: Readonly<Partial<Record<"fast" | "balanced" | "reasoning", string>>>;
 }
 
 export function createPiSdkAgentSessionFactory(
@@ -88,20 +112,25 @@ export function createPiSdkAgentSessionFactory(
   return async () => {
     const sdk = await loadPiCodingAgentSdk();
     const sessionOptions = await resolveModelHintSessionOptions(sdk, options.sessionOptions ?? {});
-    const resourceLoader = await createResourceLoader(sdk, sessionOptions, options.systemPrompt, options.systemPromptMode);
+    const protocolAvailable = options.protocolAvailable ?? (Array.isArray(sessionOptions.tools) && sessionOptions.tools.includes(DEFAULT_PROTOCOL_TOOL_NAME));
+    const resourceLoader = await createResourceLoader(sdk, sessionOptions, options.systemPrompt, options.systemPromptMode, protocolAvailable);
     let activeProtocolContext: CurrentProtocolInvocationContext | undefined;
-    const protocolTool = createProtocolTool(ensureProtocolFabric());
-    const boundProtocolTool = {
+    let activeProtocolControl: InvocationControlState | undefined;
+    const protocolTool = protocolAvailable ? createProtocolTool(ensureProtocolFabric()) : undefined;
+    const boundProtocolTool = protocolTool ? {
       ...protocolTool,
-      async execute(toolCallId: string, input: Parameters<typeof protocolTool.execute>[1], signal?: AbortSignal, onUpdate?: Parameters<typeof protocolTool.execute>[3]) {
+      async execute(toolCallId: string, input: Parameters<NonNullable<typeof protocolTool>["execute"]>[1], signal?: AbortSignal, onUpdate?: Parameters<NonNullable<typeof protocolTool>["execute"]>[3]) {
         const execute = () => protocolTool.execute(toolCallId, input, signal, onUpdate);
-        return activeProtocolContext
+        const withLegacyContext = () => activeProtocolContext
           ? runWithProtocolInvocationContextValue(activeProtocolContext, execute)
           : execute();
+        return activeProtocolControl
+          ? runWithInvocationControl(activeProtocolControl, withLegacyContext)
+          : withLegacyContext();
       },
-    };
+    } : undefined;
     const customTools = [
-      boundProtocolTool,
+      ...(boundProtocolTool ? [boundProtocolTool] : []),
       ...((sessionOptions.customTools as unknown[] | undefined) ?? []).filter(
         (tool) => !isToolNamed(tool, DEFAULT_PROTOCOL_TOOL_NAME),
       ),
@@ -116,6 +145,9 @@ export function createPiSdkAgentSessionFactory(
     const protocolAwareSession = session as PiSdkAgentSessionLike;
     protocolAwareSession.setProtocolInvocationContext = (context) => {
       activeProtocolContext = context;
+    };
+    protocolAwareSession.setProtocolControlContext = (context) => {
+      activeProtocolControl = context;
     };
 
     return protocolAwareSession;
@@ -143,13 +175,13 @@ export function createPiSdkAgentExecutorsFromManifest(
   const resolvedManifest = resolveManifestSystemPrompts(manifest, { manifestBaseDir: options.manifestBaseDir });
   for (const [agentName, agent] of Object.entries(resolvedManifest.agents ?? {})) {
     executors[agentName] = createDefaultPiSdkAgentExecutor({
-      createSession: resolveCreateSession(options.createSession, agentName, agent),
+      createSession: options.createSessionForAgent?.(agentName, agent) ?? options.createSession,
       sessionOptions: withManifestAgentToolAllowlist(
         withAgentModelHint(resolveSessionOptions(options.sessionOptions, agentName, agent), agent),
         agent,
       ),
-      toPrompt: resolveToPrompt(options.toPrompt, agentName, agent),
-      toOutput: resolveToOutput(options.toOutput, agentName, agent),
+      toPrompt: options.toPromptByAgent?.(agentName, agent) ?? options.toPrompt,
+      toOutput: options.toOutputByAgent?.(agentName, agent) ?? options.toOutput,
       systemPrompt: agent.systemPrompt?.text,
       systemPromptMode: agent.systemPrompt?.mode,
     });
@@ -157,14 +189,41 @@ export function createPiSdkAgentExecutorsFromManifest(
   return executors;
 }
 
-function resolveCreateSession(
-  value: CreatePiSdkAgentExecutorsFromManifestOptions["createSession"],
-  agentName: string,
-  agent: ProtocolAgentSpec,
-): PiSdkAgentSessionFactory | undefined {
-  return typeof value === "function" && value.length >= 1
-    ? (value as (agentName: string, agent: ProtocolAgentSpec) => PiSdkAgentSessionFactory | undefined)(agentName, agent)
-    : (value as PiSdkAgentSessionFactory | undefined);
+export function createPiSdkAgentExecutorsFromProfiles(
+  definition: ProtocolDefinition,
+  profiles: ResolvedPiAgentProfiles,
+  options: CreatePiSdkAgentExecutorsFromProfilesOptions,
+): Record<string, ProtocolAgentExecutor> {
+  validateAgentProvideBindings(definition, profiles, options.agentByProvide);
+  const executors: Record<string, ProtocolAgentExecutor> = Object.create(null);
+  for (const [provideName, agentName] of Object.entries(options.agentByProvide)) {
+    const profile = profiles.agents[agentName];
+    const tools = [...(profile.tools ?? DEFAULT_PROTOCOL_AGENT_TOOLS)];
+    const specific = options.modelOverrides?.[agentName]
+      ?? profile.modelPolicy?.specific
+      ?? (profile.modelPolicy?.class ? options.modelClassOverrides?.[profile.modelPolicy.class] : undefined);
+    const sessionOptions: PiSdkCreateAgentSessionOptions = {
+      ...(options.sessionOptionsByAgent?.(agentName, profile) ?? {}),
+      tools,
+      ...(specific ? { protocolModelHint: { specific } } : {}),
+      ...(profile.modelPolicy?.thinkingLevel ? { thinkingLevel: profile.modelPolicy.thinkingLevel } : {}),
+    };
+    const createSession = options.createSessionForAgent?.(agentName, profile)
+      ?? createPiSdkAgentSessionFactory({
+        sessionOptions,
+        systemPrompt: profile.promptText,
+        systemPromptMode: "replace",
+        protocolAvailable: tools.includes(DEFAULT_PROTOCOL_TOOL_NAME),
+      });
+    executors[provideName] = createPiSdkAgentExecutor({
+      createSession,
+      toPrompt: options.toPromptByAgent?.(agentName, profile),
+      toOutput: options.toOutputByAgent?.(agentName, profile),
+      protocolGrant: profile.protocolAccess,
+      sessionCache: profile.continuation,
+    });
+  }
+  return executors;
 }
 
 function resolveSessionOptions(
@@ -173,26 +232,6 @@ function resolveSessionOptions(
   agent: ProtocolAgentSpec,
 ): PiSdkManifestAgentSessionOptions | undefined {
   return typeof value === "function" ? value(agentName, agent) : value;
-}
-
-function resolveToPrompt(
-  value: CreatePiSdkAgentExecutorsFromManifestOptions["toPrompt"],
-  agentName: string,
-  agent: ProtocolAgentSpec,
-): CreatePiSdkAgentExecutorOptions["toPrompt"] | undefined {
-  return typeof value === "function" && value.length >= 2
-    ? (value as (agentName: string, agent: ProtocolAgentSpec) => CreatePiSdkAgentExecutorOptions["toPrompt"])(agentName, agent)
-    : (value as CreatePiSdkAgentExecutorOptions["toPrompt"] | undefined);
-}
-
-function resolveToOutput(
-  value: CreatePiSdkAgentExecutorsFromManifestOptions["toOutput"],
-  agentName: string,
-  agent: ProtocolAgentSpec,
-): CreatePiSdkAgentExecutorOptions["toOutput"] | undefined {
-  return typeof value === "function" && value.length >= 2
-    ? (value as (agentName: string, agent: ProtocolAgentSpec) => CreatePiSdkAgentExecutorOptions["toOutput"])(agentName, agent)
-    : (value as CreatePiSdkAgentExecutorOptions["toOutput"] | undefined);
 }
 
 function isToolNamed(tool: unknown, name: string): boolean {
@@ -312,6 +351,7 @@ async function createResourceLoader(
   sessionOptions: PiSdkCreateAgentSessionOptions,
   systemPrompt: string | undefined,
   mode: "append" | "replace" = "append",
+  protocolAvailable = true,
 ): Promise<unknown> {
   const trimmed = systemPrompt?.trim();
   if (!sdk.DefaultResourceLoader) return undefined;
@@ -328,16 +368,15 @@ async function createResourceLoader(
       : sdk.getAgentDir ? { agentDir: sdk.getAgentDir() } : {}),
   };
 
+  const awareness = protocolAvailable ? [UNIVERSAL_PROTOCOL_AWARENESS_PROMPT] : [];
   if (mode === "replace" && trimmed) {
-    // Preserve manifest replacement semantics for the main Pi system prompt, while
-    // still appending the universal protocol-awareness prompt for protocol agents.
     loaderOptions.systemPromptOverride = () => trimmed;
-    loaderOptions.appendSystemPromptOverride = (base: string[]) => appendUniquePromptChunks(base, [UNIVERSAL_PROTOCOL_AWARENESS_PROMPT]);
+    if (awareness.length) loaderOptions.appendSystemPromptOverride = (base: string[]) => appendUniquePromptChunks(base, awareness);
   } else {
     loaderOptions.appendSystemPromptOverride = (base: string[]) =>
       appendUniquePromptChunks(base, [
-        UNIVERSAL_PROTOCOL_AWARENESS_PROMPT,
-        ...(trimmed ? [`## Protocol agent instructions\n${trimmed}`] : []),
+        ...awareness,
+        ...(trimmed ? [`## Agent instructions\n${trimmed}`] : []),
       ]);
   }
 

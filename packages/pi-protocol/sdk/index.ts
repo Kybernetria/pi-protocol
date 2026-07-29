@@ -1,17 +1,14 @@
 import { getCurrentProtocolInvocationContext } from "../context.ts";
+import { getInvocationControl, intersectGrant, type InvocationControlState } from "../control.ts";
 import type { CurrentProtocolInvocationContext } from "../context.ts";
 import type {
   ProtocolAgentExecutor,
+  ProtocolGrant,
   ProtocolInvocationContext,
   ProtocolRuntimeEvent,
 } from "../types.ts";
-
-const PI_SDK_AGENT_SESSION_CACHE_KEY = Symbol.for("pi-protocol.pi-sdk.agent-session-cache");
-
-interface CachedPiSdkAgentSession {
-  session: PiSdkAgentSessionLike;
-  activePrompts: number;
-}
+import { ProtocolSessionCache, type SessionCacheOptions } from "./session-cache.ts";
+export { disposeAllProtocolAgentSessions } from "./session-cache.ts";
 
 /**
  * Pi SDK adapter boundary.
@@ -39,6 +36,7 @@ export interface PiSdkAgentSessionLike {
   readonly model?: unknown;
   readonly thinkingLevel?: string;
   setProtocolInvocationContext?(context: CurrentProtocolInvocationContext | undefined): void;
+  setProtocolControlContext?(context: InvocationControlState | undefined): void;
 }
 
 export type PiSdkAgentSessionFactory = () => PiSdkAgentSessionLike | Promise<PiSdkAgentSessionLike>;
@@ -47,37 +45,52 @@ export interface CreatePiSdkAgentExecutorOptions {
   createSession: PiSdkAgentSessionFactory;
   toPrompt?: (input: unknown) => string;
   toOutput?: (text: string, input: unknown) => unknown;
+  protocolGrant?: ProtocolGrant;
+  sessionCache?: SessionCacheOptions;
 }
 
 export function createPiSdkAgentExecutor(
   options: CreatePiSdkAgentExecutorOptions,
 ): ProtocolAgentExecutor {
-  const sessions = ensurePiSdkAgentSessionCache();
+  const sessions = new ProtocolSessionCache(options.sessionCache);
+  const executorId = `executor_${crypto.randomUUID()}`;
 
   return async (input, context) => {
-    throwIfAborted(context?.abortSignal);
+    const signal = context?.signal ?? context?.abortSignal;
+    throwIfAborted(signal);
     const sessionMode = context?.session?.mode ?? "ephemeral";
-    const sessionKey = getSessionKey(context);
-    const leasedSession = sessionKey
-      ? await getOrCreateSessionLease(sessions, sessionKey, options)
-      : { session: await options.createSession(), sessionKey: undefined, cached: false };
+    const sessionId = continuationSessionId(context);
+    const leasedSession = sessionId
+      ? await sessions.acquire({
+          executorId,
+          principalId: context?.principal?.id ?? context?.callerNodeId ?? "legacy:anonymous",
+          target: `${context?.nodeId ?? "unknown"}.${context?.provide ?? "unknown"}`,
+          contractDigest: context?.contractDigest ?? "legacy",
+          sessionId,
+        }, options.createSession)
+      : await sessions.ephemeral(options.createSession);
+    if (signal?.aborted) {
+      leasedSession.release(false);
+      throwIfAborted(signal);
+    }
     const session = leasedSession.session;
     let text = "";
-    const pendingRuntimeEvents: Promise<void>[] = [];
+    let outputTruncated = false;
     const unsubscribe = session.subscribe((event) => {
       if (isTextDeltaMessageUpdate(event)) {
-        text += event.assistantMessageEvent.delta;
-        pendingRuntimeEvents.push(
-          emitRuntimeEventSafely(context, {
-            type: "executor_output_delta",
-            traceId: context?.traceId,
-            spanId: context?.spanId,
-            textDelta: event.assistantMessageEvent.delta,
-          }),
-        );
+        const delta = event.assistantMessageEvent.delta;
+        const remaining = 1_000_000 - text.length;
+        if (remaining > 0) text += delta.slice(0, remaining);
+        if (delta.length > Math.max(0, remaining)) outputTruncated = true;
+        void emitRuntimeEventSafely(context, {
+          type: "executor_output_delta",
+          traceId: context?.traceId,
+          spanId: context?.spanId,
+          textDelta: delta.slice(0, 16_384),
+        });
       }
     });
-    const removeAbortListener = addAbortListener(context?.abortSignal, () => session.dispose());
+    const removeAbortListener = addAbortListener(signal, () => leasedSession.release(false));
 
     try {
       const prompt = toPrompt(options, input);
@@ -95,29 +108,28 @@ export function createPiSdkAgentExecutor(
         type: "executor_input_snapshot",
         traceId: context?.traceId,
         spanId: context?.spanId,
-        inputPreview: prompt,
-        inputTruncated: false,
+        inputPreview: prompt.slice(0, 20_000),
+        inputTruncated: prompt.length > 20_000,
       });
-      session.setProtocolInvocationContext?.(toCurrentProtocolInvocationContext(context));
-      await runAbortable(session.prompt(prompt), context?.abortSignal);
-      await Promise.all(pendingRuntimeEvents);
+      const invocationContext = toCurrentProtocolInvocationContext(context);
+      const controlContext = attenuatedControlContext(options.protocolGrant);
+      session.setProtocolInvocationContext?.(invocationContext);
+      session.setProtocolControlContext?.(controlContext);
+      await runAbortable(session.prompt(prompt), signal);
       await emitRuntimeEventSafely(context, {
         type: "executor_output_snapshot",
         traceId: context?.traceId,
         spanId: context?.spanId,
         outputPreview: text,
-        outputTruncated: false,
+        outputTruncated,
       });
       return options.toOutput ? options.toOutput(text, input) : text;
     } finally {
       session.setProtocolInvocationContext?.(undefined);
+      session.setProtocolControlContext?.(undefined);
       removeAbortListener();
       unsubscribe();
-      releaseSessionLease(sessions, leasedSession);
-      if (!leasedSession.cached || sessionMode !== "continue" || context?.abortSignal?.aborted) {
-        session.dispose();
-        if (leasedSession.sessionKey) sessions.delete(leasedSession.sessionKey);
-      }
+      leasedSession.release(sessionMode === "continue" && !signal?.aborted);
     }
   };
 }
@@ -241,61 +253,23 @@ function isTextDeltaMessageUpdate(event: PiSdkAgentSessionEventLike): event is {
   );
 }
 
-function ensurePiSdkAgentSessionCache(): Map<string, CachedPiSdkAgentSession> {
-  const globals = globalThis as Record<PropertyKey, unknown>;
-  const existing = globals[PI_SDK_AGENT_SESSION_CACHE_KEY] as Map<string, CachedPiSdkAgentSession> | undefined;
-  if (existing) return existing;
-
-  const created = new Map<string, CachedPiSdkAgentSession>();
-  globals[PI_SDK_AGENT_SESSION_CACHE_KEY] = created;
-  return created;
-}
-
-interface PiSdkAgentSessionLease {
-  session: PiSdkAgentSessionLike;
-  sessionKey?: string;
-  cached: boolean;
-}
-
-async function getOrCreateSessionLease(
-  sessions: Map<string, CachedPiSdkAgentSession>,
-  sessionKey: string,
-  options: CreatePiSdkAgentExecutorOptions,
-): Promise<PiSdkAgentSessionLease> {
-  const existing = sessions.get(sessionKey);
-  if (existing) {
-    if (existing.activePrompts > 0) {
-      return { session: await options.createSession(), cached: false };
-    }
-
-    existing.activePrompts += 1;
-    return { session: existing.session, sessionKey, cached: true };
-  }
-
-  const created = { session: await options.createSession(), activePrompts: 1 };
-  sessions.set(sessionKey, created);
-  return { session: created.session, sessionKey, cached: true };
-}
-
-function releaseSessionLease(
-  sessions: Map<string, CachedPiSdkAgentSession>,
-  lease: PiSdkAgentSessionLease): void {
-  if (!lease.cached || !lease.sessionKey) return;
-  const entry = sessions.get(lease.sessionKey);
-  if (entry) entry.activePrompts = Math.max(0, entry.activePrompts - 1);
-}
-
-function getSessionKey(context: ProtocolInvocationContext | undefined): string | undefined {
-  const session = context?.session;
-  const mode = session?.mode ?? "ephemeral";
+function continuationSessionId(context: ProtocolInvocationContext | undefined): string | undefined {
+  const mode = context?.session?.mode ?? "ephemeral";
   if (mode === "ephemeral") return undefined;
+  const id = context?.session?.id?.trim();
+  if (!id || id.length > 256) throw new Error(`session.id is required and must be at most 256 characters when session.mode is ${mode}`);
+  return id;
+}
 
-  const id = session?.id?.trim();
-  if (!id) {
-    throw new Error(`session.id is required when session.mode is ${mode}`);
-  }
-
-  return [context?.nodeId, context?.provide, context?.callerNodeId ?? "anonymous", id].join(":");
+function attenuatedControlContext(grant: ProtocolGrant | undefined): InvocationControlState | undefined {
+  const current = getInvocationControl();
+  if (!current || !grant) return current;
+  const attenuated = intersectGrant(current.grant, grant);
+  const scope = { remainingInvocations: Math.min(
+    attenuated.maxInvocations ?? 64,
+    ...current.scopeBudgets.map((budget) => budget.remainingInvocations),
+  ) };
+  return { ...current, grant: attenuated, scopeBudgets: [...current.scopeBudgets, scope] };
 }
 
 function toPrompt(options: CreatePiSdkAgentExecutorOptions, input: unknown): string {
