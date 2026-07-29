@@ -8,7 +8,7 @@ import type {
   ProtocolRuntimeEvent,
 } from "../types.ts";
 import { ProtocolSessionCache, type SessionCacheOptions } from "./session-cache.ts";
-export { disposeAllProtocolAgentSessions } from "./session-cache.ts";
+export { disposeAllProtocolAgentSessions, getProtocolAgentSessionDiagnostics } from "./session-cache.ts";
 
 /**
  * Pi SDK adapter boundary.

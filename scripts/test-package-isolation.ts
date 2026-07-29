@@ -16,7 +16,7 @@ try {
   const packResult = JSON.parse(packed.stdout) as Array<{ filename: string; files: Array<{ path: string }> }>;
   assert.equal(packResult.length, 1);
   const fileNames = new Set(packResult[0].files.map((item) => item.path));
-  for (const required of ["index.ts", "core/index.ts", "contract/index.ts", "contract/manifest.schema.json", "package.json"]) {
+  for (const required of ["index.ts", "core/index.ts", "contract/index.ts", "contract/manifest.schema.json", "conformance/index.ts", "cli/check.ts", "dist/pi-protocol.mjs", "package.json"]) {
     assert.ok(fileNames.has(required), `package tarball is missing ${required}`);
   }
 
@@ -35,11 +35,13 @@ try {
   assert.equal(installedPackage.dependencies?.ajv, "8.18.0");
   await assertMissing(join(consumer, "node_modules/@earendil-works/pi-coding-agent/package.json"));
   await assertMissing(join(consumer, "node_modules/@mariozechner/pi-ai/package.json"));
+  await assertMissing(join(consumer, "node_modules/@earendil-works/pi-tui/package.json"));
 
   await writeFile(join(consumer, "smoke.ts"), `
     import { createProtocolFabric } from "@kybernetria/pi-protocol/core";
     import { parseProtocolManifest } from "@kybernetria/pi-protocol/contract";
     import { STANDARD_EFFECTS } from "@kybernetria/pi-protocol";
+    import { checkProtocolPackage } from "@kybernetria/pi-protocol/conformance";
     const definition = parseProtocolManifest({
       $schema: "https://pi.dev/protocol/manifest-v1.schema.json",
       schemaVersion: 1,
@@ -50,9 +52,30 @@ try {
     if (!definition.provides.ping.validateOutput("pong").valid) throw new Error("validator failed");
     if (STANDARD_EFFECTS.length !== 11) throw new Error("root contract export failed");
     if (!createProtocolFabric()) throw new Error("core import failed");
+    if (typeof checkProtocolPackage !== "function") throw new Error("conformance import failed");
   `);
   const tsxLoader = pathToFileURL(resolve("node_modules/tsx/dist/loader.mjs")).href;
   await exec(process.execPath, ["--import", tsxLoader, "smoke.ts"], { cwd: consumer, maxBuffer: 2_000_000 });
+
+  const fixture = join(consumer, "extension");
+  await mkdir(fixture);
+  await writeFile(join(fixture, "package.json"), JSON.stringify({
+    name: "@tests/isolated-extension",
+    version: "1.0.0",
+    dependencies: { "@kybernetria/pi-protocol": "^1.0.0" },
+    piProtocol: { generated: "protocol.generated.ts" },
+  }));
+  await writeFile(join(fixture, "pi.protocol.json"), JSON.stringify({
+    $schema: "https://pi.dev/protocol/manifest-v1.schema.json",
+    schemaVersion: 1,
+    node: { id: "isolated_cli", purpose: "Isolated CLI smoke test." },
+    provides: [{ name: "ping", description: "Ping.", inputSchema: { type: "null" }, outputSchema: { const: "pong" } }],
+  }));
+  const cli = join(consumer, "node_modules/.bin/pi-protocol");
+  await exec(cli, ["generate", fixture], { cwd: consumer, maxBuffer: 2_000_000 });
+  await exec(cli, ["check", fixture], { cwd: consumer, maxBuffer: 2_000_000 });
+  await exec(join(consumer, "node_modules/.bin/pi-protocol-check"), [fixture], { cwd: consumer, maxBuffer: 2_000_000 });
+  await exec(cli, ["doctor", "--json"], { cwd: consumer, maxBuffer: 2_000_000 });
 
   console.log("package tarball and isolated module-root smoke tests work without optional Pi peers");
 } finally {

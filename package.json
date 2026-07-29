@@ -27,14 +27,21 @@
     "test:agent-profiles": "tsx scripts/test-agent-profiles.ts",
     "test:core-import-boundary": "tsx scripts/test-core-import-boundary.ts",
     "test:package-isolation": "tsx scripts/test-package-isolation.ts",
+    "test:conformance-cli": "tsx scripts/test-conformance-cli.ts",
     "audit:extensions": "tsx scripts/audit-extension-manifests.ts",
+    "protocol:check": "tsx packages/pi-protocol/cli/bin.ts check",
+    "protocol:generate": "tsx packages/pi-protocol/cli/bin.ts generate",
+    "protocol:doctor": "tsx packages/pi-protocol/cli/bin.ts doctor",
+    "benchmark:protocol": "tsx scripts/benchmark-protocol.ts",
+    "build:cli": "node scripts/build-cli.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run test:contract-model && npm run test:atomic-registrations && npm run test:causal-provenance && npm run test:delegated-control && npm run test:agent-profiles && npm run test:core-import-boundary && npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:protocol-agent-p2p-context && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:real-agent-runtime && npm run test:minimal-pi-tool-projection && npm run test:pi-projection-v1 && npm run test:compact-protocol-tool && npm run test:protocol-renderer-bounds && npm run test:file-backed-system-prompts && npm run test:link-shared-runtime && npm run test:protocol-access && npm run test:manifest-namespace && npm run test:package-isolation"
+    "test": "npm run typecheck && npm run test:contract-model && npm run test:atomic-registrations && npm run test:causal-provenance && npm run test:delegated-control && npm run test:agent-profiles && npm run test:core-import-boundary && npm run test:minimal-fabric && npm run test:minimal-fabric-pi-sdk-adapter && npm run test:protocol-agent-p2p-context && npm run test:minimal-pi-sdk-agent-adapter && npm run test:minimal-pi-sdk-agent-session-import && npm run test:real-agent-runtime && npm run test:minimal-pi-tool-projection && npm run test:pi-projection-v1 && npm run test:compact-protocol-tool && npm run test:protocol-renderer-bounds && npm run test:file-backed-system-prompts && npm run test:link-shared-runtime && npm run test:protocol-access && npm run test:manifest-namespace && npm run test:conformance-cli && npm run test:package-isolation"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.75.4",
     "@earendil-works/pi-tui": "^0.75.4",
     "@mariozechner/pi-ai": "^0.65.2",
+    "esbuild": "^0.27.7",
     "tsx": "^4.20.6",
     "typescript": "^5.8.3"
   }

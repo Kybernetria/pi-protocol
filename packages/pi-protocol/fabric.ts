@@ -56,7 +56,7 @@ import { validateRegistration } from "./validation.ts";
 // can find the same fabric through globalThis.
 const FABRIC_KEY = Symbol.for("pi-protocol.minimal.fabric");
 const FABRIC_VERSION_KEY = Symbol.for("pi-protocol.minimal.fabric.version");
-const FABRIC_VERSION = 7;
+const FABRIC_VERSION = 8;
 const HOST_ABI_KEY = Symbol.for("@kybernetria/pi-protocol.host.v1");
 const HOST_ABI_VERSION = 1;
 const MAX_REGISTRATION_EVENTS = 1_024;
@@ -96,6 +96,7 @@ interface ProtocolHostAbi {
 export function createProtocolFabric(options: CreateProtocolFabricOptions = {}): ProtocolFabric {
   const nodes = new Map<string, RegisteredNode>();
   const searchCatalog = new Map<string, readonly SearchCatalogEntry[]>();
+  const drainingNodes = new Set<RegisteredNode>();
   const publishNode = (entry: RegisteredNode): void => {
     nodes.set(entry.node.nodeId, entry);
     searchCatalog.set(entry.node.nodeId, buildSearchCatalog(entry.node));
@@ -104,6 +105,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
     nodes.delete(nodeId);
     searchCatalog.delete(nodeId);
   };
+  let deprecatedRawRegistrations = 0;
   let provenanceRecorder: ProvenanceRecorder | undefined;
   let runtimeEventRecorder: ProtocolRuntimeEventRecorder | undefined;
   const provenanceSubscribers = new Set<ProvenanceRecorder>();
@@ -523,6 +525,26 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
       return audit.diagnostics();
     },
 
+    diagnostics() {
+      return freezeSnapshot({
+        registrations: [...nodes.values(), ...drainingNodes].map((entry) => ({
+          nodeId: entry.node.nodeId,
+          ...(entry.registrationId ? { registrationId: entry.registrationId } : {}),
+          ...(entry.generation !== undefined ? { generation: entry.generation } : {}),
+          ...(entry.contractDigest ? { contractDigest: entry.contractDigest } : {}),
+          ...(entry.metadata?.packageId ? { packageId: entry.metadata.packageId } : {}),
+          ...(entry.metadata?.packageVersion ? { packageVersion: entry.metadata.packageVersion } : {}),
+          ...(entry.metadata?.sourcePath ? { sourcePath: entry.metadata.sourcePath } : {}),
+          ...(entry.metadata?.buildId ? { buildId: entry.metadata.buildId } : {}),
+          inFlight: entry.inFlight,
+          draining: entry.draining,
+          owned: Boolean(entry.registrationId),
+        })),
+        admission: limiter.diagnostics(),
+        deprecatedRawRegistrations,
+      });
+    },
+
     getReceipt(invocationId, authority) {
       return audit.getReceipt(invocationId, authority);
     },
@@ -646,7 +668,9 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
             previousContractDigest: previous.contractDigest,
             metadata: replacement.metadata,
           });
-          await drainRegisteredNode(previous);
+          drainingNodes.add(previous);
+          try { await drainRegisteredNode(previous); }
+          finally { drainingNodes.delete(previous); }
         },
         async dispose() {
           if (!active) return;
@@ -662,13 +686,16 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
             contractDigest: current.contractDigest,
             metadata: current.metadata,
           });
-          await drainRegisteredNode(current);
+          drainingNodes.add(current);
+          try { await drainRegisteredNode(current); }
+          finally { drainingNodes.delete(current); }
         },
       };
       return Object.freeze(lease);
     },
 
     register(input) {
+      deprecatedRawRegistrations += 1;
       validateRegistration(input);
 
       if (nodes.has(input.node.nodeId)) {
@@ -801,6 +828,7 @@ function isCompatibleProtocolFabric(value: ProtocolFabric | undefined): value is
     typeof value.subscribeAudit === "function" &&
     typeof value.subscribeProgress === "function" &&
     typeof value.auditDiagnostics === "function" &&
+    typeof value.diagnostics === "function" &&
     typeof value.getReceipt === "function" &&
     typeof value.lookupCausalProvenance === "function" &&
     typeof value.invokeTracked === "function" &&

@@ -6,6 +6,10 @@
   "main": "./index.ts",
   "types": "./index.ts",
   "bin": {
+    "pi-protocol": "dist/pi-protocol.mjs",
+    "pi-protocol-check": "dist/pi-protocol.mjs",
+    "pi-protocol-generate": "dist/pi-protocol.mjs",
+    "pi-protocol-doctor": "dist/pi-protocol.mjs",
     "pi-protocol-link-runtime": "scripts/link-shared-runtime.mjs"
   },
   "exports": {
@@ -13,6 +17,7 @@
     "./contract": "./contract/index.ts",
     "./core": "./core/index.ts",
     "./provenance": "./provenance/index.ts",
+    "./conformance": "./conformance/index.ts",
     "./pi": "./tool/index.ts",
     "./pi/agents": "./sdk/agent-session.ts",
     "./tool": "./tool/index.ts",
@@ -24,6 +29,9 @@
     "*.ts",
     "contract/*",
     "core/*.ts",
+    "cli/*.ts",
+    "conformance/*.ts",
+    "dist/*.mjs",
     "provenance/*.ts",
     "tool/*.ts",
     "sdk/*.ts",

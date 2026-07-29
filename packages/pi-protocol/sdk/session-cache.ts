@@ -182,6 +182,10 @@ export class ProtocolSessionCache {
   }
 }
 
+export function getProtocolAgentSessionDiagnostics(): { cacheCount: number; sessionCount: number } {
+  return Object.freeze({ cacheCount: managers.size, sessionCount: [...managers].reduce((total, manager) => total + manager.size(), 0) });
+}
+
 export function disposeAllProtocolAgentSessions(): void {
   for (const manager of [...managers]) manager.dispose();
 }

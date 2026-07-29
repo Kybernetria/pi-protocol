@@ -226,6 +226,22 @@ Caller/principal identity, grant, trace/span IDs, deadline, cancellation, confir
 
 The Pi adapter has no independent concurrency queue: fabric admission is the single bounded scheduler. Persisted tool details are versioned strict JSON, root correlation IDs are projection-minted, and provenance payload previews, full registries, prompts, and streamed deltas are omitted. A pure bounded view model feeds Pi-native `Text`/`Markdown` components and host wrapping/truncation utilities.
 
+## Conformance and diagnostics
+
+The package publishes executable, bounded tooling:
+
+```bash
+pi-protocol check ./extension
+pi-protocol check --recursive ~/.pi/agent/extensions
+pi-protocol generate ./extension
+pi-protocol generate ./extension --check
+pi-protocol doctor --json
+```
+
+`check` performs canonical admission, recursive nested-package discovery, package/dependency checks, private prompt containment, and generated-artifact verification. `generate` atomically emits digest-stamped targets, exact binding types, and input/output aliases. `doctor` reports host ABI/package copies, registrations and draining generations, contract digests/source identity, queues, audit health, compatibility use, and session counts.
+
+Extension tests can import `checkProtocolPackage`, `checkProtocolTree`, or `assertProtocolPackageConformance` from `@kybernetria/pi-protocol/conformance`. CI also enforces deterministic CLI bundles, tarball/isolated installation, and protocol performance ceilings.
+
 ## Current v0.2 runtime compatibility
 
 Existing v0.2 extensions can continue using the deprecated local registration adapter during migration:

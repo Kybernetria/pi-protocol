@@ -27,6 +27,7 @@ export type {
   ProtocolAgentSpec,
   ProtocolDisplaySpec,
   ProtocolFabric,
+  ProtocolFabricDiagnostics,
   ProtocolGrant,
   ProtocolHandler,
   ProtocolInvocationContext,

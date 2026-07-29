@@ -313,6 +313,24 @@ export interface ProtocolSearchResult {
   readonly provides: readonly ProvideSnapshot[];
 }
 
+export interface ProtocolFabricDiagnostics {
+  readonly registrations: readonly {
+    readonly nodeId: string;
+    readonly registrationId?: string;
+    readonly generation?: number;
+    readonly contractDigest?: string;
+    readonly packageId?: string;
+    readonly packageVersion?: string;
+    readonly sourcePath?: string;
+    readonly buildId?: string;
+    readonly inFlight: number;
+    readonly draining: boolean;
+    readonly owned: boolean;
+  }[];
+  readonly admission: { readonly active: number; readonly queued: number };
+  readonly deprecatedRawRegistrations: number;
+}
+
 export interface InvokeRequest {
   nodeId: string;
   provide: string;
@@ -377,6 +395,7 @@ export interface ProtocolFabric {
   subscribeAudit(observer: (event: CanonicalProvenanceEventV1) => void | Promise<void>): RecorderUnsubscribe;
   subscribeProgress(observer: ProgressObserver): RecorderUnsubscribe;
   auditDiagnostics(): AuditDiagnostics;
+  diagnostics(): ProtocolFabricDiagnostics;
   getReceipt(invocationId: string, authority: object): InvocationReceiptSummary | undefined;
   lookupCausalProvenance(invocationId: string, authority: object, options?: { maxDepth?: number; limit?: number }): CausalReceiptResult | undefined;
   invokeTracked(request: InvokeRequest): Promise<InvokeTrackedResult>;
