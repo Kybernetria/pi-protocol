@@ -176,7 +176,29 @@ Canonical events omit payload content by default and record bounded sizes, stabl
 
 Best-effort audit sinks are bounded and never block execution. Required sinks must accept the start event before a binding runs or the call fails closed with `AUDIT_UNAVAILABLE`. Cancellation after dispatch may return `OUTCOME_UNKNOWN`; the same receipt later records the actual outcome instead of falsely claiming cancellation.
 
-Bounded delegation control, hardened agent profiles/sessions, and the simplified Pi projection are delivered in later vNext phases.
+## Bounded delegated invocation
+
+Hosts mint principals and invoke with allow-only grants:
+
+```ts
+const principal = fabric.mintPrincipal("agent:planner", "agent");
+const result = await fabric.invokeAs(principal, "pi_dev.scout", input, {
+  grant: {
+    targets: ["pi_dev.scout", "pi_todo.*"],
+    effects: ["fs.read", "protocol.invoke"],
+    maxDepth: 4,
+    maxInvocations: 16
+  },
+  deadline: Date.now() + 30_000,
+  signal
+});
+```
+
+Handlers receive `context.invoke()`, the principal, linked cancellation, an absolute deadline, remaining depth/call budget, and non-blocking progress. Child authority, effects, time, and budget can only decrease. Discovery is filtered by the same grant. Global execution and waiting queues are bounded.
+
+Confirmation-required effects are approved only through the host confirmation broker, bound to principal, target, contract/input digests, effects, and expiry. Headless calls without authority fail closed.
+
+Hardened agent profiles/sessions and the simplified Pi projection are delivered in later vNext phases.
 
 ## Current v0.2 runtime compatibility
 

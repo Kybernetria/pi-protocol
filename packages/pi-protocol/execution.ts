@@ -1,4 +1,5 @@
 import type { CompiledProvideContract } from "./contract/types.ts";
+import { createHandlerInvocationContext } from "./control.ts";
 import type {
   InvokeRequest,
   InvocationProvenanceEvent,
@@ -70,36 +71,32 @@ export async function executeAdmittedProvide(input: {
   emitRuntimeEvent?: ProtocolRuntimeEventEmitter;
 }): Promise<InvokeResult> {
   if (input.request.abortSignal?.aborted) {
-    return { ok: false, error: { code: "ABORTED", message: "Invocation aborted" } };
+    return { ok: false, error: { code: "CANCELLED", message: "Invocation cancelled" } };
   }
   const inputValidation = input.provide.validateInput(input.request.input);
   if (!inputValidation.valid) {
-    return { ok: false, error: { code: "INVALID_INPUT", message: formatContractIssue("input", inputValidation.issues[0]) } };
+    return { ok: false, error: { code: "INPUT_INVALID", message: formatContractIssue("input", inputValidation.issues[0]) } };
   }
+  const controlled = createHandlerInvocationContext(input.request.nodeId, input.request.provide, input.provenance);
   const context = {
-    nodeId: input.request.nodeId,
-    provide: input.request.provide,
-    traceId: input.provenance.traceId,
-    spanId: input.provenance.spanId,
-    parentSpanId: input.provenance.parentSpanId,
-    callerNodeId: input.provenance.callerNodeId,
+    ...controlled,
     session: input.request.session,
-    abortSignal: input.request.abortSignal,
+    abortSignal: controlled.signal ?? input.request.abortSignal,
     emitRuntimeEvent: input.emitRuntimeEvent,
   };
   try {
     const output = await input.binding(input.request.input, context);
     const outputValidation = input.provide.validateOutput(output);
     if (!outputValidation.valid) {
-      return { ok: false, error: { code: "INVALID_OUTPUT", message: formatContractIssue("output", outputValidation.issues[0]) } };
+      return { ok: false, error: { code: "OUTPUT_INVALID", message: formatContractIssue("output", outputValidation.issues[0]) } };
     }
     return { ok: true, nodeId: input.request.nodeId, provide: input.request.provide, output };
   } catch (error) {
     return {
       ok: false,
       error: {
-        code: isAbortError(error) ? "ABORTED" : "EXECUTION_FAILED",
-        message: isAbortError(error) ? "Invocation aborted" : error instanceof Error ? error.message : String(error),
+        code: isAbortError(error) ? "CANCELLED" : "EXECUTION_FAILED",
+        message: isAbortError(error) ? "Invocation cancelled" : error instanceof Error ? error.message : String(error),
       },
     };
   }
@@ -111,15 +108,11 @@ function formatContractIssue(boundary: "input" | "output", issue: { path: string
 }
 
 function executeImplementation(input: ExecuteProvideInput): unknown | Promise<unknown> {
+  const controlled = createHandlerInvocationContext(input.request.nodeId, input.request.provide, input.provenance);
   const context = {
-    nodeId: input.request.nodeId,
-    provide: input.request.provide,
-    traceId: input.provenance.traceId,
-    spanId: input.provenance.spanId,
-    parentSpanId: input.provenance.parentSpanId,
-    callerNodeId: input.provenance.callerNodeId,
+    ...controlled,
     session: input.request.session,
-    abortSignal: input.request.abortSignal,
+    abortSignal: controlled.signal ?? input.request.abortSignal,
     emitRuntimeEvent: input.emitRuntimeEvent,
   };
 

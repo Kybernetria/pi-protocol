@@ -1,7 +1,23 @@
+import { createHash } from "node:crypto";
 import packageMetadata from "./package.json" with { type: "json" };
+import { STANDARD_EFFECTS } from "./contract/types.ts";
 import type { CompiledProvideContract, ProtocolDefinition } from "./contract/types.ts";
+import { assertBoundedJsonValue } from "./contract/json.ts";
+import { PROTOCOL_CONTRACT_LIMITS } from "./contract/limits.ts";
+import { normalizeJsonValue } from "./contract/normalize.ts";
 import { AuditLedger, jsonBytes } from "./provenance/ledger.ts";
 import { isAdmittedProtocolDefinition } from "./definition-abi.ts";
+import {
+  effectsAllowed,
+  getInvocationControl,
+  intersectGrant,
+  isProtocolPrincipal,
+  mintProtocolPrincipal,
+  runWithInvocationControl,
+  targetAllowed,
+  type InvocationControlState,
+} from "./control.ts";
+import { InvocationLimiter } from "./invocation-limiter.ts";
 import type {
   CreateProtocolFabricOptions,
   InvokeErrorCode,
@@ -10,6 +26,8 @@ import type {
   InvocationProvenanceEvent,
   ProtocolAgentExecutor,
   ProtocolBindings,
+  ProtocolGrant,
+  ProtocolPrincipal,
   ProtocolFabric,
   ProtocolHandler,
   ProtocolRegistration,
@@ -20,6 +38,7 @@ import type {
   ProvenanceRecorder,
   RegistrationProvenanceEvent,
   RegistrationProvenanceRecorder,
+  StandardProtocolEffect,
   ProvideSnapshot,
   RecorderUnsubscribe,
   RegistrySnapshot,
@@ -37,7 +56,7 @@ import { validateRegistration } from "./validation.ts";
 // can find the same fabric through globalThis.
 const FABRIC_KEY = Symbol.for("pi-protocol.minimal.fabric");
 const FABRIC_VERSION_KEY = Symbol.for("pi-protocol.minimal.fabric.version");
-const FABRIC_VERSION = 5;
+const FABRIC_VERSION = 6;
 const HOST_ABI_KEY = Symbol.for("@kybernetria/pi-protocol.host.v1");
 const HOST_ABI_VERSION = 1;
 const MAX_REGISTRATION_EVENTS = 1_024;
@@ -78,6 +97,15 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
   const registrationSubscribers = new Set<RegistrationProvenanceRecorder>();
   const registrationEvents: RegistrationProvenanceEvent[] = [];
   const audit = new AuditLedger(options.audit);
+  const principals = new WeakSet<object>();
+  const systemPrincipal = mintProtocolPrincipal("system:local", "system");
+  principals.add(systemPrincipal);
+  const defaultDeadlineMs = boundedInteger(options.defaultDeadlineMs, 30_000, 10, 300_000, "defaultDeadlineMs");
+  const limiter = new InvocationLimiter(
+    boundedInteger(options.maxConcurrentInvocations, 32, 1, 1_024, "maxConcurrentInvocations"),
+    boundedInteger(options.maxQueuedInvocations, 128, 0, 4_096, "maxQueuedInvocations"),
+  );
+  const confirmationEffects = new Set(options.confirmationRequiredEffects ?? ["external.transaction", "system.configure"]);
 
   const emitRegistration = (event: RegistrationProvenanceEvent): void => {
     const snapshot = freezeSnapshot({
@@ -177,8 +205,9 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
   };
 
   const performAuditedInvocation = async (request: InvokeRequest, waitForOutcome: boolean) => {
-    try { request = snapshotInvokeRequest(request); }
-    catch {
+    try {
+      request = snapshotInvokeRequest(request);
+    } catch {
       const receipt = audit.createReceipt({ traceId: createId("trace"), spanId: createId("span"), target: "invalid.invalid" });
       audit.reject(receipt, "INVALID_INPUT");
       const result: InvokeResult = { ok: false, error: { code: "INVALID_INPUT", message: "Invocation request must contain ordinary data fields" } };
@@ -192,7 +221,13 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
     const receipt = audit.createReceipt({ traceId: canonicalTraceId, spanId: canonicalSpanId, target: safeTarget });
     const compatibilityProvenance = createInvocationProvenance(request);
     const compatibilityStartedAt = Date.now();
+    let releaseSlot: (() => void) | undefined;
+    let releaseControlSignal: (() => void) | undefined;
     const reject = (code: InvokeErrorCode, message: string) => {
+      releaseSlot?.();
+      releaseSlot = undefined;
+      releaseControlSignal?.();
+      releaseControlSignal = undefined;
       audit.reject(receipt, code);
       const error = { code, message };
       const preview = createInputPreview(request.input);
@@ -201,37 +236,163 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
       const result: InvokeResult = { ok: false, error };
       return audit.trackedResult(result, receipt);
     };
-    if (safeTarget === "invalid.invalid") return reject("NOT_FOUND", "Invalid protocol target");
-    if (request.abortSignal?.aborted) return reject("ABORTED", "Invocation aborted before execution");
+    if (safeTarget === "invalid.invalid") return reject("INVALID_TARGET", "Invalid protocol target");
+
+    const parentControl = getInvocationControl();
+    const grant: ProtocolGrant = parentControl?.grant ?? Object.freeze({ targets: Object.freeze(["*"]), maxDepth: 8, maxInvocations: 64 });
+    const rootBudget = parentControl?.rootBudget ?? { remainingInvocations: grant.maxInvocations ?? 64 };
+    const scopeBudgets = parentControl?.scopeBudgets ?? [rootBudget];
+    const depth = (parentControl?.depth ?? -1) + 1;
+    const maxDepth = Math.min(parentControl?.maxDepth ?? 8, grant.maxDepth ?? 8);
+    const deadline = Math.min(parentControl?.deadline ?? Number.POSITIVE_INFINITY, Date.now() + defaultDeadlineMs);
+    const combined = combineInvocationSignals(parentControl?.signal, request.abortSignal, deadline);
+    releaseControlSignal = combined.dispose;
+    if (combined.signal.aborted) return reject(Date.now() >= deadline ? "DEADLINE_EXCEEDED" : "CANCELLED", "Invocation unavailable before execution");
+    if (depth > maxDepth || scopeBudgets.some((budget) => budget.remainingInvocations <= 0)) return reject("OVERLOADED", "Invocation budget exhausted");
+    if (!targetAllowed(grant, safeTarget)) return reject("FORBIDDEN", `Protocol grant denies target ${safeTarget}`);
+    for (const budget of new Set(scopeBudgets)) budget.remainingInvocations -= 1;
     if (!isProtocolTargetAllowedFromCurrentContext(request.nodeId, request.provide)) {
       return reject("POLICY_DENIED", `Protocol access denied for target ${safeTarget}`);
     }
+    try { releaseSlot = await limiter.acquire(combined.signal, deadline); }
+    catch (error) {
+      const code = controlErrorCode(error);
+      return reject(code, error instanceof Error ? error.message : "Invocation admission failed");
+    }
+
     const selected = nodes.get(request.nodeId);
     if (!selected) return reject("NOT_FOUND", `Node not found: ${request.nodeId}`);
     const provide = selected.node.provides.find((candidate) => candidate.name === request.provide);
     if (!provide) return reject("NOT_FOUND", `Provide not found: ${safeTarget}`);
-    if (request.callerNodeId && provide.policy?.blacklistedCallers?.includes(request.callerNodeId)) {
-      return reject("POLICY_DENIED", `caller ${request.callerNodeId} is blacklisted from using ${safeTarget}`);
+    const authoritativeCaller = parentControl?.callingTarget;
+    if (authoritativeCaller && provide.policy?.blacklistedCallers?.includes(authoritativeCaller)) {
+      return reject("POLICY_DENIED", `caller ${authoritativeCaller} is blacklisted from using ${safeTarget}`);
     }
+    try {
+      const input = normalizeJsonValue(assertBoundedJsonValue(request.input, PROTOCOL_CONTRACT_LIMITS));
+      request = { ...request, input };
+    } catch {
+      return reject("INPUT_INVALID", "Input must be a bounded strict JSON value");
+    }
+    const effects = (provide.effects ?? []) as StandardProtocolEffect[];
+    if (!effectsAllowed(grant, effects)) return reject("FORBIDDEN", `Protocol grant denies effects for ${safeTarget}`);
     const compiled = selected.definition?.provides[request.provide];
-    if (compiled && !compiled.validateInput(request.input).valid) return reject("INVALID_INPUT", "Input does not satisfy the protocol contract");
+    if (compiled && !compiled.validateInput(request.input).valid) return reject("INPUT_INVALID", "Input does not satisfy the protocol contract");
 
     // Pin before any required sink await. Replacement can publish, but this exact
     // generation remains leased and is the only one dispatched for this receipt.
     selected.inFlight += 1;
     audit.bind(receipt, selected);
     let released = false;
-    const release = () => { if (!released) { released = true; releaseRegisteredNode(selected); } };
+    const release = () => {
+      if (!released) {
+        released = true;
+        releaseRegisteredNode(selected);
+        releaseSlot?.();
+        releaseSlot = undefined;
+        releaseControlSignal?.();
+        releaseControlSignal = undefined;
+      }
+    };
+
+    const requiresConfirmation = provide.policy?.confirmation === "required" || effects.some((effect) => confirmationEffects.has(effect));
+    if (requiresConfirmation) {
+      audit.approval(receipt, "requested");
+      if (!options.confirmationBroker) {
+        audit.approval(receipt, "denied");
+        release();
+        return reject("CONFIRMATION_REQUIRED", `Host confirmation is required for ${safeTarget}`);
+      }
+      let approved = false;
+      try {
+        approved = await waitForConfirmation(Promise.resolve(options.confirmationBroker.confirm({
+          principal: parentControl?.principal ?? systemPrincipal,
+          target: safeTarget,
+          contractDigest: selected.contractDigest,
+          inputDigest: digestJson(request.input),
+          effects,
+          expiresAt: deadline,
+        })), combined.signal, deadline);
+      } catch { approved = false; }
+      if (!approved) {
+        audit.approval(receipt, "denied");
+        release();
+        if (combined.signal.aborted) return reject(Date.now() >= deadline ? "DEADLINE_EXCEEDED" : "CANCELLED", "Confirmation did not complete before invocation expiry");
+        return reject("CONFIRMATION_DENIED", `Host confirmation denied ${safeTarget}`);
+      }
+      audit.approval(receipt, "approved");
+      if (Date.now() >= deadline || combined.signal.aborted) {
+        release();
+        return reject(Date.now() >= deadline ? "DEADLINE_EXCEEDED" : "CANCELLED", "Invocation expired before dispatch");
+      }
+    }
+
     const auditAccepted = await audit.start(receipt, jsonBytes(request.input));
     if (!auditAccepted) {
       release();
       return reject("AUDIT_UNAVAILABLE", "Required audit sink unavailable");
     }
-    if (request.abortSignal?.aborted) {
+    if (combined.signal.aborted) {
       audit.cancelRequested(receipt);
       release();
-      return reject("ABORTED", "Invocation aborted before dispatch");
+      return reject(Date.now() >= deadline ? "DEADLINE_EXCEEDED" : "CANCELLED", "Invocation unavailable before dispatch");
     }
+
+    let controlState!: InvocationControlState;
+    const invokeChild = async (target: string, input: unknown, childOptions?: import("./types.ts").ChildInvokeOptions) => {
+      const parsed = parseTarget(target);
+      if (!parsed || !validChildOptions(childOptions)) return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input }, false);
+      const childGrant = intersectGrant(grant, childOptions?.grant);
+      const childDeadline = Math.min(deadline, childOptions?.deadline ?? deadline);
+      const childCombined = combineInvocationSignals(combined.signal, childOptions?.signal, childDeadline);
+      const childScopes = childOptions?.grant
+        ? [...scopeBudgets, { remainingInvocations: Math.min(childGrant.maxInvocations ?? 64, ...scopeBudgets.map((budget) => budget.remainingInvocations)) }]
+        : scopeBudgets;
+      const seed: InvocationControlState = {
+        ...controlState,
+        grant: childGrant,
+        deadline: childDeadline,
+        signal: childCombined.signal,
+        depth,
+        scopeBudgets: childScopes,
+      };
+      const resume = controlState.suspendConcurrency ? await controlState.suspendConcurrency() : async () => undefined;
+      try {
+        return await runWithInvocationControl(seed, () => performAuditedInvocation({ nodeId: parsed.nodeId, provide: parsed.provide, input, abortSignal: childCombined.signal }, false));
+      } finally {
+        childCombined.dispose();
+        await resume();
+      }
+    };
+    controlState = {
+      principal: parentControl?.principal ?? systemPrincipal,
+      grant,
+      depth,
+      deadline,
+      signal: combined.signal,
+      rootBudget,
+      scopeBudgets,
+      maxDepth,
+      suspendConcurrency: async () => {
+        const held = releaseSlot;
+        if (held) {
+          held();
+          releaseSlot = undefined;
+        }
+        let resumed = false;
+        return async () => {
+          if (resumed || !held || released) return;
+          resumed = true;
+          const reacquired = await limiter.acquire(combined.signal, deadline);
+          if (released) reacquired();
+          else releaseSlot = reacquired;
+        };
+      },
+      invocationId: receipt.invocationId,
+      callingTarget: safeTarget,
+      invokeChild,
+      progress: (event) => audit.progress({ schemaVersion: 1, invocationId: receipt.invocationId, sequence: Date.now(), ...event }),
+    };
 
     audit.dispatched(receipt);
     const executionRequest: InvokeRequest = {
@@ -243,9 +404,11 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
       ...(request.parentSpanId ? { parentSpanId: request.parentSpanId } : {}),
       ...(request.callerNodeId ? { callerNodeId: request.callerNodeId } : {}),
       ...(request.session ? { session: request.session } : {}),
-      ...(request.abortSignal ? { abortSignal: request.abortSignal } : {}),
+      abortSignal: combined.signal,
     };
-    const actual = audit.runWithReceipt(receipt.invocationId, () => executePinned(selected, provide, executionRequest));
+    const actual = runWithInvocationControl(controlState, () =>
+      audit.runWithReceipt(receipt.invocationId, () => executePinned(selected, provide, executionRequest))
+    );
     const settled = Promise.resolve(actual)
       .catch((): InvokeResult => ({ ok: false, error: { code: "EXECUTION_FAILED", message: "Invocation pipeline failed" } }))
       .then((result) => {
@@ -253,14 +416,14 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
         release();
         return audit.trackedResult(result, receipt);
       });
-    if (waitForOutcome || !request.abortSignal) return settled;
+    if (waitForOutcome) return settled;
 
     let removeAbort: () => void = () => undefined;
     const cancellation = new Promise<"cancel">((resolve) => {
       const onAbort = () => resolve("cancel");
-      request.abortSignal!.addEventListener("abort", onAbort, { once: true });
-      removeAbort = () => request.abortSignal!.removeEventListener("abort", onAbort);
-      if (request.abortSignal!.aborted) resolve("cancel");
+      combined.signal.addEventListener("abort", onAbort, { once: true });
+      removeAbort = () => combined.signal.removeEventListener("abort", onAbort);
+      if (combined.signal.aborted) resolve("cancel");
     });
     const raced = await Promise.race([settled, cancellation]);
     removeAbort();
@@ -297,7 +460,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
     );
     await recordProvenance(provenanceRecorder, provenanceSubscribers, {
       ...provenance,
-      status: result.ok ? "succeeded" : result.error.code === "ABORTED" ? "aborted" : "failed",
+      status: result.ok ? "succeeded" : result.error.code === "ABORTED" || result.error.code === "CANCELLED" ? "aborted" : "failed",
       durationMs: Date.now() - startedAt,
       ...inputPreview,
       ...(result.ok ? createOutputPreview(result.output) : { error: result.error }),
@@ -355,6 +518,46 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
 
     invokeTracked(request) {
       return performAuditedInvocation(request, false);
+    },
+
+    mintPrincipal(id, kind) {
+      const principal = mintProtocolPrincipal(id, kind);
+      principals.add(principal);
+      return principal;
+    },
+
+    invokeAs(principal, target, input, invokeOptions) {
+      if (!isProtocolPrincipal(principal) || !principals.has(principal)) {
+        return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input }, false);
+      }
+      const parsed = parseTarget(target);
+      if (!parsed || !validGrant(invokeOptions?.grant)) {
+        return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input }, false);
+      }
+      const grant = intersectGrant(Object.freeze({ targets: Object.freeze(["*"]), maxDepth: 32, maxInvocations: 1_024 }), invokeOptions.grant);
+      const requestedDeadline = invokeOptions.deadline ?? Date.now() + defaultDeadlineMs;
+      if (!Number.isFinite(requestedDeadline)) return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input }, false);
+      const deadline = Math.min(requestedDeadline, Date.now() + 300_000);
+      const combined = combineInvocationSignals(invokeOptions.signal, undefined, deadline);
+      const rootBudget = { remainingInvocations: grant.maxInvocations ?? 64 };
+      const seed: InvocationControlState = {
+        principal,
+        grant,
+        depth: -1,
+        deadline,
+        signal: combined.signal,
+        rootBudget,
+        scopeBudgets: [rootBudget],
+        maxDepth: grant.maxDepth ?? 8,
+        invokeChild: () => Promise.reject(new Error("No active invocation")),
+        progress: () => undefined,
+      };
+      return runWithInvocationControl(seed, () => performAuditedInvocation({
+        nodeId: parsed.nodeId,
+        provide: parsed.provide,
+        input,
+        abortSignal: combined.signal,
+      }, false)).finally(combined.dispose);
     },
 
     install(definition, bindings, metadata) {
@@ -492,10 +695,11 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
     },
 
     describeProvide(nodeId, provideName) {
-      if (!isProtocolTargetAllowedFromCurrentContext(nodeId, provideName)) return undefined;
+      const control = getInvocationControl();
+      if (!isProtocolTargetAllowedFromCurrentContext(nodeId, provideName) || (control && !targetAllowed(control.grant, `${nodeId}.${provideName}`))) return undefined;
       const node = nodes.get(nodeId)?.node;
       const provide = node?.provides.find((item) => item.name === provideName);
-      if (!node || !provide) return undefined;
+      if (!node || !provide || (control && !effectsAllowed(control.grant, provide.effects ?? []))) return undefined;
 
       return freezeSnapshot({
         ...cloneProvide(provide),
@@ -513,7 +717,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
   return fabric;
 }
 
-export function ensureProtocolFabric(): ProtocolFabric {
+export function ensureProtocolFabric(options: CreateProtocolFabricOptions = {}): ProtocolFabric {
   const globals = globalThis as Record<PropertyKey, unknown>;
   const host = globals[HOST_ABI_KEY] as ProtocolHostAbi | undefined;
   if (host !== undefined) {
@@ -529,7 +733,7 @@ export function ensureProtocolFabric(): ProtocolFabric {
   if (legacyAnchor !== undefined && !isCompatibleProtocolFabric(legacyAnchor)) {
     throw new Error("Incompatible live Pi Protocol fabric cannot be replaced");
   }
-  const fabric = legacyAnchor ?? createProtocolFabric();
+  const fabric = legacyAnchor ?? createProtocolFabric(options);
   const createdHost: ProtocolHostAbi = {
     abiVersion: HOST_ABI_VERSION,
     fabric,
@@ -562,6 +766,8 @@ function isCompatibleProtocolFabric(value: ProtocolFabric | undefined): value is
     typeof value.getReceipt === "function" &&
     typeof value.lookupCausalProvenance === "function" &&
     typeof value.invokeTracked === "function" &&
+    typeof value.mintPrincipal === "function" &&
+    typeof value.invokeAs === "function" &&
     typeof value.install === "function" &&
     typeof value.register === "function" &&
     typeof value.unregister === "function" &&
@@ -680,6 +886,98 @@ function rejectedRegistrationEvent(
     error: { code: stableCode, message: error instanceof Error ? error.message : "Registration rejected" },
     metadata,
   };
+}
+
+function boundedInteger(value: number | undefined, fallback: number, minimum: number, maximum: number, label: string): number {
+  const candidate = value ?? fallback;
+  if (!Number.isSafeInteger(candidate) || candidate < minimum || candidate > maximum) throw new Error(`${label} must be an integer from ${minimum} to ${maximum}`);
+  return candidate;
+}
+
+function parseTarget(target: unknown): { nodeId: string; provide: string } | undefined {
+  if (typeof target !== "string") return undefined;
+  const separator = target.indexOf(".");
+  if (separator <= 0 || separator !== target.lastIndexOf(".")) return undefined;
+  const nodeId = target.slice(0, separator);
+  const provide = target.slice(separator + 1);
+  return validTargetPart(nodeId) && validTargetPart(provide) ? { nodeId, provide } : undefined;
+}
+
+function validChildOptions(options: import("./types.ts").ChildInvokeOptions | undefined): boolean {
+  if (options === undefined) return true;
+  if (typeof options !== "object" || options === null || Object.getPrototypeOf(options) !== Object.prototype) return false;
+  const allowed = new Set(["deadline", "grant", "signal"]);
+  if (Reflect.ownKeys(options).some((key) => typeof key !== "string" || !allowed.has(key))) return false;
+  for (const key of Object.keys(options)) {
+    const descriptor = Object.getOwnPropertyDescriptor(options, key);
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) return false;
+  }
+  return (options.deadline === undefined || Number.isFinite(options.deadline))
+    && (options.grant === undefined || validGrant(options.grant))
+    && (options.signal === undefined || (typeof options.signal === "object" && typeof options.signal.addEventListener === "function"));
+}
+
+function validGrant(grant: ProtocolGrant | undefined): grant is ProtocolGrant {
+  return Boolean(grant)
+    && Array.isArray(grant?.targets)
+    && grant.targets.length <= 256
+    && grant.targets.every((target) => target === "*" || /^([a-z0-9][a-z0-9_-]*)(?:\.\*|\.[a-z0-9][a-z0-9_-]*)$/.test(target))
+    && (grant.effects === undefined || (Array.isArray(grant.effects) && grant.effects.length <= 11 && grant.effects.every((effect) => STANDARD_EFFECTS.includes(effect))))
+    && (grant.maxDepth === undefined || (Number.isInteger(grant.maxDepth) && grant.maxDepth! >= 0 && grant.maxDepth! <= 32))
+    && (grant.maxInvocations === undefined || (Number.isInteger(grant.maxInvocations) && grant.maxInvocations! >= 1 && grant.maxInvocations! <= 1_024));
+}
+
+function combineInvocationSignals(first: AbortSignal | undefined, second: AbortSignal | undefined, deadline: number): { signal: AbortSignal; dispose: () => void } {
+  const controller = new AbortController();
+  const sources = [first, second].filter((signal): signal is AbortSignal => Boolean(signal));
+  const onAbort = () => controller.abort();
+  for (const source of sources) {
+    if (source.aborted) controller.abort();
+    else source.addEventListener("abort", onAbort);
+  }
+  const delay = Number.isFinite(deadline) ? Math.max(0, deadline - Date.now()) : undefined;
+  const timer = delay === undefined ? undefined : setTimeout(() => controller.abort(), delay);
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      if (timer) clearTimeout(timer);
+      for (const source of sources) source.removeEventListener("abort", onAbort);
+    },
+  };
+}
+
+async function waitForConfirmation(promise: Promise<boolean>, signal: AbortSignal, deadline: number): Promise<boolean> {
+  if (signal.aborted || Date.now() >= deadline) return false;
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      resolve(value);
+    };
+    const onAbort = () => finish(false);
+    signal.addEventListener("abort", onAbort, { once: true });
+    void promise.then((value) => finish(value), () => finish(false));
+  });
+}
+
+function controlErrorCode(error: unknown): InvokeErrorCode {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = String((error as { code: unknown }).code);
+    if (code === "CANCELLED" || code === "DEADLINE_EXCEEDED" || code === "OVERLOADED") return code;
+  }
+  return "OVERLOADED";
+}
+
+function digestJson(value: unknown): string {
+  try {
+    const json = JSON.stringify(value);
+    if (json === undefined || Buffer.byteLength(json, "utf8") > 1_048_576) return "sha256:unavailable";
+    return `sha256:${createHash("sha256").update(json).digest("hex")}`;
+  } catch {
+    return "sha256:unavailable";
+  }
 }
 
 function snapshotInvokeRequest(value: InvokeRequest): InvokeRequest {
@@ -810,8 +1108,10 @@ function cloneProtocolNode(node: ProtocolNode): ProtocolNode {
 function cloneProtocolNodeWithAllowedProvides(node: ProtocolNode): ProtocolNode {
   const cloned = cloneProtocolNode(node);
   if (hasProtocolAccessRestrictionInCurrentContext()) delete cloned.agents;
+  const control = getInvocationControl();
   cloned.provides = cloned.provides.filter((provide) =>
     isProtocolTargetAllowedFromCurrentContext(cloned.nodeId, provide.name)
+    && (!control || (targetAllowed(control.grant, `${cloned.nodeId}.${provide.name}`) && effectsAllowed(control.grant, provide.effects ?? [])))
   );
   return cloned;
 }

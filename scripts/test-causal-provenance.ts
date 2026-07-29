@@ -202,7 +202,7 @@ function definition() {
       provide("echo", { type: "object", additionalProperties: false, required: ["text"], properties: { text: { type: "string", "x-pi-sensitive": true } } }, objectText()),
       provide("child", { type: "object", additionalProperties: false }, objectText()),
       provide("parent", { type: "object", additionalProperties: false }, objectText()),
-      provide("slow", { type: "object", additionalProperties: false }, objectText(), ["external.transaction"]),
+      provide("slow", { type: "object", additionalProperties: false }, objectText()),
     ],
   });
 }
@@ -212,7 +212,7 @@ function singleDefinition(nodeId: string, description = "Run.") {
     $schema: "https://pi.dev/protocol/manifest-v1.schema.json",
     schemaVersion: 1,
     node: { id: nodeId, purpose: "Single audit fixture." },
-    provides: [{ name: "run", description, inputSchema: { type: "null" }, outputSchema: { type: "null" }, effects: ["external.transaction"] }],
+    provides: [{ name: "run", description, inputSchema: { type: "null" }, outputSchema: { type: "null" } }],
   });
 }
 

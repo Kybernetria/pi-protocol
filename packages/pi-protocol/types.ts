@@ -1,4 +1,4 @@
-import type { ProtocolDefinition } from "./contract/types.ts";
+import type { ProtocolDefinition, StandardEffect } from "./contract/types.ts";
 import type { AuditDiagnostics, AuditPolicy, ProgressObserver } from "./provenance/sink.ts";
 import type { CausalReceiptResult, InvocationReceiptSummary, InvokeTrackedResult } from "./provenance/receipt.ts";
 import type { CanonicalProvenanceEventV1 } from "./provenance/events.ts";
@@ -132,6 +132,32 @@ export type ProtocolRuntimeEventEmitter = (event: ProtocolRuntimeEvent) => void 
 
 export type ProtocolRuntimeEventRecorder = ProtocolRuntimeEventEmitter;
 
+export type StandardProtocolEffect = StandardEffect;
+
+export interface ProtocolPrincipal {
+  readonly id: string;
+  readonly kind: "host" | "user" | "agent" | "system";
+}
+
+export interface ProtocolGrant {
+  readonly targets: readonly string[];
+  readonly effects?: readonly StandardProtocolEffect[];
+  readonly maxDepth?: number;
+  readonly maxInvocations?: number;
+}
+
+export interface InvocationBudget {
+  readonly maxDepth: number;
+  readonly remainingDepth: number;
+  readonly remainingInvocations: number;
+}
+
+export interface ChildInvokeOptions {
+  readonly deadline?: number;
+  readonly grant?: ProtocolGrant;
+  readonly signal?: AbortSignal;
+}
+
 export interface ProtocolInvocationContext {
   nodeId: string;
   provide: string;
@@ -142,6 +168,13 @@ export interface ProtocolInvocationContext {
   session?: InvocationSessionControl;
   abortSignal?: AbortSignal;
   emitRuntimeEvent?: ProtocolRuntimeEventEmitter;
+  invocationId?: string;
+  signal?: AbortSignal;
+  deadline?: number;
+  principal?: ProtocolPrincipal;
+  remainingBudget?: InvocationBudget;
+  invoke?: (target: string, input: unknown, options?: ChildInvokeOptions) => Promise<InvokeTrackedResult>;
+  progress?: (event: { message?: string; completed?: number; total?: number }) => void;
 }
 
 export type ProtocolAgentExecutor = (
@@ -280,7 +313,13 @@ export interface InvokeRequest {
   abortSignal?: AbortSignal;
 }
 
-export type InvokeErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "INVALID_OUTPUT" | "EXECUTION_FAILED" | "ABORTED" | "POLICY_DENIED" | "AUDIT_UNAVAILABLE" | "OUTCOME_UNKNOWN";
+export type InvokeErrorCode =
+  | "INVALID_TARGET" | "NOT_FOUND" | "CONTRACT_CHANGED" | "INPUT_INVALID" | "OUTPUT_INVALID"
+  | "FORBIDDEN" | "CONFIRMATION_REQUIRED" | "CONFIRMATION_DENIED" | "DEADLINE_EXCEEDED"
+  | "CANCELLED" | "OUTCOME_UNKNOWN" | "OVERLOADED" | "CONFLICT" | "SESSION_NOT_FOUND"
+  | "AUDIT_UNAVAILABLE" | "EXECUTION_FAILED"
+  // v0.x compatibility codes:
+  | "INVALID_INPUT" | "INVALID_OUTPUT" | "ABORTED" | "POLICY_DENIED";
 
 export type InvokeResult =
   | { ok: true; nodeId: string; provide: string; output: unknown }
@@ -288,8 +327,32 @@ export type InvokeResult =
 
 export type RecorderUnsubscribe = () => void;
 
+export interface ConfirmationRequest {
+  readonly principal: ProtocolPrincipal;
+  readonly target: string;
+  readonly contractDigest?: string;
+  readonly inputDigest: string;
+  readonly effects: readonly StandardProtocolEffect[];
+  readonly expiresAt: number;
+}
+
+export interface ConfirmationBroker {
+  confirm(request: ConfirmationRequest): boolean | Promise<boolean>;
+}
+
+export interface InvokeAsOptions {
+  readonly grant: ProtocolGrant;
+  readonly deadline?: number;
+  readonly signal?: AbortSignal;
+}
+
 export interface CreateProtocolFabricOptions {
   audit?: AuditPolicy;
+  confirmationBroker?: ConfirmationBroker;
+  confirmationRequiredEffects?: readonly StandardProtocolEffect[];
+  maxConcurrentInvocations?: number;
+  maxQueuedInvocations?: number;
+  defaultDeadlineMs?: number;
 }
 
 export interface ProtocolFabric {
@@ -305,6 +368,8 @@ export interface ProtocolFabric {
   getReceipt(invocationId: string, authority: object): InvocationReceiptSummary | undefined;
   lookupCausalProvenance(invocationId: string, authority: object, options?: { maxDepth?: number; limit?: number }): CausalReceiptResult | undefined;
   invokeTracked(request: InvokeRequest): Promise<InvokeTrackedResult>;
+  mintPrincipal(id: string, kind?: ProtocolPrincipal["kind"]): ProtocolPrincipal;
+  invokeAs(principal: ProtocolPrincipal, target: string, input: unknown, options: InvokeAsOptions): Promise<InvokeTrackedResult>;
   install(definition: ProtocolDefinition, bindings: ProtocolBindings, metadata?: ProtocolRegistrationMetadata): ProtocolRegistration;
   register(input: RegisterNodeInput): void;
   unregister(nodeId: string): void;

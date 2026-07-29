@@ -147,6 +147,11 @@ export class AuditLedger {
     this.evictReceipts();
   }
 
+  approval(receipt: MutableReceipt, state: "requested" | "approved" | "denied"): void {
+    const type = state === "requested" ? "invocation.approval_requested" : state === "approved" ? "invocation.approved" : "invocation.denied";
+    this.append(this.event(receipt, type, { effectsMayHaveOccurred: false }));
+  }
+
   cancelRequested(receipt: MutableReceipt): void {
     this.append(this.event(receipt, "invocation.cancel_requested", { effectsMayHaveOccurred: receipt.effectsMayHaveOccurred }));
   }
@@ -166,7 +171,7 @@ export class AuditLedger {
     if (result.ok) {
       receipt.state = "succeeded";
       receipt.outcomeCode = "OK";
-    } else if (result.error.code === "ABORTED") {
+    } else if (result.error.code === "ABORTED" || result.error.code === "CANCELLED") {
       receipt.state = "cancelled";
       receipt.outcomeCode = "CANCELLED";
     } else {

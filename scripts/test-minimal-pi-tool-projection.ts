@@ -36,7 +36,7 @@ function createPiRuntime() {
   };
 }
 
-const fabric = ensureProtocolFabric();
+const fabric = ensureProtocolFabric({ confirmationBroker: { confirm: () => true } });
 const pi = createPiRuntime();
 
 fabric.register({

@@ -216,7 +216,7 @@ await isolatedFabric.invoke({ nodeId: "isolated_runtime", provide: "stream", inp
 assert.equal(isolatedRuntimeEvents.length, 1);
 isolatedFabric.setRuntimeEventRecorder(undefined);
 
-const policyFabric = createProtocolFabric();
+const policyFabric = createProtocolFabric({ confirmationBroker: { confirm: () => true } });
 const policyProvenanceEvents: InvocationProvenanceEvent[] = [];
 policyFabric.setProvenanceRecorder((event) => {
   policyProvenanceEvents.push(event);
@@ -251,23 +251,26 @@ assert.deepEqual(policyFabric.describeProvide("policy_target", "echo")?.policy, 
   confirmation: "required",
   blacklistedCallers: ["bad_agent.invoke"],
 });
+policyFabric.register({
+  node: {
+    nodeId: "bad_agent",
+    purpose: "Delegated caller identity fixture.",
+    provides: [{ name: "invoke", description: "Invoke policy target.", inputSchema: textInput, outputSchema: {}, execution: { type: "handler", handler: "invoke" } }],
+  },
+  handlers: { invoke: async (input, context) => context!.invoke!("policy_target.echo", input) },
+});
 policyProvenanceEvents.length = 0;
-const deniedPolicyResult = await policyFabric.invoke({
+const spoofedRootResult = await policyFabric.invoke({
   nodeId: "policy_target",
   provide: "echo",
-  input: { text: "blocked" },
+  input: { text: "root caller metadata is not authority" },
   callerNodeId: "bad_agent.invoke",
 });
-assert.deepEqual(deniedPolicyResult, {
-  ok: false,
-  error: {
-    code: "POLICY_DENIED",
-    message: "caller bad_agent.invoke is blacklisted from using policy_target.echo",
-  },
-});
-assert.equal(policyProvenanceEvents.length, 2);
-assert.equal(policyProvenanceEvents[1]?.status, "failed");
-assert.deepEqual(policyProvenanceEvents[1]?.error, deniedPolicyResult.error);
+assert.equal(spoofedRootResult.ok, true, "callerNodeId cannot manufacture canonical caller authority");
+const deniedDelegatedResult = await policyFabric.invoke({ nodeId: "bad_agent", provide: "invoke", input: { text: "blocked" } });
+assert.equal(deniedDelegatedResult.ok, true);
+assert.equal((deniedDelegatedResult as any).output.error.code, "POLICY_DENIED");
+assert.equal((deniedDelegatedResult as any).output.error.message, "caller bad_agent.invoke is blacklisted from using policy_target.echo");
 const allowedPolicyResult = await policyFabric.invoke({
   nodeId: "policy_target",
   provide: "echo",

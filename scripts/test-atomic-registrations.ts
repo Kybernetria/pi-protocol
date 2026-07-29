@@ -67,7 +67,7 @@ assert.ok(Object.isFrozen(fabric.describeNode("atomic_node")));
 assert.throws(() => fabric.unregister("atomic_node"), hasCode("CONFLICT"));
 const invalidInput = await fabric.invoke({ nodeId: "atomic_node", provide: "echo", input: { text: "" } });
 assert.equal(invalidInput.ok, false);
-assert.equal(invalidInput.ok ? undefined : invalidInput.error.code, "INVALID_INPUT");
+assert.equal(invalidInput.ok ? undefined : invalidInput.error.code, "INPUT_INVALID");
 
 const oldCall = fabric.invoke({ nodeId: "atomic_node", provide: "echo", input: { text: "work" } });
 await waitFor(() => oldStarted);
