@@ -18,7 +18,7 @@ writeFileSync(join(first, "pi.protocol.json"), `${JSON.stringify(manifest, null,
 writeFileSync(join(first, "package.json"), JSON.stringify({
   name: "@tests/conformance-fixture",
   version: "1.0.0",
-  dependencies: { "@kybernetria/pi-protocol": "^1.0.0" },
+  dependencies: { "@kybernetria/pi-protocol": "^2.0.0" },
   piProtocol: { generated: "src/protocol.generated.ts" },
 }, null, 2));
 writeFileSync(join(first, "prompts", "agent.md"), "Use the protocol carefully.\n");
@@ -44,7 +44,7 @@ const legacy = join(root, "legacy");
 mkdirSync(legacy);
 const legacySource = readFileSync(new URL("./fixtures/contracts/valid-v02.json", import.meta.url), "utf8");
 writeFileSync(join(legacy, "pi.protocol.json"), legacySource);
-writeFileSync(join(legacy, "package.json"), JSON.stringify({ name: "@tests/legacy", version: "1.0.0", dependencies: { "@kybernetria/pi-protocol": "*" } }));
+writeFileSync(join(legacy, "package.json"), JSON.stringify({ name: "@tests/legacy", version: "1.0.0", dependencies: { "@kybernetria/pi-protocol": "^2.0.0" } }));
 assert.equal(checkProtocolPackage(legacy).issues.some((issue) => issue.code === "MANIFEST_INVALID"), true);
 const legacyAllowed = checkProtocolPackage(legacy, { allowLegacy: true });
 assert.equal(legacyAllowed.ok, true);

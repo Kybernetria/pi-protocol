@@ -129,7 +129,10 @@ function configuredGeneratedPath(packageJson: Record<string, unknown> | undefine
   return path;
 }
 function compatibleDependency(range: string): boolean {
-  return /^(?:file:|link:|workspace:)/.test(range) || range.trim() === "*" || /(?:^|[<>=~^|\s])1(?:\.\d+)?(?:\.\d+)?/.test(range);
+  const value = range.trim();
+  return /^(?:file:|link:|workspace:)/.test(value)
+    || /^https:\/\/github\.com\/Kybernetria\/pi-protocol\/releases\/download\/v2\.\d+\.\d+\/.+\.tgz$/.test(value)
+    || /(?:^|[<>=~^|\s])2(?:\.\d+)?(?:\.\d+)?/.test(value);
 }
 function readBounded(path: string, maxBytes: number): string {
   const stat = statSync(path);

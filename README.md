@@ -135,7 +135,7 @@ New manifests, fixtures, generated artifacts, and documentation use v1 only. The
 - `@kybernetria/pi-protocol/pi/agents` — Pi agent adapter (`/sdk/agent-session` compatibility alias)
 - `@kybernetria/pi-protocol/sdk/agent-profile` — private profile admission and prompt resolution
 
-The core import graph does not load Ajv, Pi coding-agent/model/TUI APIs, tools, rendering, agent sessions, or filesystem manifest resolution. The package root does not eagerly load Pi APIs. Prior root convenience imports for Pi tool/SDK runtime functions must move to the existing `/pi` (`/tool`) or `/pi/agents` (`/sdk`) entrypoints; vNext is held from a compatible 1.x publication until ecosystem migration and the major-release gate.
+The core import graph does not load Ajv, Pi coding-agent/model/TUI APIs, tools, rendering, agent sessions, or filesystem manifest resolution. The package root does not eagerly load Pi APIs. Prior root convenience imports for Pi tool/SDK runtime functions must move to the existing `/pi` (`/tool`) or `/pi/agents` (`/sdk`) entrypoints; vNext ships as the 2.x contract/runtime line after repository-by-repository ecosystem migration and the major-release gate.
 
 ## Owned atomic registrations
 
@@ -256,17 +256,9 @@ import {
 
 Do not use this compatibility API for new manifest generation.
 
-## Shared runtime linker (temporary)
+## Runtime distribution
 
-Until the global host ABI migration is complete, separately installed Pi extensions can be linked to Pi's managed protocol package:
-
-```bash
-~/.pi/agent/npm/node_modules/.bin/pi-protocol-link-runtime
-# preview
-~/.pi/agent/npm/node_modules/.bin/pi-protocol-link-runtime --dry-run
-```
-
-The filesystem linker is compatibility infrastructure and will be removed after runtime evidence confirms ecosystem migration.
+Ecosystem packages install normal package copies. The global host ABI converges compatible copies onto one process-wide fabric and fails closed on incompatible or split hosts; no filesystem runtime linker is used.
 
 ## Development
 

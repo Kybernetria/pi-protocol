@@ -8583,7 +8583,8 @@ function configuredGeneratedPath(packageJson, directory) {
   return path;
 }
 function compatibleDependency(range) {
-  return /^(?:file:|link:|workspace:)/.test(range) || range.trim() === "*" || /(?:^|[<>=~^|\s])1(?:\.\d+)?(?:\.\d+)?/.test(range);
+  const value = range.trim();
+  return /^(?:file:|link:|workspace:)/.test(value) || /^https:\/\/github\.com\/Kybernetria\/pi-protocol\/releases\/download\/v2\.\d+\.\d+\/.+\.tgz$/.test(value) || /(?:^|[<>=~^|\s])2(?:\.\d+)?(?:\.\d+)?/.test(value);
 }
 function readBounded(path, maxBytes) {
   const stat = statSync2(path);
@@ -8651,7 +8652,7 @@ import { createHash as createHash2 } from "node:crypto";
 // packages/pi-protocol/package.json
 var package_default = {
   name: "@kybernetria/pi-protocol",
-  version: "1.0.10",
+  version: "2.0.0",
   description: "Pi Protocol \u2014 shared in-memory fabric with handler/agent execution, protocol tool, and pi SDK adapter",
   type: "module",
   main: "./index.ts",
@@ -8660,8 +8661,7 @@ var package_default = {
     "pi-protocol": "dist/pi-protocol.mjs",
     "pi-protocol-check": "dist/pi-protocol.mjs",
     "pi-protocol-generate": "dist/pi-protocol.mjs",
-    "pi-protocol-doctor": "dist/pi-protocol.mjs",
-    "pi-protocol-link-runtime": "scripts/link-shared-runtime.mjs"
+    "pi-protocol-doctor": "dist/pi-protocol.mjs"
   },
   exports: {
     ".": "./index.ts",
@@ -8687,7 +8687,6 @@ var package_default = {
     "tool/*.ts",
     "sdk/*.ts",
     "prompts/*.md",
-    "scripts/*.mjs",
     "LICENSE"
   ],
   pi: {
