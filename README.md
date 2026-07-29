@@ -220,11 +220,11 @@ Continuation sessions are keyed by principal, target, pinned contract digest, an
 
 ## Thin Pi projection
 
-The canonical model-facing tool exposes only `list`, `search`, `describe_node`, `describe_provide`, and `call` (or direct `{ target, input }`). Discovery is cursor-paginated and bounded. It omits deployment identity, policy internals, binding names, and implementation kind; exact schema projection reports explicit truncation when its hard budget is reached.
+The canonical model-facing tool exposes only `list`, `search`, `describe`, and `call` (or direct `{ target, input }`). Discovery is cursor-paginated and bounded. It omits deployment identity, policy internals, binding names, and implementation kind; exact schema projection reports explicit truncation when its hard budget is reached.
 
-Caller/principal identity, grant, trace/span IDs, deadline, cancellation, confirmation, and registration selection are host-owned and absent from the tool schema. Legacy `action`, `invoke`, `registry`, and nested `request` inputs remain migration reads, but their authority-bearing fields are ignored. Calls use `invokeTracked()` and return a canonical immutable receipt, including truthful `OUTCOME_UNKNOWN` states.
+Caller/principal identity, grant, trace/span IDs, deadline, cancellation, confirmation, and registration selection are host-owned and absent from the tool schema. Legacy `action`, `invoke`, `registry`, split describe operations, and nested `request` inputs are translated privately by Pi's `prepareArguments()`, and their authority-bearing fields are ignored. Calls use `invokeTracked()` and return a canonical immutable receipt, including truthful `OUTCOME_UNKNOWN` states.
 
-The Pi adapter has no independent concurrency queue: fabric admission is the single bounded scheduler. Persisted tool details are versioned strict JSON, root correlation IDs are projection-minted, and provenance payload previews are omitted. Renderer lifecycle hardening is delivered in a later vNext phase.
+The Pi adapter has no independent concurrency queue: fabric admission is the single bounded scheduler. Persisted tool details are versioned strict JSON, root correlation IDs are projection-minted, and provenance payload previews, full registries, prompts, and streamed deltas are omitted. A pure bounded view model feeds Pi-native `Text`/`Markdown` components and host wrapping/truncation utilities.
 
 ## Current v0.2 runtime compatibility
 

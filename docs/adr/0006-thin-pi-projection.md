@@ -8,13 +8,13 @@ The Pi tool adapter exposed two overlapping command vocabularies, a raw registry
 
 ## Decision
 
-The model-facing projection has five operations: `list`, `search`, `describe_node`, `describe_provide`, and `call`. A known `target` implies `call`. Its schema exposes target/input, bounded discovery filters, opaque pagination cursors, and session continuation only. Principal, grant, caller, causal IDs, deadline, cancellation, confirmation, and registration selection remain host-owned.
+The model-facing projection has four operations: `list`, `search`, `describe`, and `call`. A known `target` implies `call`. Its schema exposes target/input, bounded discovery filters, opaque pagination cursors, and session continuation only. Principal, grant, caller, causal IDs, deadline, cancellation, confirmation, and registration selection remain host-owned.
 
-A migration decoder still accepts `action`, `invoke`, `registry`, and nested `request`, but strips identity, trace, cancellation, and other authority-bearing fields. Conflicting aliases fail with one bounded `INVALID_REQUEST` result. Canonical details carry `schemaVersion: 1` and `op`; legacy renderer discriminants remain temporarily for historical Pi session entries.
+Pi's `prepareArguments()` migration decoder still accepts `action`, `invoke`, `registry`, split describe operations, and nested `request`, but strips identity, trace, cancellation, and other authority-bearing fields. Conflicting aliases fail with one bounded `INVALID_REQUEST` result. Canonical details carry `schemaVersion: 1` and `op`; legacy renderer discriminants remain temporarily for historical Pi session entries.
 
-Discovery is paginated at at most 50 records and omits package/deployment identity, policy, handler/agent kind, and binding names. Exact schema projection has explicit value/character/depth bounds and reports truncation. Trace correlation is projection-minted at roots, trace payload previews are removed from persisted details, and trace-local display metadata is reduced to the fields required by the renderer.
+Discovery is paginated at at most 50 records and omits package/deployment identity, policy, handler/agent kind, and binding names. Exact schema projection has explicit value/character/depth bounds and reports truncation. Trace correlation is projection-minted at roots, trace payload previews and streamed deltas are removed from persisted details, and no registry snapshot is retained by the renderer.
 
-Calls use `fabric.invokeTracked()`, include the immutable canonical receipt, and preserve `OUTCOME_UNKNOWN` rather than inventing an aborted outcome. The projection does not own a scheduler; fabric admission is the single bounded concurrency/queue authority. Update callback failures are observational and cannot change execution.
+Calls use `fabric.invokeTracked()`, include the immutable canonical receipt, and preserve `OUTCOME_UNKNOWN` rather than inventing an aborted outcome. The projection does not own a scheduler; fabric admission is the single bounded concurrency/queue authority. Update callback failures are observational and cannot change execution. A pure bounded view model feeds Pi-native `Text`/`Markdown` components and host width/wrapping utilities; provider color escape generation and custom ANSI parsing are absent.
 
 ## Consequences
 

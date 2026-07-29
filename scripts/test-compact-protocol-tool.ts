@@ -111,9 +111,11 @@ assert.ok(expandedNodeText.includes("invoke directly"));
 assert.ok(!expandedNodeText.includes("search_test.item_00"), "node expansion must include only the selected node");
 assert.ok(!expandedNodeText.includes("inputSchema"), "node expansion must use cards, not contracts");
 
-const legacyList = await tool.execute("legacy-list-call", { op: "list", expandProvides: true });
-assert.ok(legacyList.content[0]?.text.includes("compact_test.review"));
-assert.equal((legacyList.details as { legacy?: boolean }).legacy, true);
+const translatedLegacyList = tool.prepareArguments?.({ action: "registry", expandProvides: true });
+assert.deepEqual(translatedLegacyList, { op: "list" }, "legacy fields must be translated privately to the modern shape");
+const legacyList = await tool.execute("legacy-list-call", { action: "registry", expandProvides: true });
+assert.ok(legacyList.content[0]?.text.includes('"nodeId": "compact_test"'));
+assert.ok(!legacyList.content[0]?.text.includes("compact_test.review"));
 
 const search = await tool.execute("search-call", { op: "search", query: "complete declared schema" });
 assert.ok(search.content[0]?.text.includes("compact_test.discover_schema"));

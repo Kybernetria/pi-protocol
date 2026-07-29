@@ -2,7 +2,7 @@ import { createChildInvokeRequest } from "../context.ts";
 import type { InvokeRequest, ProtocolFabric, ProtocolNode, ProvideSnapshot, ProvideSpec } from "../types.ts";
 import { requireText } from "./helpers.ts";
 import { invokeWithTraceUpdates } from "./trace.ts";
-import type { ProtocolToolInput, ProtocolToolOperation, ProtocolToolUpdateCallback } from "./types.ts";
+import type { LegacyProtocolToolInput, ProtocolToolInput, ProtocolToolUpdateCallback } from "./types.ts";
 
 export async function handleProtocolToolInput(
   fabric: ProtocolFabric,
@@ -11,10 +11,11 @@ export async function handleProtocolToolInput(
   signal?: AbortSignal,
   toolCallId?: string,
 ): Promise<unknown> {
-  const command = normalizeProtocolToolInput(input);
-  switch (command.op) {
+  const command = input;
+  const op = command.op ?? (command.target ? "call" : "list");
+  switch (op) {
     case "list":
-      return compactNodeCatalog(fabric, command.expandProvides, command.limit, command.cursor);
+      return compactNodeCatalog(fabric, command.limit, command.cursor);
 
     case "search":
       return searchCapabilities(
@@ -24,27 +25,19 @@ export async function handleProtocolToolInput(
         command.filters,
       );
 
-    case "describe_node": {
-      const nodeId = requireText(command.nodeId, "protocol operation describe_node requires nodeId");
-      const node = fabric.describeNode(nodeId);
-      return node
-        ? { ok: true, schemaVersion: 1, op: "describe_node", action: "describe_node", node: summarizeNode(node, command.limit, command.cursor) }
-        : { ok: false, schemaVersion: 1, op: "describe_node", action: "describe_node", error: { code: "NOT_FOUND", message: `Node not found: ${nodeId}` } };
-    }
-
-    case "describe_provide": {
-      const nodeId = requireText(command.nodeId, "protocol operation describe_provide requires nodeId");
-      const provideName = requireText(command.provide, "protocol operation describe_provide requires provide");
-      const provide = fabric.describeProvide(nodeId, provideName);
+    case "describe": {
+      const target = requireText(command.target, "protocol describe requires target");
+      const parsed = parseTarget(target);
+      if (!parsed) {
+        const node = fabric.describeNode(target);
+        return node
+          ? { ok: true, schemaVersion: 1, op: "describe", node: summarizeNode(node, command.limit, command.cursor) }
+          : { ok: false, schemaVersion: 1, op: "describe", error: { code: "NOT_FOUND", message: `Target not found: ${target}` } };
+      }
+      const provide = fabric.describeProvide(parsed.nodeId, parsed.provide);
       return provide
-        ? { ok: true, schemaVersion: 1, op: "describe_provide", action: "describe_provide", provide: summarizeProvideSnapshot(provide) }
-        : {
-            ok: false,
-            schemaVersion: 1,
-            op: "describe_provide",
-            action: "describe_provide",
-            error: { code: "NOT_FOUND", message: `Provide not found: ${nodeId}.${provideName}` },
-          };
+        ? { ok: true, schemaVersion: 1, op: "describe", provide: summarizeProvideSnapshot(provide) }
+        : { ok: false, schemaVersion: 1, op: "describe", error: { code: "NOT_FOUND", message: `Target not found: ${target}` } };
     }
 
     case "call": {
@@ -54,67 +47,42 @@ export async function handleProtocolToolInput(
   }
 }
 
-interface NormalizedProtocolCommand {
-  op: ProtocolToolOperation;
-  query?: string;
-  expandProvides: boolean;
-  limit?: number;
-  cursor?: string;
-  filters?: ProtocolToolInput["filters"];
-  target?: string;
-  nodeId?: string;
-  provide?: string;
-  input?: unknown;
-  session?: InvokeRequest["session"];
-}
-
-export function normalizeProtocolToolInput(input: ProtocolToolInput): NormalizedProtocolCommand {
+export function normalizeProtocolToolInput(input: unknown): ProtocolToolInput {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("protocol input must be an object");
-  const legacy = input.action;
-  const legacyOp: ProtocolToolOperation | undefined = legacy === "registry" ? "list" : legacy === "invoke" ? "call" : legacy;
-  if (input.op && legacyOp && input.op !== legacyOp) throw new Error("protocol op conflicts with legacy action");
-  const op = input.op ?? legacyOp ?? (input.target || input.request?.nodeId ? "call" : "list");
-  const request = input.request;
+  const source = input as LegacyProtocolToolInput;
+  const legacy = source.action;
+  const legacyOp = legacy === "registry" ? "list"
+    : legacy === "invoke" || legacy === "call" ? "call"
+    : legacy === "describe_node" || legacy === "describe_provide" ? "describe"
+    : legacy;
+  const sourceOp = source.op === "describe_node" || source.op === "describe_provide" ? "describe" : source.op;
+  if (sourceOp && legacyOp && sourceOp !== legacyOp) throw new Error("protocol op conflicts with legacy action");
+  const request = source.request;
+  const nodeId = source.nodeId ?? request?.nodeId;
+  const provide = source.provide ?? request?.provide;
+  const legacyTarget = nodeId ? (provide ? `${nodeId}.${provide}` : nodeId) : undefined;
+  const target = source.target ?? legacyTarget;
+  const op = sourceOp ?? legacyOp ?? (target ? "call" : "list");
   return {
     op,
-    query: input.query,
-    expandProvides: input.expandProvides === true || legacy === "registry",
-    limit: input.limit,
-    cursor: input.cursor,
-    filters: input.filters,
-    target: input.target,
-    nodeId: input.nodeId ?? request?.nodeId,
-    provide: input.provide ?? request?.provide,
-    input: request && "input" in request ? request.input : input.input,
-    session: input.session ?? request?.session,
+    ...(source.query !== undefined ? { query: source.query } : {}),
+    ...(source.cursor !== undefined ? { cursor: source.cursor } : {}),
+    ...(source.limit !== undefined ? { limit: source.limit } : {}),
+    ...(source.filters !== undefined ? { filters: { tags: source.filters.tags, effects: source.filters.effects } } : {}),
+    ...(target !== undefined ? { target } : {}),
+    ...(request && "input" in request ? { input: request.input } : "input" in source ? { input: source.input } : {}),
+    ...(source.session ?? request?.session ? { session: source.session ?? request?.session } : {}),
   };
 }
 
-function compactNodeCatalog(fabric: ProtocolFabric, expandProvides: boolean, requestedLimit?: number, cursor?: string): unknown {
+function compactNodeCatalog(fabric: ProtocolFabric, requestedLimit?: number, cursor?: string): unknown {
   const registry = fabric.registry();
   const limit = boundedLimit(requestedLimit);
   const offset = decodeCursor(cursor);
-  if (expandProvides) {
-    return {
-      ok: true,
-      schemaVersion: 1,
-      op: "list",
-      action: "list",
-      legacy: true,
-      capabilities: registry.provides.slice(offset, offset + limit).map((provide) => ({
-        target: provide.globalId,
-        description: provide.description,
-        input: summarizeSchema(provide.inputSchema),
-      })),
-      ...(nextCursor(offset, limit, registry.provides.length) ? { nextCursor: nextCursor(offset, limit, registry.provides.length) } : {}),
-      usage: { target: "node.provide", input: "matching input" },
-    };
-  }
   return {
     ok: true,
     schemaVersion: 1,
     op: "list",
-    action: "list",
     nodes: registry.nodes.slice(offset, offset + limit).map((node) => ({
       nodeId: node.nodeId,
       purpose: node.purpose,
@@ -123,10 +91,10 @@ function compactNodeCatalog(fabric: ProtocolFabric, expandProvides: boolean, req
     })),
     ...(nextCursor(offset, limit, registry.nodes.length) ? { nextCursor: nextCursor(offset, limit, registry.nodes.length) } : {}),
     discovery: {
-      expandNode: { action: "describe_node", nodeId: "..." },
+      expandNode: { op: "describe", target: "node-id" },
       search: { op: "search", query: "...", limit: 12 },
       invokeKnown: { target: "node.provide", input: "matching input" },
-      inspectExactContractOnlyIfNeeded: { action: "describe_provide", nodeId: "...", provide: "..." },
+      inspectExactContractOnlyIfNeeded: { op: "describe", target: "node.provide" },
       continue: { op: "list", cursor: "returned-nextCursor" },
     },
   };
@@ -147,29 +115,17 @@ function searchCapabilities(
   requestedLimit?: number,
   filters?: ProtocolToolInput["filters"],
 ): unknown {
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   const limit = Number.isInteger(requestedLimit) ? Math.max(1, Math.min(50, requestedLimit!)) : 12;
-  const matches = fabric.registry().provides
-    .filter((provide) => !filters?.nodeId || provide.nodeId === filters.nodeId)
-    .filter((provide) => !filters?.execution || provide.execution.type === filters.execution)
-    .filter((provide) => !filters?.tags?.length || filters.tags.every((tag) => provide.tags?.includes(tag)))
-    .filter((provide) => !filters?.effects?.length || filters.effects.every((effect) => provide.effects?.includes(effect)))
-    .map((provide) => ({
-      provide,
-      score: terms.reduce((score, term) => score + (`${provide.globalId} ${provide.description} ${(provide.tags ?? []).join(" ")} ${(provide.effects ?? []).join(" ")}`.toLowerCase().includes(term) ? 1 : 0), 0),
-    }))
-    .filter(({ score }) => terms.length === 0 || score > 0)
-    .sort((a, b) => b.score - a.score || (a.provide.globalId < b.provide.globalId ? -1 : a.provide.globalId > b.provide.globalId ? 1 : 0));
+  const matches = fabric.search(query, { limit, tags: filters?.tags, effects: filters?.effects });
   return {
     ok: true,
     schemaVersion: 1,
     op: "search",
-    action: "search",
     query,
     limit,
-    totalMatches: matches.length,
-    capabilities: matches.slice(0, limit).map(({ provide }) => compactProvideCard(provide)),
-    next: "invoke directly when the compact input signature is sufficient; describe_provide only for exact schema details",
+    totalMatches: matches.totalMatches,
+    capabilities: matches.provides.map((provide) => compactProvideCard(provide)),
+    next: "invoke directly when the compact input signature is sufficient; describe only for exact schema details",
   };
 }
 
@@ -183,7 +139,7 @@ function summarizeNode(node: ProtocolNode, requestedLimit?: number, cursor?: str
     provideCount: node.provides.length,
     provides: node.provides.slice(offset, offset + limit).map((provide) => summarizeProvide(node.nodeId, provide)),
     ...(nextCursor(offset, limit, node.provides.length) ? { nextCursor: nextCursor(offset, limit, node.provides.length) } : {}),
-    next: "invoke directly when the compact input signature is sufficient; describe_provide only for exact schema details",
+    next: "invoke directly when the compact input signature is sufficient; describe only for exact schema details",
   };
 }
 
@@ -302,15 +258,19 @@ function nextCursor(offset: number, limit: number, total: number): string | unde
   return next < total ? `p:${next.toString(36)}` : undefined;
 }
 
-function toInvokeRequest(input: NormalizedProtocolCommand): InvokeRequest {
-  const target = input.target?.trim();
-  const separator = target?.lastIndexOf(".") ?? -1;
-  const targetNode = separator > 0 ? target!.slice(0, separator) : undefined;
-  const targetProvide = separator > 0 ? target!.slice(separator + 1) : undefined;
-  if (target && separator <= 0) throw new Error("protocol target must be node.provide");
+function parseTarget(target: string): { nodeId: string; provide: string } | undefined {
+  const separator = target.lastIndexOf(".");
+  if (separator <= 0 || separator === target.length - 1) return undefined;
+  return { nodeId: target.slice(0, separator), provide: target.slice(separator + 1) };
+}
+
+function toInvokeRequest(input: ProtocolToolInput): InvokeRequest {
+  const target = requireText(input.target, "protocol call requires target");
+  const parsed = parseTarget(target);
+  if (!parsed) throw new Error("protocol target must be node.provide");
   return {
-    nodeId: requireText(input.nodeId ?? targetNode, "protocol call requires target or nodeId"),
-    provide: requireText(input.provide ?? targetProvide, "protocol call requires target or provide"),
+    nodeId: parsed.nodeId,
+    provide: parsed.provide,
     input: input.input,
     ...(input.session ? { session: input.session } : {}),
   };

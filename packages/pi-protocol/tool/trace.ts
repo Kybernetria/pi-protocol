@@ -9,19 +9,10 @@ import type { InvocationReceiptSummary } from "../provenance/receipt.ts";
 import { createProtocolToolId } from "./helpers.ts";
 import type { ProtocolToolExecutionResult, ProtocolToolUpdateCallback } from "./types.ts";
 
-export interface ProtocolTraceRegistry {
-  nodes: Array<{
-    nodeId: string;
-    display?: import("../types.ts").ProtocolDisplaySpec;
-    ui?: { agentColors?: Record<string, string> };
-    provides: Array<{ name: string; display?: import("../types.ts").ProtocolDisplaySpec }>;
-  }>;
-}
-
 export interface ProtocolTraceDetails {
   events: InvocationProvenanceEvent[];
+  /** Present only in transient partial updates; final details omit streamed deltas. */
   runtimeEvents?: ProtocolRuntimeEvent[];
-  registry?: ProtocolTraceRegistry;
 }
 
 export interface ProtocolInvokeToolDetails {
@@ -33,6 +24,7 @@ export interface ProtocolInvokeToolDetails {
   toolCallId?: string;
   result: unknown;
   receipt?: InvocationReceiptSummary;
+  presentation?: { contentType: "text/markdown" };
   trace?: ProtocolTraceDetails;
 }
 
@@ -54,6 +46,8 @@ export async function invokeWithTraceUpdates(
     abortSignal: contextualRequest.abortSignal ?? signal,
   };
   const traceId = tracedRequest.traceId;
+  const outputSchema = fabric.describeProvide(request.nodeId, request.provide)?.outputSchema as { contentMediaType?: string } | undefined;
+  const contentType = outputSchema?.contentMediaType === "text/markdown" ? "text/markdown" : undefined;
   const events: InvocationProvenanceEvent[] = [];
   const runtimeEvents: ProtocolRuntimeEvent[] = [];
   let runtimeChars = 0;
@@ -69,7 +63,8 @@ export async function invokeWithTraceUpdates(
         state: "running",
         ...(toolCallId ? { toolCallId } : {}),
         result: { ok: true },
-        trace: { events: [...events], runtimeEvents: [...runtimeEvents], registry: traceRegistry(fabric.registry(), events) },
+        trace: { events: [...events], runtimeEvents: [...runtimeEvents] },
+        ...(contentType ? { presentation: { contentType } } : {}),
       },
     } satisfies ProtocolToolExecutionResult);
   };
@@ -104,7 +99,8 @@ export async function invokeWithTraceUpdates(
       ...(toolCallId ? { toolCallId } : {}),
       result,
       receipt: tracked.receipt,
-      trace: { events: [...events], runtimeEvents: [...runtimeEvents], registry: traceRegistry(fabric.registry(), events) },
+      trace: { events: [...events], runtimeEvents: runtimeEvents.filter((event) => event.type === "executor_session_model") },
+      ...(contentType ? { presentation: { contentType } } : {}),
     };
   } finally {
     unsubscribeProvenance();
@@ -143,21 +139,4 @@ function boundRuntimeEvent(event: ProtocolRuntimeEvent, remaining: number): Prot
   if (event.type === "executor_output_delta") return { type: event.type, traceId: event.traceId, spanId: event.spanId, textDelta: event.textDelta.slice(0, remaining) };
   const truncated = Boolean(event.outputTruncated) || event.outputPreview.length > remaining;
   return { type: event.type, traceId: event.traceId, spanId: event.spanId, outputPreview: event.outputPreview.slice(0, remaining), ...(truncated ? { outputTruncated: true } : {}) };
-}
-
-function traceRegistry(registry: ReturnType<ProtocolFabric["registry"]>, events: InvocationProvenanceEvent[]): ProtocolTraceRegistry | undefined {
-  const targets = new Set(events.map((event) => `${event.nodeId}.${event.provide}`));
-  if (targets.size === 0) return undefined;
-  const nodeIds = new Set([...targets].map((target) => target.slice(0, target.lastIndexOf("."))));
-  const nodes = registry.nodes
-    .filter((node) => nodeIds.has(node.nodeId))
-    .map((node) => ({
-      nodeId: node.nodeId,
-      ...(node.display ? { display: node.display } : {}),
-      ...(node.ui?.agentColors ? { ui: { agentColors: node.ui.agentColors } } : {}),
-      provides: node.provides
-        .filter((provide) => targets.has(`${node.nodeId}.${provide.name}`))
-        .map((provide) => ({ name: provide.name, ...(provide.display ? { display: provide.display } : {}) })),
-    }));
-  return { nodes };
 }

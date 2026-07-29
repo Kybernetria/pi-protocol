@@ -175,7 +175,7 @@ const invokeRenderInput = {
 };
 const invokeCallLines = tool.renderCall?.(invokeRenderInput, testTheme) as { render(width: number): string[] };
 assert.ok(invokeCallLines.render(120).join("\n").includes("protocol call alpha_tool_projection.echo"));
-assert.ok(invokeCallLines.render(120).join("\n").includes("session: agent-b (continue)"));
+assert.ok(invokeCallLines.render(120).join("\n").includes("[agent-b continue]"));
 assert.ok(!invokeCallLines.render(120).join("\n").includes("trace:"));
 
 const invokeResultLines = tool.renderResult?.(invokeResult, {}, testTheme, { args: invokeRenderInput }) as {
@@ -318,20 +318,21 @@ async function renderDisplayHintProvide(provide: string, nodeId = "display_hint_
 const defaultDisplayResult = await renderDisplayHintProvide("default_tokens", "default_display_tool_projection");
 assert.equal(defaultDisplayResult.result.content[0]?.text, "default says https://example.com/default");
 assert.ok(defaultDisplayResult.text.includes("[toolOutput]default says "));
-assert.ok(defaultDisplayResult.text.includes("[mdLinkUrl]https://example.com/default"));
+assert.ok(defaultDisplayResult.text.includes("https://example.com/default"));
+assert.ok(!defaultDisplayResult.text.includes("[mdLinkUrl]"));
 const nodeDisplayResult = await renderDisplayHintProvide("node_tokens");
 assert.equal(nodeDisplayResult.result.content[0]?.text, "node says https://example.com/node");
-assert.ok(nodeDisplayResult.text.includes("[success]node says "));
-assert.ok(nodeDisplayResult.text.includes("[warning]https://example.com/node"));
+assert.ok(nodeDisplayResult.text.includes("[toolOutput]node says "));
+assert.ok(!nodeDisplayResult.text.includes("[warning]https://example.com/node"));
 assert.ok(!nodeDisplayResult.result.content[0]?.text.includes("[success]"), "protocol output payload should remain plain");
 const provideDisplayResult = await renderDisplayHintProvide("provide_tokens");
 assert.equal(provideDisplayResult.result.content[0]?.text, "provide says https://example.com/provide");
-assert.ok(provideDisplayResult.text.includes("[accent]provide says "));
-assert.ok(provideDisplayResult.text.includes("[error]https://example.com/provide"));
+assert.ok(provideDisplayResult.text.includes("[toolOutput]provide says "));
+assert.ok(!provideDisplayResult.text.includes("[error]https://example.com/provide"));
 const unknownDisplayResult = await renderDisplayHintProvide("unknown_tokens");
 assert.equal(unknownDisplayResult.result.content[0]?.text, "unknown says https://example.com/unknown");
 assert.ok(unknownDisplayResult.text.includes("[toolOutput]unknown says "));
-assert.ok(unknownDisplayResult.text.includes("[mdLinkUrl]https://example.com/unknown"));
+assert.ok(!unknownDisplayResult.text.includes("[mdLinkUrl]"));
 
 const hexDisplayManifest = {
   protocolVersion: "0.2.0",
@@ -383,22 +384,19 @@ fabric.register({
 const ansiPattern = /\x1b\[[0-9;]*m/;
 const nodeHexDisplayResult = await renderDisplayHintProvide("node_hex", "hex_display_tool_projection");
 assert.equal(nodeHexDisplayResult.result.content[0]?.text, "node hex https://example.com/node-hex");
-assert.ok(nodeHexDisplayResult.text.includes("\x1b[38;2;1;2;3mnode hex "));
-assert.ok(nodeHexDisplayResult.text.includes("\x1b[38;2;4;5;6mhttps://example.com/node-hex"));
+assert.ok(nodeHexDisplayResult.text.includes("[toolOutput]node hex "));
+assert.ok(!nodeHexDisplayResult.text.includes("\x1b[38;2;"), "provider hex colors must be ignored");
 assert.ok(!ansiPattern.test(nodeHexDisplayResult.result.content[0]?.text ?? ""), "protocol output payload should remain uncolored");
 assert.ok(!ansiPattern.test(JSON.stringify(nodeHexDisplayResult.result.details)), "protocol invocation details should remain uncolored");
 const provideHexDisplayResult = await renderDisplayHintProvide("provide_hex", "hex_display_tool_projection");
 assert.equal(provideHexDisplayResult.result.content[0]?.text, "provide hex https://example.com/provide-hex");
-assert.ok(provideHexDisplayResult.text.includes("\x1b[38;2;57;255;20mprovide hex "));
-assert.ok(provideHexDisplayResult.text.includes("\x1b[38;2;255;0;255mhttps://example.com/provide-hex"));
-assert.ok(provideHexDisplayResult.text.includes("\x1b[38;2;0;0;255mhex_display_tool_projection.provide_hex"));
-assert.ok(!provideHexDisplayResult.text.includes("\x1b[38;2;1;2;3mprovide hex "), "provide hex should override node hex");
+assert.ok(provideHexDisplayResult.text.includes("[toolOutput]provide hex "));
+assert.ok(!provideHexDisplayResult.text.includes("\x1b[38;2;"));
 assert.ok(!ansiPattern.test(provideHexDisplayResult.result.content[0]?.text ?? ""));
 assert.ok(!ansiPattern.test(JSON.stringify(provideHexDisplayResult.result.details)));
 const invalidHexDisplayResult = await renderDisplayHintProvide("invalid_hex", "invalid_hex_display_tool_projection");
 assert.equal(invalidHexDisplayResult.result.content[0]?.text, "invalid hex https://example.com/invalid-hex");
-assert.ok(invalidHexDisplayResult.text.includes("[success]invalid hex "));
-assert.ok(invalidHexDisplayResult.text.includes("[warning]https://example.com/invalid-hex"));
+assert.ok(invalidHexDisplayResult.text.includes("[toolOutput]invalid hex "));
 assert.ok(invalidHexDisplayResult.text.includes("[accent]invalid_hex_display_tool_projection.invalid_hex"));
 assert.ok(!ansiPattern.test(invalidHexDisplayResult.result.content[0]?.text ?? ""));
 assert.ok(!ansiPattern.test(JSON.stringify(invalidHexDisplayResult.result.details)));
@@ -471,8 +469,8 @@ const orphanParentTraceLines = tool.renderResult?.(
   { args: invokeRenderInput },
 ) as { render(width: number): string[] };
 const orphanParentTraceText = orphanParentTraceLines.render(120).join("\n");
-assert.ok(orphanParentTraceText.includes("protocol trace"));
-assert.ok(orphanParentTraceText.includes("✓ ● pi-chat/root pi-chat → alpha_tool_projection.echo 12ms — nested output"));
+assert.ok(orphanParentTraceText.includes("alpha_tool_projection.echo"));
+assert.ok(orphanParentTraceText.includes("orphan parent output"));
 const expandedOrphanParentTraceLines = tool.renderResult?.(
   {
     content: [{ type: "text", text: "orphan parent output" }],
@@ -503,8 +501,8 @@ const expandedOrphanParentTraceLines = tool.renderResult?.(
   { args: invokeRenderInput },
 ) as { render(width: number): string[] };
 const expandedOrphanParentTraceText = expandedOrphanParentTraceLines.render(120).join("\n");
-assert.ok(expandedOrphanParentTraceText.includes("input:\n    nested input"));
-assert.ok(expandedOrphanParentTraceText.includes("output:\n    nested output"));
+assert.ok(!expandedOrphanParentTraceText.includes("nested input"), "pure renderer must not consume persisted payload previews");
+assert.ok(expandedOrphanParentTraceText.includes("orphan parent output"));
 
 fabric.register({
   node: {
@@ -557,7 +555,7 @@ const runtimePartialLines = tool.renderResult?.(runtimePartialUpdates.at(-1)!, {
   args: runtimeInvokeInput,
 }) as { render(width: number): string[] };
 const runtimePartialText = runtimePartialLines.render(120).join("\n");
-assert.ok(runtimePartialText.includes("output:\n    streamed runtime"));
+assert.ok(runtimePartialText.includes("streamed runtime"));
 assert.ok(!runtimePartialText.includes("stream:\n    streamed runtime"));
 const runtimeResultLines = tool.renderResult?.(runtimeInvokeResult, { expanded: true }, testTheme, {
   args: runtimeInvokeInput,
@@ -690,11 +688,10 @@ const nestedTraceLines = tool.renderResult?.(
   { args: runtimeInvokeInput },
 ) as { render(width: number): string[] };
 const nestedTraceText = nestedTraceLines.render(120).join("\n");
-assert.ok(nestedTraceText.includes("calls:"));
+assert.ok(nestedTraceText.includes("causal calls"));
 assert.ok(nestedTraceText.includes("agent_a → nested_chain.draft_b"));
 assert.ok(nestedTraceText.includes("agent_b → nested_chain.ask_c"));
-assert.ok(nestedTraceText.includes("├─ agent_a/call"));
-assert.ok(nestedTraceText.includes("├─ agent_b/call"));
+assert.ok(nestedTraceText.includes("nested_chain.start"));
 
 
 const nestedDuplicateFinalLines = tool.renderResult?.(

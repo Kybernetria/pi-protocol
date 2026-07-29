@@ -2,38 +2,37 @@ import type { InvokeRequest } from "../types.ts";
 
 export const DEFAULT_PROTOCOL_TOOL_NAME = "protocol";
 
-export type ProtocolToolOperation = "list" | "search" | "call" | "describe_node" | "describe_provide";
-/** @deprecated Legacy aliases accepted by the migration decoder. */
-export type ProtocolToolAction = ProtocolToolOperation | "registry" | "invoke";
+export type ProtocolToolOperation = "list" | "search" | "describe" | "call";
+/** @deprecated Legacy aliases accepted only by prepareArguments(). */
+export type ProtocolToolAction = "list" | "search" | "call" | "registry" | "describe_node" | "describe_provide" | "invoke";
 
 export interface ProtocolToolInput {
   /** Compact API: omit op to call target directly. */
   op?: ProtocolToolOperation;
-  /** @deprecated Accepted by the migration decoder but omitted from the Pi schema. */
-  action?: ProtocolToolAction;
   query?: string;
-  /** @deprecated Legacy flat capability listing, bounded by limit. */
-  expandProvides?: boolean;
-  /** Opaque cursor returned by bounded list or node-description results. */
+  /** Opaque cursor returned by bounded list or describe results. */
   cursor?: string;
   /** Bounded search result count (default 12, maximum 50). */
   limit?: number;
   /** Optional search filters. */
   filters?: {
-    nodeId?: string;
     tags?: string[];
-    /** @deprecated Implementation kind is not exposed by the canonical projection. */
-    execution?: "handler" | "agent";
     effects?: string[];
   };
   target?: string;
-  nodeId?: string;
-  provide?: string;
   input?: unknown;
   /** Canonical continuation control. Provenance and caller identity are host-owned. */
   session?: InvokeRequest["session"];
-  /** @deprecated Only target, input, and session are read; identity/trace fields are ignored. */
+}
+
+export interface LegacyProtocolToolInput extends Omit<Partial<ProtocolToolInput>, "op"> {
+  op?: ProtocolToolOperation | "describe_node" | "describe_provide";
+  action?: ProtocolToolAction;
+  expandProvides?: boolean;
+  nodeId?: string;
+  provide?: string;
   request?: Partial<InvokeRequest>;
+  filters?: ProtocolToolInput["filters"] & { nodeId?: string; execution?: "handler" | "agent" };
 }
 
 export interface ProtocolToolResultContent {
@@ -55,18 +54,19 @@ export interface ProtocolToolLike {
   promptSnippet: string;
   promptGuidelines: string[];
   parameters: unknown;
+  prepareArguments?(input: unknown): ProtocolToolInput;
   execute(
     toolCallId: string,
-    input: ProtocolToolInput,
+    input: ProtocolToolInput | LegacyProtocolToolInput,
     signal?: AbortSignal,
     onUpdate?: ProtocolToolUpdateCallback,
   ): Promise<ProtocolToolExecutionResult>;
-  renderCall?: (args: ProtocolToolInput, theme: ProtocolToolThemeLike, context?: { lastComponent?: unknown }) => unknown;
+  renderCall?: (args: ProtocolToolInput | LegacyProtocolToolInput, theme: ProtocolToolThemeLike, context?: { lastComponent?: unknown }) => unknown;
   renderResult?: (
     result: ProtocolToolExecutionResult,
     options: { expanded?: boolean; isPartial?: boolean },
     theme: ProtocolToolThemeLike,
-    context?: { args?: ProtocolToolInput; lastComponent?: unknown },
+    context?: { args?: ProtocolToolInput | LegacyProtocolToolInput; lastComponent?: unknown },
   ) => unknown;
 }
 

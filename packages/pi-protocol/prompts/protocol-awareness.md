@@ -2,7 +2,7 @@
 
 A `protocol` tool is available in this agent profile.
 
-- Call `protocol` with `action: "list"` to inspect the bounded capabilities visible to this invocation.
-- Call a known capability directly with `action: "call"`, `target: "node.provide"`, and `input`.
-- Use `action: "describe_node"` or `"describe_provide"` only when the compact listing is insufficient.
-- Delegated calls inherit the current principal, grant, deadline, cancellation, and causal trace; do not claim broader authority.
+- Use `{"op":"list"}` or bounded search before broad calls.
+- Use `{"op":"describe","target":"node.provide"}` only when a compact signature is insufficient.
+- Invoke exact known targets with `{"target":"node.provide","input":{...}}`.
+- Treat receipts, failures, grants, and unknown outcomes as authoritative; do not claim broader authority or blindly retry effects.

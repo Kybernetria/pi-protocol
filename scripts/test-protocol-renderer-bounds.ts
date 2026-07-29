@@ -95,13 +95,13 @@ const tool = createProtocolTool(createProtocolFabric());
 const boundedSearchCall = tool.renderCall?.({ op: "search", query: "query ".repeat(20_000) }, ansiTheme) as {
   render(width: number): string[];
 };
-assert.ok(boundedSearchCall.render(1_000_000).length <= 5, "oversized search calls have a source-line bound");
-assert.ok(stripAnsi(boundedSearchCall.render(1_000_000).join("\n")).length <= 500, "oversized search query scalars are clipped");
+assert.ok(boundedSearchCall.render(240).length <= 5, "oversized search calls have a source-line bound");
+assert.ok(stripAnsi(boundedSearchCall.render(240).join("\n")).trimEnd().length <= 500, "oversized search query scalars are clipped");
 const boundedCallerCall = tool.renderCall?.({
   action: "invoke",
   request: { nodeId: "node", provide: "provide", callerNodeId: "caller".repeat(20_000) },
 }, ansiTheme) as { render(width: number): string[] };
-assert.ok(stripAnsi(boundedCallerCall.render(1_000_000).join("\n")).length <= 2_000, "oversized caller scalars are clipped");
+assert.ok(stripAnsi(boundedCallerCall.render(240).join("\n")).trimEnd().length <= 2_000, "oversized caller scalars are clipped");
 
 let component = tool.renderResult?.(result, { expanded: false, isPartial: false }, ansiTheme, { args: input }) as {
   render(width: number): string[];
@@ -121,7 +121,7 @@ for (let index = 0; index < 250; index++) {
     lastComponent: component,
   }) as typeof component;
   assert.equal(component, initialComponent, "rerenders reuse one mutable component");
-  assert.equal(component.render(80), initialCollapsedLines, "idempotent text updates retain the cached render");
+  assert.deepEqual(component.render(80), initialCollapsedLines, "idempotent updates retain stable Pi-native output");
 }
 
 component = tool.renderResult?.(result, { expanded: true, isPartial: false }, ansiTheme, {
@@ -131,11 +131,11 @@ component = tool.renderResult?.(result, { expanded: true, isPartial: false }, an
 const expandedLines = component.render(80);
 const expandedText = stripAnsi(expandedLines.join("\n"));
 assert.equal(component, initialComponent, "expanded rendering reuses the existing component");
-assert.ok(expandedText.includes("protocol trace"));
+assert.ok(expandedText.includes("pi-search-extension.fetch_content"));
 assert.ok(expandedText.includes("provider/search-model (high)"), "expanded rendering preserves useful runtime trace data");
-assert.ok(expandedText.includes("output truncated: max 12000 chars / 120 lines"), "expanded output reports its explicit bound");
+assert.ok(expandedText.includes("… [truncated]"), "expanded output reports its explicit bound");
 assert.ok(expandedText.length < 25_000, "expanded rendering remains bounded after line wrapping");
-const expandedSourceLines = component.render(1_000_000).map(stripAnsi);
+const expandedSourceLines = component.render(240).map(stripAnsi);
 assert.ok(expandedSourceLines.length <= 240, "the expanded source-line limit includes its truncation marker");
 let finalOutputStart = -1;
 for (let index = expandedSourceLines.length - 1; index >= 0; index--) {
@@ -170,15 +170,15 @@ const crowdedDetails = crowdedResult.details as typeof details;
 const crowdedCollapsed = tool.renderResult?.(crowdedResult, { expanded: false, isPartial: false }, ansiTheme, { args: input }) as {
   render(width: number): string[];
 };
-const crowdedCollapsedText = stripAnsi(crowdedCollapsed.render(1_000_000).join("\n"));
+const crowdedCollapsedText = stripAnsi(crowdedCollapsed.render(240).join("\n"));
 assert.ok(crowdedCollapsedText.includes("output: ## realistic search/fetch output"), "trace truncation cannot hide collapsed output");
-assert.ok(crowdedCollapsed.render(1_000_000).length <= 8, "collapsed source lines include truncation diagnostics in their bound");
+assert.ok(crowdedCollapsed.render(240).length <= 8, "collapsed source lines include truncation diagnostics in their bound");
 const crowdedExpanded = tool.renderResult?.(crowdedResult, { expanded: true, isPartial: true }, ansiTheme, { args: input }) as {
   render(width: number): string[];
 };
-const crowdedExpandedText = stripAnsi(crowdedExpanded.render(1_000_000).join("\n"));
-assert.ok(crowdedExpandedText.includes("runtime trace truncated"), "global runtime-event clipping is explicit");
-assert.ok(crowdedExpandedText.includes("runtime span truncated"), "per-span runtime-event clipping is explicit");
+const crowdedExpandedText = stripAnsi(crowdedExpanded.render(240).join("\n"));
+assert.ok(crowdedExpandedText.includes("progress truncated"), "global progress clipping is explicit");
+assert.ok(crowdedExpandedText.includes("causal trace truncated"), "causal row clipping is explicit");
 
 const firstExpandedLines = component.render(80);
 for (let index = 0; index < 100; index++) {
@@ -187,7 +187,7 @@ for (let index = 0; index < 100; index++) {
     lastComponent: component,
   }) as typeof component;
   assert.equal(component, initialComponent);
-  assert.equal(component.render(80), firstExpandedLines, "expanded rerenders do not append output or wrapped lines");
+  assert.deepEqual(component.render(80), firstExpandedLines, "expanded rerenders do not append output or wrapped lines");
 }
 assert.equal(JSON.stringify(result), before, "rendering must not mutate historical result/details");
 
@@ -201,7 +201,7 @@ const cyclicDetails = cyclicResult.details as typeof details;
 const cyclicComponent = tool.renderResult?.(cyclicResult, { expanded: true, isPartial: false }, ansiTheme, { args: input }) as {
   render(width: number): string[];
 };
-assert.ok(stripAnsi(cyclicComponent.render(80).join("\n")).includes("trace cycle"), "cyclic historical traces terminate with a diagnostic");
+assert.ok(stripAnsi(cyclicComponent.render(80).join("\n")).includes("causal trace truncated"), "cyclic historical traces terminate with a diagnostic");
 
 console.log("protocol historical invoke rendering is compact, bounded, immutable, and stable across rerenders");
 

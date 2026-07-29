@@ -1,12 +1,8 @@
 import { Type } from "@mariozechner/pi-ai";
 import type { ProtocolFabric } from "../types.ts";
-import { handleProtocolToolInput } from "./actions.ts";
-import {
-  formatProtocolToolCallDisplay,
-  formatProtocolToolResult,
-  formatProtocolToolResultDisplay,
-} from "./formatting.ts";
-import { createTextComponent } from "./helpers.ts";
+import { handleProtocolToolInput, normalizeProtocolToolInput } from "./actions.ts";
+import { renderProtocolCall, renderProtocolViewModel } from "./renderer.ts";
+import { formatProtocolToolResult, projectProtocolViewModel } from "./view-model.ts";
 import {
   DEFAULT_PROTOCOL_TOOL_NAME,
   type ProtocolToolLike,
@@ -32,9 +28,9 @@ export function createProtocolTool(fabric: ProtocolFabric, options: ProtocolTool
     promptSnippet: `${toolName}: call targets or discover nodes, then provides`,
     promptGuidelines: [
       `Call a known capability with { target: "node.provide", input }. The fabric selects its installed implementation automatically.`,
-      `Use { op: "list" } for compact node summaries, then { op: "describe_node", nodeId } to expand one node.`,
+      `Use { op: "list" } for compact node summaries, then { op: "describe", target: "node-id" } to expand one node.`,
       `Use { op: "search", query } only when no known capability clearly fits. Invoke directly from a compact card when its input signature is sufficient.`,
-      `Use { op: "describe_provide", nodeId, provide } only when exact schema fields, constraints, or enums are needed.`,
+      `Use { op: "describe", target: "node.provide" } only when exact schema fields, constraints, or enums are needed.`,
       `Identity, causal trace, deadlines, cancellation, confirmation, and authority are host-owned and automatic; tool input cannot override them.`,
       `Avoid accidental unbounded self-recursion; intentional recursion needs an explicit stop condition.`,
       `To continue an agent conversation, reuse session.id with session.mode = "continue"; use mode "end" to dispose it.`,
@@ -43,22 +39,18 @@ export function createProtocolTool(fabric: ProtocolFabric, options: ProtocolTool
       op: Type.Optional(Type.Union([
         Type.Literal("list"),
         Type.Literal("search"),
-        Type.Literal("describe_node"),
-        Type.Literal("describe_provide"),
+        Type.Literal("describe"),
         Type.Literal("call"),
       ])),
       target: Type.Optional(Type.String({ description: "Capability id: node.provide" })),
       query: Type.Optional(Type.String()),
-      cursor: Type.Optional(Type.String({ description: "Opaque cursor returned by list or describe_node" })),
+      cursor: Type.Optional(Type.String({ description: "Opaque cursor returned by list or describe" })),
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
       filters: Type.Optional(Type.Object({
-        nodeId: Type.Optional(Type.String()),
         tags: Type.Optional(Type.Array(Type.String())),
         effects: Type.Optional(Type.Array(Type.String())),
       })),
       input: Type.Optional(Type.Any()),
-      nodeId: Type.Optional(Type.String()),
-      provide: Type.Optional(Type.String()),
       session: Type.Optional(Type.Object({
         id: Type.Optional(Type.String({ maxLength: 256 })),
         mode: Type.Optional(Type.Union([
@@ -68,26 +60,28 @@ export function createProtocolTool(fabric: ProtocolFabric, options: ProtocolTool
         ])),
       })),
     }),
+    prepareArguments(input) {
+      return normalizeProtocolToolInput(input);
+    },
     async execute(toolCallId, input, signal, onUpdate) {
       try {
-        const result = await handleProtocolToolInput(fabric, input, onUpdate, signal, toolCallId);
+        const prepared = normalizeProtocolToolInput(input);
+        const result = await handleProtocolToolInput(fabric, prepared, onUpdate, signal, toolCallId);
         return {
           content: [{ type: "text", text: formatProtocolToolResult(result) }],
           details: result,
         };
       } catch {
-        const details = { ok: false, schemaVersion: 1, op: input?.op ?? "invalid", error: { code: "INVALID_REQUEST", message: "Protocol tool request is invalid" } };
+        const details = { ok: false, schemaVersion: 1, op: "invalid", error: { code: "INVALID_REQUEST", message: "Protocol tool request is invalid" } };
         return { content: [{ type: "text", text: "INVALID_REQUEST: Protocol tool request is invalid" }], details };
       }
     },
     renderCall(args, theme, context) {
-      return createTextComponent(formatProtocolToolCallDisplay(args, theme), context?.lastComponent);
+      return renderProtocolCall(args, theme, context?.lastComponent);
     },
     renderResult(result, { expanded, isPartial }, theme, context) {
-      return createTextComponent(
-        formatProtocolToolResultDisplay(result, context?.args, theme, { expanded, isPartial }),
-        context?.lastComponent,
-      );
+      const view = projectProtocolViewModel(result, context?.args, { expanded, isPartial });
+      return renderProtocolViewModel(view, theme, { expanded }, context?.lastComponent);
     },
   };
 }

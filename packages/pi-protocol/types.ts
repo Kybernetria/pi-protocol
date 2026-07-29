@@ -302,6 +302,17 @@ export interface RegistrySnapshot {
   provides: ProvideSnapshot[];
 }
 
+export interface ProtocolSearchOptions {
+  readonly limit?: number;
+  readonly tags?: readonly string[];
+  readonly effects?: readonly string[];
+}
+
+export interface ProtocolSearchResult {
+  readonly totalMatches: number;
+  readonly provides: readonly ProvideSnapshot[];
+}
+
 export interface InvokeRequest {
   nodeId: string;
   provide: string;
@@ -375,6 +386,7 @@ export interface ProtocolFabric {
   register(input: RegisterNodeInput): void;
   unregister(nodeId: string): void;
   registry(): RegistrySnapshot;
+  search(query: string, options?: ProtocolSearchOptions): ProtocolSearchResult;
   describeNode(nodeId: string): ProtocolNode | undefined;
   describeProvide(nodeId: string, provideName: string): ProvideSnapshot | undefined;
   invoke(request: InvokeRequest): Promise<InvokeResult>;

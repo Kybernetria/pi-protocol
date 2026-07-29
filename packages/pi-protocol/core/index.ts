@@ -50,6 +50,8 @@ export type {
   RecorderUnsubscribe,
   RegisterNodeInput,
   RegistrySnapshot,
+  ProtocolSearchOptions,
+  ProtocolSearchResult,
 } from "../types.ts";
 export type {
   AuditDiagnostics,

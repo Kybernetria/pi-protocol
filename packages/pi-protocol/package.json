@@ -50,6 +50,7 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
     "@mariozechner/pi-ai": "*"
   },
   "peerDependenciesMeta": {
@@ -57,6 +58,9 @@
       "optional": true
     },
     "@mariozechner/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
       "optional": true
     }
   },

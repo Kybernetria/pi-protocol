@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createProtocolFabric, type JsonSchemaLite } from "../packages/pi-protocol/index.ts";
-import { createProtocolTool } from "../packages/pi-protocol/tool/index.ts";
+import { createProtocolTool, projectProtocolViewModel } from "../packages/pi-protocol/tool/index.ts";
 
 const schema: JsonSchemaLite = { type: "object", properties: {} };
 const fabric = createProtocolFabric({ maxConcurrentInvocations: 2, maxQueuedInvocations: 2 });
@@ -45,6 +45,15 @@ assert(!parameterText.includes("request"));
 assert(!parameterText.includes("action"));
 assert(!parameterText.includes("traceId"));
 assert(!parameterText.includes("callerNodeId"));
+assert(!parameterText.includes("describe_node"));
+assert(!parameterText.includes("describe_provide"));
+assert(!parameterText.includes('"nodeId"'));
+assert(!parameterText.includes('"provide"'));
+const translated = tool.prepareArguments?.({
+  action: "invoke",
+  request: { nodeId: "projection_01", provide: "provide_00", input: {}, callerNodeId: "forged", traceId: "forged" },
+});
+assert.deepEqual(translated, { op: "call", target: "projection_01.provide_00", input: {} });
 
 const first = await tool.execute("page-one", { op: "list" });
 const firstDetails = first.details as { schemaVersion: 1; nodes: unknown[]; nextCursor?: string };
@@ -54,13 +63,13 @@ assert.match(firstDetails.nextCursor ?? "", /^p:/);
 const second = await tool.execute("page-two", { op: "list", cursor: firstDetails.nextCursor });
 assert.equal((second.details as { nodes: unknown[] }).nodes.length, 4);
 
-const node = await tool.execute("node-page", { op: "describe_node", nodeId: "projection_00", limit: 5 });
+const node = await tool.execute("node-page", { op: "describe", target: "projection_00", limit: 5 });
 const nodeDetails = node.details as { node: { provides: unknown[]; nextCursor?: string } };
 assert.equal(nodeDetails.node.provides.length, 5);
 assert.match(nodeDetails.node.nextCursor ?? "", /^p:/);
-const nextNode = await tool.execute("node-page-two", { op: "describe_node", nodeId: "projection_00", limit: 5, cursor: nodeDetails.node.nextCursor });
+const nextNode = await tool.execute("node-page-two", { op: "describe", target: "projection_00", limit: 5, cursor: nodeDetails.node.nextCursor });
 assert.equal((nextNode.details as { node: { provides: unknown[] } }).node.provides.length, 5);
-const largeSchema = await tool.execute("large-schema", { op: "describe_provide", nodeId: "projection_00", provide: "provide_19" });
+const largeSchema = await tool.execute("large-schema", { op: "describe", target: "projection_00.provide_19" });
 assert.equal((largeSchema.details as { provide: { schemaTruncated: boolean } }).provide.schemaTruncated, true);
 assert((largeSchema.content[0]?.text.length ?? 0) < 70_000, "exact contract projection must have a hard output bound");
 
@@ -90,6 +99,11 @@ assert.equal(identityDetails.schemaVersion, 1);
 assert.equal(identityDetails.op, "call");
 assert.equal(identityDetails.receipt.schemaVersion, 1);
 assert.deepEqual(legacyIdentity.details, JSON.parse(JSON.stringify(legacyIdentity.details)), "persisted details must be strict JSON");
+assert(!JSON.stringify(legacyIdentity.details).includes('"registry"'));
+assert(!JSON.stringify(legacyIdentity.details).includes("executor_output_delta"), "streamed deltas must not persist in final details");
+const projected = projectProtocolViewModel(legacyIdentity, { target: "projection_01.provide_00", input: {} }, { expanded: true });
+assert(Object.isFrozen(projected));
+assert(Object.isFrozen(projected.trace));
 assert(identityDetails.trace.events.every((event) => event.traceId !== "model-forged-trace"));
 assert(identityDetails.trace.events.every((event) => event.spanId !== "model-forged-span"));
 assert(identityDetails.trace.events.every((event) => event.callerNodeId !== "model-forged-caller"));

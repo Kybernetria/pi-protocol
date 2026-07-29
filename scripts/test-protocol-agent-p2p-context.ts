@@ -105,7 +105,7 @@ fabric.register({
       createSession: () => {
         const fake = createFakeSession(async (text, emit) => {
           emit("A:start:");
-          await handleProtocolToolInput(fabric, { action: "invoke", nodeId: "p2p_b", provide: "chat", input: `child(${text})` });
+          await handleProtocolToolInput(fabric, { op: "call", target: "p2p_b.chat", input: `child(${text})` });
           emit("A:end");
         });
         aSessions.push(fake);

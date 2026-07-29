@@ -56,7 +56,7 @@ import { validateRegistration } from "./validation.ts";
 // can find the same fabric through globalThis.
 const FABRIC_KEY = Symbol.for("pi-protocol.minimal.fabric");
 const FABRIC_VERSION_KEY = Symbol.for("pi-protocol.minimal.fabric.version");
-const FABRIC_VERSION = 6;
+const FABRIC_VERSION = 7;
 const HOST_ABI_KEY = Symbol.for("@kybernetria/pi-protocol.host.v1");
 const HOST_ABI_VERSION = 1;
 const MAX_REGISTRATION_EVENTS = 1_024;
@@ -82,6 +82,11 @@ interface RegisteredNode {
   rejectDrain?: (error: unknown) => void;
 }
 
+interface SearchCatalogEntry {
+  readonly provideName: string;
+  readonly searchText: string;
+}
+
 interface ProtocolHostAbi {
   readonly abiVersion: number;
   readonly fabric: ProtocolFabric;
@@ -90,6 +95,15 @@ interface ProtocolHostAbi {
 
 export function createProtocolFabric(options: CreateProtocolFabricOptions = {}): ProtocolFabric {
   const nodes = new Map<string, RegisteredNode>();
+  const searchCatalog = new Map<string, readonly SearchCatalogEntry[]>();
+  const publishNode = (entry: RegisteredNode): void => {
+    nodes.set(entry.node.nodeId, entry);
+    searchCatalog.set(entry.node.nodeId, buildSearchCatalog(entry.node));
+  };
+  const removeNode = (nodeId: string): void => {
+    nodes.delete(nodeId);
+    searchCatalog.delete(nodeId);
+  };
   let provenanceRecorder: ProvenanceRecorder | undefined;
   let runtimeEventRecorder: ProtocolRuntimeEventRecorder | undefined;
   const provenanceSubscribers = new Set<ProvenanceRecorder>();
@@ -579,7 +593,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
         emitRegistration(rejectedRegistrationEvent(registrationId, nodeId, definition, error, normalizedMetadata));
         throw error;
       }
-      nodes.set(entry.node.nodeId, entry);
+      publishNode(entry);
       emitRegistration({
         type: "registration.installed",
         timestamp: Date.now(),
@@ -620,7 +634,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
             throw error;
           }
           const previous = current;
-          nodes.set(replacement.node.nodeId, replacement);
+          publishNode(replacement);
           current = replacement;
           emitRegistration({
             type: "registration.replaced",
@@ -638,7 +652,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
           if (!active) return;
           assertNotSelfLifecycle(registrationId, current.generation!);
           active = false;
-          if (nodes.get(current.node.nodeId) === current) nodes.delete(current.node.nodeId);
+          if (nodes.get(current.node.nodeId) === current) removeNode(current.node.nodeId);
           emitRegistration({
             type: "registration.removed",
             timestamp: Date.now(),
@@ -661,7 +675,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
         throw new Error(`Node already registered: ${input.node.nodeId}`);
       }
 
-      nodes.set(input.node.nodeId, {
+      publishNode({
         node: cloneProtocolNode(input.node),
         handlers: { ...(input.handlers ?? {}) },
         agentExecutors: { ...(input.agentExecutors ?? {}) },
@@ -674,7 +688,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
     unregister(nodeId) {
       const entry = nodes.get(nodeId);
       if (entry?.registrationId) throw registrationError("CONFLICT", "Owned registrations can only be disposed by their lease");
-      nodes.delete(nodeId);
+      removeNode(nodeId);
     },
 
     registry() {
@@ -686,6 +700,29 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
         nodes: registeredNodes,
         provides: registeredNodes.flatMap((node) => node.provides.map((provide) => createProvideSnapshot(node, provide.name))),
       });
+    },
+
+    search(query, searchOptions = {}) {
+      const terms = query.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 32);
+      const limit = boundedInteger(searchOptions.limit, 12, 1, 50, "search limit");
+      const matches: Array<{ score: number; provide: ProvideSnapshot }> = [];
+      for (const [nodeId, entries] of searchCatalog) {
+        const registered = nodes.get(nodeId);
+        if (!registered) continue;
+        for (const catalogEntry of entries) {
+          const provide = registered.node.provides.find((item) => item.name === catalogEntry.provideName);
+          if (!provide || !isProtocolTargetAllowedFromCurrentContext(nodeId, provide.name)) continue;
+          const control = getInvocationControl();
+          if (control && (!targetAllowed(control.grant, `${nodeId}.${provide.name}`) || !effectsAllowed(control.grant, provide.effects ?? []))) continue;
+          if (searchOptions.tags?.length && !searchOptions.tags.every((tag) => provide.tags?.includes(tag))) continue;
+          if (searchOptions.effects?.length && !searchOptions.effects.every((effect) => provide.effects?.includes(effect))) continue;
+          const score = terms.reduce((total, term) => total + (catalogEntry.searchText.includes(term) ? 1 : 0), 0);
+          if (terms.length && score === 0) continue;
+          matches.push({ score, provide: createProvideSnapshot(registered.node, provide.name) });
+        }
+      }
+      matches.sort((left, right) => right.score - left.score || left.provide.globalId.localeCompare(right.provide.globalId));
+      return freezeSnapshot({ totalMatches: matches.length, provides: matches.slice(0, limit).map((match) => match.provide) });
     },
 
     describeNode(nodeId) {
@@ -773,6 +810,7 @@ function isCompatibleProtocolFabric(value: ProtocolFabric | undefined): value is
     typeof value.register === "function" &&
     typeof value.unregister === "function" &&
     typeof value.registry === "function" &&
+    typeof value.search === "function" &&
     typeof value.describeNode === "function" &&
     typeof value.describeProvide === "function" &&
     typeof value.invoke === "function"
@@ -1096,6 +1134,41 @@ function stringifyPreviewValue(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function buildSearchCatalog(node: ProtocolNode): readonly SearchCatalogEntry[] {
+  return Object.freeze(node.provides.map((provide) => Object.freeze({
+    provideName: provide.name,
+    searchText: [
+      node.purpose,
+      provide.name,
+      provide.description,
+      ...(provide.tags ?? []),
+      ...(provide.effects ?? []),
+      ...schemaSearchTerms(provide.inputSchema),
+      ...schemaSearchTerms(provide.outputSchema),
+    ].join(" ").toLowerCase(),
+  })));
+}
+
+function schemaSearchTerms(schema: unknown): string[] {
+  const terms: string[] = [];
+  const stack: Array<{ value: unknown; depth: number }> = [{ value: schema, depth: 0 }];
+  let remaining = 1_024;
+  while (stack.length && remaining-- > 0) {
+    const { value, depth } = stack.pop()!;
+    if (!value || typeof value !== "object" || depth > 16) continue;
+    if (Array.isArray(value)) {
+      for (const child of value.slice(0, 128)) stack.push({ value: child, depth: depth + 1 });
+      continue;
+    }
+    for (const [key, child] of Object.entries(value as Record<string, unknown>).slice(0, 128)) {
+      if (key === "description" && typeof child === "string") terms.push(child.slice(0, 1_024));
+      else if (key === "properties" && child && typeof child === "object" && !Array.isArray(child)) terms.push(...Object.keys(child).slice(0, 128));
+      if (typeof child === "object" && child !== null) stack.push({ value: child, depth: depth + 1 });
+    }
+  }
+  return terms;
 }
 
 function cloneProtocolNode(node: ProtocolNode): ProtocolNode {

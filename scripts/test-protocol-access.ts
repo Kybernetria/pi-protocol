@@ -72,10 +72,10 @@ const executors: Record<string, ProtocolAgentExecutor> = {
   only_scout: async () => {
     const list = await handleProtocolToolInput(fabric, { op: "list" }) as any;
     const search = await handleProtocolToolInput(fabric, { op: "search", query: "capability" }) as any;
-    const allowedNode = await handleProtocolToolInput(fabric, { op: "describe_node", nodeId: "pi_dev" }) as any;
-    const hiddenNode = await handleProtocolToolInput(fabric, { op: "describe_node", nodeId: "secret" }) as any;
-    const hiddenProvide = await handleProtocolToolInput(fabric, { op: "describe_provide", nodeId: "pi_dev", provide: "architect" }) as any;
-    const registry = await handleProtocolToolInput(fabric, { action: "registry" }) as any;
+    const allowedNode = await handleProtocolToolInput(fabric, { op: "describe", target: "pi_dev" }) as any;
+    const hiddenNode = await handleProtocolToolInput(fabric, { op: "describe", target: "secret" }) as any;
+    const hiddenProvide = await handleProtocolToolInput(fabric, { op: "describe", target: "pi_dev.architect" }) as any;
+    const registry = await handleProtocolToolInput(fabric, { op: "list" }) as any;
     const allowed = await fabric.invoke({ nodeId: "pi_dev", provide: "scout", input: {} });
     const denied = await fabric.invoke({ nodeId: "pi_dev", provide: "architect", input: {}, callerNodeId: "trusted.admin" });
     const current = getCurrentProtocolInvocationContext();
@@ -85,9 +85,9 @@ const executors: Record<string, ProtocolAgentExecutor> = {
       fabric.invoke({ nodeId: "secret", provide: "read", input: {}, callerNodeId: "trusted.admin" })
     );
     const alternate = await handleProtocolToolInput(fabric, {
-      action: "invoke",
-      target: "pi_dev.scout",
-      request: { nodeId: "secret", provide: "read", input: {}, callerNodeId: "trusted.admin" },
+      op: "call",
+      target: "secret.read",
+      input: {},
     }) as any;
     return { list, search, allowedNode, hiddenNode, hiddenProvide, registry, allowed, denied, copiedContextDenied, alternate };
   },
@@ -146,7 +146,7 @@ assert.deepEqual(exact.search.capabilities.map((item: any) => item.target), ["pi
 assert.deepEqual(exact.allowedNode.node.provides.map((item: any) => item.target), ["pi_dev.scout"]);
 assert.equal(exact.hiddenNode.error.code, "NOT_FOUND");
 assert.equal(exact.hiddenProvide.error.code, "NOT_FOUND");
-assert.deepEqual(exact.registry.capabilities.map((item: any) => item.target), ["pi_dev.scout"]);
+assert.deepEqual(exact.registry.nodes.map((item: any) => item.nodeId), ["pi_dev"]);
 assert.equal(exact.allowed.ok, true);
 assert.deepEqual(exact.denied, {
   ok: false,
