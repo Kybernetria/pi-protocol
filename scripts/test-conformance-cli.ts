@@ -18,7 +18,7 @@ writeFileSync(join(first, "pi.protocol.json"), `${JSON.stringify(manifest, null,
 writeFileSync(join(first, "package.json"), JSON.stringify({
   name: "@tests/conformance-fixture",
   version: "1.0.0",
-  dependencies: { "@kybernetria/pi-protocol": "^2.0.0" },
+  dependencies: { "@kybernetria/pi-protocol": "^3.0.0" },
   piProtocol: { generated: "src/protocol.generated.ts" },
 }, null, 2));
 writeFileSync(join(first, "prompts", "agent.md"), "Use the protocol carefully.\n");
@@ -44,7 +44,7 @@ const legacy = join(root, "legacy");
 mkdirSync(legacy);
 const legacySource = readFileSync(new URL("./fixtures/contracts/valid-v02.json", import.meta.url), "utf8");
 writeFileSync(join(legacy, "pi.protocol.json"), legacySource);
-writeFileSync(join(legacy, "package.json"), JSON.stringify({ name: "@tests/legacy", version: "1.0.0", dependencies: { "@kybernetria/pi-protocol": "^2.0.0" } }));
+writeFileSync(join(legacy, "package.json"), JSON.stringify({ name: "@tests/legacy", version: "1.0.0", dependencies: { "@kybernetria/pi-protocol": "^3.0.0" } }));
 assert.equal(checkProtocolPackage(legacy).issues.some((issue) => issue.code === "MANIFEST_INVALID"), true);
 const legacyAllowed = checkProtocolPackage(legacy, { allowLegacy: true });
 assert.equal(legacyAllowed.ok, true);
@@ -74,18 +74,8 @@ assert.equal(healthy.ok, true);
 assert.equal(healthy.fabric.registrations[0]?.contractDigest, definition.contractDigest);
 assert.equal(healthy.fabric.registrations[0]?.sourcePath, first);
 assert.equal(healthy.host?.runtimeCopies.length, 1);
-fabric.register({
-  node: {
-    nodeId: "legacy_raw",
-    purpose: "doctor fixture",
-    provides: [{ name: "run", description: "raw fixture", inputSchema: { type: "object" }, outputSchema: { type: "object" }, execution: { type: "handler", handler: "run" } }],
-  },
-  handlers: { run: () => ({}) },
-});
-const deprecated = diagnoseProtocolRuntime(fabric);
-assert(deprecated.issues.some((issue) => issue.code === "UNOWNED_REGISTRATION"));
-assert(deprecated.issues.some((issue) => issue.code === "DEPRECATED_COMPATIBILITY"));
-fabric.unregister("legacy_raw");
+assert.equal("register" in fabric, false);
+assert.equal("unregister" in fabric, false);
 await registration.dispose();
 
 console.log("recursive conformance, deterministic generation, and runtime doctor work");

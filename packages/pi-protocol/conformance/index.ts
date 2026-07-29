@@ -131,8 +131,8 @@ function configuredGeneratedPath(packageJson: Record<string, unknown> | undefine
 function compatibleDependency(range: string): boolean {
   const value = range.trim();
   return /^(?:file:|link:|workspace:)/.test(value)
-    || /^https:\/\/github\.com\/Kybernetria\/pi-protocol\/releases\/download\/v2\.\d+\.\d+\/.+\.tgz$/.test(value)
-    || /(?:^|[<>=~^|\s])2(?:\.\d+)?(?:\.\d+)?/.test(value);
+    || /^https:\/\/github\.com\/Kybernetria\/pi-protocol\/releases\/download\/v3\.\d+\.\d+\/.+\.tgz$/.test(value)
+    || /(?:^|[<>=~^|\s])3(?:\.\d+)?(?:\.\d+)?/.test(value);
 }
 function readBounded(path: string, maxBytes: number): string {
   const stat = statSync(path);

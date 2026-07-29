@@ -10,7 +10,7 @@ Canonical `ProtocolDefinition` objects are installed through an ownership lease.
 
 An installation receives one registration ID and generation 1. Replacement validates the complete definition and exact bindings before one synchronous map publication. It retains the registration ID, increments the generation, and affects only subsequent lookups. Calls increment an in-flight lease on the exact registration object they selected, so replacement cannot switch their implementation or validator. Old bindings enter draining and dispose only after those calls and their terminal provenance records complete.
 
-Only the closure-backed `ProtocolRegistration` lease can replace or remove an owned registration. The deprecated raw `unregister(nodeId)` API refuses owned entries. Failed preparation or ownership checks leave the active generation unchanged.
+Only the closure-backed `ProtocolRegistration` lease can replace or remove an owned registration. The raw mutation APIs were removed after ecosystem migration (ADR 0010). Failed preparation or ownership checks leave the active generation unchanged.
 
 Registration lifecycle facts are written to a bounded in-memory ring before/at publication and projected to non-blocking observers. Canonical invocation provenance includes registration ID, generation, and contract digest. Phase 3 replaces this transitional event surface with the canonical audit sink and receipt model.
 

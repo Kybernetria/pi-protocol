@@ -45,18 +45,15 @@ import type {
 } from "./types.ts";
 import {
   getCurrentProtocolInvocationContext,
-  hasProtocolAccessRestrictionInCurrentContext,
-  isProtocolTargetAllowedFromCurrentContext,
   runWithProtocolInvocationContext,
 } from "./context.ts";
-import { executeAdmittedProvide, executeProvide } from "./execution.ts";
-import { validateRegistration } from "./validation.ts";
+import { executeAdmittedProvide } from "./execution.ts";
 
 // Symbol.for gives us a process-wide key. Any package using this same key
 // can find the same fabric through globalThis.
 const FABRIC_KEY = Symbol.for("pi-protocol.minimal.fabric");
 const FABRIC_VERSION_KEY = Symbol.for("pi-protocol.minimal.fabric.version");
-const FABRIC_VERSION = 8;
+const FABRIC_VERSION = 9;
 const HOST_ABI_KEY = Symbol.for("@kybernetria/pi-protocol.host.v1");
 const HOST_ABI_VERSION = 1;
 const MAX_REGISTRATION_EVENTS = 1_024;
@@ -67,11 +64,11 @@ interface RegisteredNode {
   node: ProtocolNode;
   handlers: Record<string, ProtocolHandler>;
   agentExecutors: Record<string, ProtocolAgentExecutor>;
-  definition?: ProtocolDefinition;
-  bindingsByProvide?: Readonly<Record<string, ProtocolHandler | ProtocolAgentExecutor>>;
-  registrationId?: string;
-  generation?: number;
-  contractDigest?: string;
+  definition: ProtocolDefinition;
+  bindingsByProvide: Readonly<Record<string, ProtocolHandler | ProtocolAgentExecutor>>;
+  registrationId: string;
+  generation: number;
+  contractDigest: string;
   metadata?: ProtocolRegistrationMetadata;
   inFlight: number;
   draining: boolean;
@@ -105,7 +102,6 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
     nodes.delete(nodeId);
     searchCatalog.delete(nodeId);
   };
-  let deprecatedRawRegistrations = 0;
   let provenanceRecorder: ProvenanceRecorder | undefined;
   let runtimeEventRecorder: ProtocolRuntimeEventRecorder | undefined;
   const provenanceSubscribers = new Set<ProvenanceRecorder>();
@@ -225,8 +221,8 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
       request = snapshotInvokeRequest(request);
     } catch {
       const receipt = audit.createReceipt({ traceId: createId("trace"), spanId: createId("span"), target: "invalid.invalid" });
-      audit.reject(receipt, "INVALID_INPUT");
-      const result: InvokeResult = { ok: false, error: { code: "INVALID_INPUT", message: "Invocation request must contain ordinary data fields" } };
+      audit.reject(receipt, "INPUT_INVALID");
+      const result: InvokeResult = { ok: false, error: { code: "INPUT_INVALID", message: "Invocation request must contain ordinary data fields" } };
       return audit.trackedResult(result, receipt);
     }
     const canonicalTraceId = createId("trace");
@@ -248,7 +244,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
       const error = { code, message };
       const preview = createInputPreview(request.input);
       recordProvenance(provenanceRecorder, provenanceSubscribers, { ...compatibilityProvenance, status: "started", ...preview });
-      recordProvenance(provenanceRecorder, provenanceSubscribers, { ...compatibilityProvenance, status: code === "ABORTED" ? "aborted" : "failed", durationMs: Date.now() - compatibilityStartedAt, ...preview, error });
+      recordProvenance(provenanceRecorder, provenanceSubscribers, { ...compatibilityProvenance, status: code === "CANCELLED" ? "aborted" : "failed", durationMs: Date.now() - compatibilityStartedAt, ...preview, error });
       const result: InvokeResult = { ok: false, error };
       return audit.trackedResult(result, receipt);
     };
@@ -267,9 +263,6 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
     if (depth > maxDepth || scopeBudgets.some((budget) => budget.remainingInvocations <= 0)) return reject("OVERLOADED", "Invocation budget exhausted");
     if (!targetAllowed(grant, safeTarget)) return reject("FORBIDDEN", `Protocol grant denies target ${safeTarget}`);
     for (const budget of new Set(scopeBudgets)) budget.remainingInvocations -= 1;
-    if (!isProtocolTargetAllowedFromCurrentContext(request.nodeId, request.provide)) {
-      return reject("POLICY_DENIED", `Protocol access denied for target ${safeTarget}`);
-    }
     try { releaseSlot = await limiter.acquire(combined.signal, deadline); }
     catch (error) {
       const code = controlErrorCode(error);
@@ -280,10 +273,6 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
     if (!selected) return reject("NOT_FOUND", `Node not found: ${request.nodeId}`);
     const provide = selected.node.provides.find((candidate) => candidate.name === request.provide);
     if (!provide) return reject("NOT_FOUND", `Provide not found: ${safeTarget}`);
-    const authoritativeCaller = parentControl?.callingTarget;
-    if (authoritativeCaller && provide.policy?.blacklistedCallers?.includes(authoritativeCaller)) {
-      return reject("POLICY_DENIED", `caller ${authoritativeCaller} is blacklisted from using ${safeTarget}`);
-    }
     try {
       const input = normalizeJsonValue(assertBoundedJsonValue(request.input, PROTOCOL_CONTRACT_LIMITS));
       request = { ...request, input };
@@ -292,8 +281,8 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
     }
     const effects = (provide.effects ?? []) as StandardProtocolEffect[];
     if (!effectsAllowed(grant, effects)) return reject("FORBIDDEN", `Protocol grant denies effects for ${safeTarget}`);
-    const compiled = selected.definition?.provides[request.provide];
-    if (compiled && !compiled.validateInput(request.input).valid) return reject("INPUT_INVALID", "Input does not satisfy the protocol contract");
+    const compiled = selected.definition.provides[request.provide];
+    if (!compiled.validateInput(request.input).valid) return reject("INPUT_INVALID", "Input does not satisfy the protocol contract");
 
     // Pin before any required sink await. Replacement can publish, but this exact
     // generation remains leased and is the only one dispatched for this receipt.
@@ -462,22 +451,16 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
     const inputPreview = createInputPreview(request.input);
     const startedAt = Date.now();
     recordProvenance(provenanceRecorder, provenanceSubscribers, { ...provenance, status: "started", ...inputPreview });
-    const localProtocolAccess = provide.execution.type === "agent"
-      ? registered.node.agents?.[provide.execution.agent]?.protocolAccess
-      : undefined;
-    const canonicalProvide = registered.definition?.provides[request.provide];
-    const canonicalBinding = registered.bindingsByProvide?.[request.provide];
+    const canonicalProvide = registered.definition.provides[request.provide];
+    const canonicalBinding = registered.bindingsByProvide[request.provide];
     const result = await runWithProtocolInvocationContext(
       request,
       provenance,
-      () => canonicalProvide && canonicalBinding
-        ? executeAdmittedProvide({ request, provenance, provide: canonicalProvide, binding: canonicalBinding, emitRuntimeEvent: createRuntimeEventEmitter(runtimeEventRecorder, runtimeEventSubscribers) })
-        : executeProvide({ request, provenance, provide, handlers: registered.handlers, agentExecutors: registered.agentExecutors, emitRuntimeEvent: createRuntimeEventEmitter(runtimeEventRecorder, runtimeEventSubscribers) }),
-      localProtocolAccess,
+      () => executeAdmittedProvide({ request, provenance, provide: canonicalProvide, binding: canonicalBinding, emitRuntimeEvent: createRuntimeEventEmitter(runtimeEventRecorder, runtimeEventSubscribers) }),
     );
     await recordProvenance(provenanceRecorder, provenanceSubscribers, {
       ...provenance,
-      status: result.ok ? "succeeded" : result.error.code === "ABORTED" || result.error.code === "CANCELLED" ? "aborted" : "failed",
+      status: result.ok ? "succeeded" : result.error.code === "CANCELLED" ? "aborted" : "failed",
       durationMs: Date.now() - startedAt,
       ...inputPreview,
       ...(result.ok ? createOutputPreview(result.output) : { error: result.error }),
@@ -529,19 +512,17 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
       return freezeSnapshot({
         registrations: [...nodes.values(), ...drainingNodes].map((entry) => ({
           nodeId: entry.node.nodeId,
-          ...(entry.registrationId ? { registrationId: entry.registrationId } : {}),
-          ...(entry.generation !== undefined ? { generation: entry.generation } : {}),
-          ...(entry.contractDigest ? { contractDigest: entry.contractDigest } : {}),
+          registrationId: entry.registrationId,
+          generation: entry.generation,
+          contractDigest: entry.contractDigest,
           ...(entry.metadata?.packageId ? { packageId: entry.metadata.packageId } : {}),
           ...(entry.metadata?.packageVersion ? { packageVersion: entry.metadata.packageVersion } : {}),
           ...(entry.metadata?.sourcePath ? { sourcePath: entry.metadata.sourcePath } : {}),
           ...(entry.metadata?.buildId ? { buildId: entry.metadata.buildId } : {}),
           inFlight: entry.inFlight,
           draining: entry.draining,
-          owned: Boolean(entry.registrationId),
         })),
         admission: limiter.diagnostics(),
-        deprecatedRawRegistrations,
       });
     },
 
@@ -694,29 +675,6 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
       return Object.freeze(lease);
     },
 
-    register(input) {
-      deprecatedRawRegistrations += 1;
-      validateRegistration(input);
-
-      if (nodes.has(input.node.nodeId)) {
-        throw new Error(`Node already registered: ${input.node.nodeId}`);
-      }
-
-      publishNode({
-        node: cloneProtocolNode(input.node),
-        handlers: { ...(input.handlers ?? {}) },
-        agentExecutors: { ...(input.agentExecutors ?? {}) },
-        inFlight: 0,
-        draining: false,
-        disposed: false,
-      });
-    },
-
-    unregister(nodeId) {
-      const entry = nodes.get(nodeId);
-      if (entry?.registrationId) throw registrationError("CONFLICT", "Owned registrations can only be disposed by their lease");
-      removeNode(nodeId);
-    },
 
     registry() {
       const registeredNodes = [...nodes.values()]
@@ -738,7 +696,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
         if (!registered) continue;
         for (const catalogEntry of entries) {
           const provide = registered.node.provides.find((item) => item.name === catalogEntry.provideName);
-          if (!provide || !isProtocolTargetAllowedFromCurrentContext(nodeId, provide.name)) continue;
+          if (!provide) continue;
           const control = getInvocationControl();
           if (control && (!targetAllowed(control.grant, `${nodeId}.${provide.name}`) || !effectsAllowed(control.grant, provide.effects ?? []))) continue;
           if (searchOptions.tags?.length && !searchOptions.tags.every((tag) => provide.tags?.includes(tag))) continue;
@@ -761,7 +719,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
 
     describeProvide(nodeId, provideName) {
       const control = getInvocationControl();
-      if (!isProtocolTargetAllowedFromCurrentContext(nodeId, provideName) || (control && !targetAllowed(control.grant, `${nodeId}.${provideName}`))) return undefined;
+      if (control && !targetAllowed(control.grant, `${nodeId}.${provideName}`)) return undefined;
       const node = nodes.get(nodeId)?.node;
       const provide = node?.provides.find((item) => item.name === provideName);
       if (!node || !provide || (control && !effectsAllowed(control.grant, provide.effects ?? []))) return undefined;
@@ -835,8 +793,8 @@ function isCompatibleProtocolFabric(value: ProtocolFabric | undefined): value is
     typeof value.mintPrincipal === "function" &&
     typeof value.invokeAs === "function" &&
     typeof value.install === "function" &&
-    typeof value.register === "function" &&
-    typeof value.unregister === "function" &&
+    !("register" in value) &&
+    !("unregister" in value) &&
     typeof value.registry === "function" &&
     typeof value.search === "function" &&
     typeof value.describeNode === "function" &&
@@ -1202,18 +1160,15 @@ function schemaSearchTerms(schema: unknown): string[] {
 function cloneProtocolNode(node: ProtocolNode): ProtocolNode {
   return {
     ...node,
-    ...(node.agents ? { agents: cloneJsonLike(node.agents) } : {}),
     provides: node.provides.map(cloneProvide),
   };
 }
 
 function cloneProtocolNodeWithAllowedProvides(node: ProtocolNode): ProtocolNode {
   const cloned = cloneProtocolNode(node);
-  if (hasProtocolAccessRestrictionInCurrentContext()) delete cloned.agents;
   const control = getInvocationControl();
   cloned.provides = cloned.provides.filter((provide) =>
-    isProtocolTargetAllowedFromCurrentContext(cloned.nodeId, provide.name)
-    && (!control || (targetAllowed(control.grant, `${cloned.nodeId}.${provide.name}`) && effectsAllowed(control.grant, provide.effects ?? [])))
+    !control || (targetAllowed(control.grant, `${cloned.nodeId}.${provide.name}`) && effectsAllowed(control.grant, provide.effects ?? []))
   );
   return cloned;
 }

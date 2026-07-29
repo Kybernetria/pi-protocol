@@ -1,19 +1,27 @@
+import { installTestNode, disposeTestNode } from "./helpers/install-test-node.ts";
 import assert from "node:assert/strict";
 import { createProtocolFabric, type JsonSchemaLite } from "../packages/pi-protocol/index.ts";
 import { createProtocolTool, projectProtocolViewModel } from "../packages/pi-protocol/tool/index.ts";
 
 const schema: JsonSchemaLite = { type: "object", properties: {} };
+const largeBoundedSchema: JsonSchemaLite = {
+  type: "object",
+  properties: Object.fromEntries(Array.from({ length: 16 }, (_, index) => [
+    `field_${index}`,
+    { type: "string", description: "x".repeat(8_000) },
+  ])),
+};
 const fabric = createProtocolFabric({ maxConcurrentInvocations: 2, maxQueuedInvocations: 2 });
 for (let index = 0; index < 15; index++) {
   const nodeId = `projection_${String(index).padStart(2, "0")}`;
-  fabric.register({
+  installTestNode(fabric, {
     node: {
       nodeId,
       purpose: `Projection pagination fixture ${index}`,
       provides: Array.from({ length: index === 0 ? 20 : 1 }, (_, provideIndex) => ({
         name: `provide_${String(provideIndex).padStart(2, "0")}`,
         description: "Bounded projected capability",
-        inputSchema: index === 0 && provideIndex === 19 ? { ...schema, description: "x".repeat(100_000) } : schema,
+        inputSchema: index === 0 && provideIndex === 19 ? largeBoundedSchema : schema,
         outputSchema: schema,
         execution: { type: "handler" as const, handler: "run" },
       })),
@@ -24,7 +32,7 @@ for (let index = 0; index < 15; index++) {
 let effect = false;
 let release!: () => void;
 const gate = new Promise<void>((resolve) => { release = resolve; });
-fabric.register({
+installTestNode(fabric, {
   node: {
     nodeId: "projection_effect",
     purpose: "Cancellation truth fixture",

@@ -122,20 +122,20 @@ Diagnostics are bounded and do not include manifest values.
 
 ### v0.2 compatibility
 
-The canonical reader implements dual-read, single-write migration. It can decode a valid `protocolVersion: "0.2.0"` manifest into a canonical v1 public contract while retaining old implementation bindings and private agent metadata in `definition.compatibility`. It emits structured deprecation diagnostics and can be disabled with `{ allowLegacyV02: false }`.
+The canonical reader retains a bounded previous-version decoder for conformance fixtures and offline migration. It can decode a valid `protocolVersion: "0.2.0"` document into a canonical v1 contract and emits structured deprecation diagnostics. Production admission should use `{ allowLegacyV02: false }`.
 
-New manifests, fixtures, generated artifacts, and documentation use v1 only. The root-level v0.2 manifest helpers remain deprecated compatibility APIs until ecosystem migration is complete.
+The v0.2 runtime registration helpers and schema evaluator were removed after the ecosystem migrated. New manifests, generated artifacts, runtime registrations, and documentation use v1 only.
 
 ## Package boundaries
 
-- `@kybernetria/pi-protocol` — contracts, local fabric, temporary v0.2 adapters
+- `@kybernetria/pi-protocol` — contracts and local fabric
 - `@kybernetria/pi-protocol/contract` — canonical admission, validators, limits, normalization, digest
 - `@kybernetria/pi-protocol/core` — Pi-independent local fabric only
 - `@kybernetria/pi-protocol/pi` — Pi tool projection (`/tool` compatibility alias)
 - `@kybernetria/pi-protocol/pi/agents` — Pi agent adapter (`/sdk/agent-session` compatibility alias)
 - `@kybernetria/pi-protocol/sdk/agent-profile` — private profile admission and prompt resolution
 
-The core import graph does not load Ajv, Pi coding-agent/model/TUI APIs, tools, rendering, agent sessions, or filesystem manifest resolution. The package root does not eagerly load Pi APIs. Prior root convenience imports for Pi tool/SDK runtime functions must move to the existing `/pi` (`/tool`) or `/pi/agents` (`/sdk`) entrypoints; vNext ships as the 2.x contract/runtime line after repository-by-repository ecosystem migration and the major-release gate.
+The core import graph does not load Ajv, Pi coding-agent/model/TUI APIs, tools, rendering, agent sessions, or filesystem manifest resolution. The package root does not eagerly load Pi APIs. Prior root convenience imports for Pi tool/SDK runtime functions must move to the existing `/pi` (`/tool`) or `/pi/agents` (`/sdk`) entrypoints; the compatibility-retired runtime ships as the 3.x contract/runtime line after repository-by-repository ecosystem migration and the major-release gate.
 
 ## Owned atomic registrations
 
@@ -238,23 +238,9 @@ pi-protocol generate ./extension --check
 pi-protocol doctor --json
 ```
 
-`check` performs canonical admission, recursive nested-package discovery, package/dependency checks, private prompt containment, and generated-artifact verification. `generate` atomically emits digest-stamped targets, exact binding types, and input/output aliases. `doctor` reports host ABI/package copies, registrations and draining generations, contract digests/source identity, queues, audit health, compatibility use, and session counts.
+`check` performs canonical admission, recursive nested-package discovery, package/dependency checks, private prompt containment, and generated-artifact verification. `generate` atomically emits digest-stamped targets, exact binding types, and input/output aliases. `doctor` reports host ABI/package copies, registrations and draining generations, contract digests/source identity, queues, audit health, and session counts.
 
 Extension tests can import `checkProtocolPackage`, `checkProtocolTree`, or `assertProtocolPackageConformance` from `@kybernetria/pi-protocol/conformance`. CI also enforces deterministic CLI bundles, tarball/isolated installation, and protocol performance ceilings.
-
-## Current v0.2 runtime compatibility
-
-Existing v0.2 extensions can continue using the deprecated local registration adapter during migration:
-
-```ts
-import {
-  ensureProtocolFabric,
-  parseProtocolManifest,
-  registerProtocolManifest
-} from "@kybernetria/pi-protocol";
-```
-
-Do not use this compatibility API for new manifest generation.
 
 ## Runtime distribution
 

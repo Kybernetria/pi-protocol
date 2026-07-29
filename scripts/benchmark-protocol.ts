@@ -1,3 +1,4 @@
+import { installTestNode, disposeTestNode } from "./helpers/install-test-node.ts";
 import { performance } from "node:perf_hooks";
 import { createProtocolFabric, type JsonSchemaLite } from "../packages/pi-protocol/index.ts";
 
@@ -13,7 +14,7 @@ for (let node = 0; node < 4; node++) {
     outputSchema: schema,
     execution: { type: "handler" as const, handler: "run" },
   }));
-  fabric.register({ node: { nodeId: `benchmark_${node}`, purpose: "Protocol performance benchmark", provides }, handlers: { run: (input) => input } });
+  installTestNode(fabric, { node: { nodeId: `benchmark_${node}`, purpose: "Protocol performance benchmark", provides }, handlers: { run: (input) => input } });
 }
 const searchStarted = performance.now();
 for (let index = 0; index < 1_000; index++) fabric.search("notification searchable", { limit: 8, tags: ["benchmark"] });

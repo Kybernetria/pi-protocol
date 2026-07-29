@@ -20,10 +20,8 @@ export function diagnoseProtocolRuntime(fabric: ProtocolFabric = ensureProtocolF
   const issues: Array<{ severity: "error" | "warning"; code: string; message: string }> = [];
   if (!host) issues.push({ severity: "error", code: "HOST_ABI_MISSING", message: "Compatible protocol host ABI is not installed" });
   if (host && new Set(host.runtimeCopies.map((copy) => copy.packageVersion)).size > 1) issues.push({ severity: "error", code: "RUNTIME_VERSION_SPLIT", message: "Loaded protocol package copies disagree on version" });
-  if (diagnostics.registrations.some((registration) => !registration.owned)) issues.push({ severity: "warning", code: "UNOWNED_REGISTRATION", message: "Deprecated unowned registrations remain" });
-  if (diagnostics.registrations.some((registration) => registration.owned && (!registration.contractDigest || registration.generation === undefined))) issues.push({ severity: "error", code: "REGISTRATION_ALIGNMENT", message: "Owned registration is missing generation or contract digest" });
+  if (diagnostics.registrations.some((registration) => !registration.contractDigest || registration.generation < 1)) issues.push({ severity: "error", code: "REGISTRATION_ALIGNMENT", message: "Registration is missing generation or contract digest" });
   if (diagnostics.registrations.some((registration) => registration.draining && registration.inFlight === 0)) issues.push({ severity: "warning", code: "DRAIN_STALLED", message: "A registration is draining without in-flight calls" });
-  if (diagnostics.deprecatedRawRegistrations > 0) issues.push({ severity: "warning", code: "DEPRECATED_COMPATIBILITY", message: `${diagnostics.deprecatedRawRegistrations} deprecated raw registrations were observed` });
   if (audit.sinkFailures > 0 || audit.sinkDropped > 0) issues.push({ severity: "warning", code: "AUDIT_DEGRADED", message: `Audit sink failures=${audit.sinkFailures}, dropped=${audit.sinkDropped}` });
   if (audit.observerDropped > 0 || audit.observerFailures > 0) issues.push({ severity: "warning", code: "OBSERVER_DEGRADED", message: `Observer failures=${audit.observerFailures}, dropped=${audit.observerDropped}` });
   return Object.freeze({

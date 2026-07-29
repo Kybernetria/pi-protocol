@@ -159,7 +159,7 @@ const accessorRequest: Record<string, unknown> = { nodeId: "audit_node", provide
 Object.defineProperty(accessorRequest, "traceId", { enumerable: true, get: () => { throw new Error("getter must not run"); } });
 const accessorRejected = await fabric.invokeTracked(accessorRequest as any);
 assert.equal(accessorRejected.ok, false);
-assert.equal(accessorRejected.error.code, "INVALID_INPUT");
+assert.equal(accessorRejected.error.code, "INPUT_INVALID");
 assert.equal(accessorRejected.receipt.state, "rejected");
 
 const bestEffortFabric = createProtocolFabric({

@@ -1,3 +1,4 @@
+import { installTestNode, disposeTestNode } from "./helpers/install-test-node.ts";
 import assert from "node:assert/strict";
 import {
   createProtocolFabric,
@@ -58,7 +59,7 @@ fabric.setRuntimeEventRecorder((event) => {
   runtimeEvents.push(event);
 });
 
-fabric.register({
+installTestNode(fabric, {
   node: {
     nodeId: "p2p_b",
     purpose: "Fake child SDK agent.",
@@ -86,7 +87,7 @@ fabric.register({
   },
 });
 
-fabric.register({
+installTestNode(fabric, {
   node: {
     nodeId: "p2p_a",
     purpose: "Fake outer SDK agent that autonomously uses the protocol tool.",

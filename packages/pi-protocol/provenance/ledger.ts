@@ -171,7 +171,7 @@ export class AuditLedger {
     if (result.ok) {
       receipt.state = "succeeded";
       receipt.outcomeCode = "OK";
-    } else if (result.error.code === "ABORTED" || result.error.code === "CANCELLED") {
+    } else if (result.error.code === "CANCELLED") {
       receipt.state = "cancelled";
       receipt.outcomeCode = "CANCELLED";
     } else {

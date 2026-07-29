@@ -1,5 +1,23 @@
-import type { PiProtocolManifest, ProtocolAgentSpec } from "../types.ts";
-import { validateProtocolAccessPolicy } from "../validation.ts";
+import type { ProvideSpec } from "../types.ts";
+
+interface LegacyProvideSpec extends ProvideSpec {
+  version?: string;
+  display?: Record<string, unknown>;
+}
+
+interface LegacyProtocolManifest {
+  protocolVersion: "0.2.0";
+  nodeId: string;
+  purpose: string;
+  packageId?: string;
+  version?: string;
+  tags?: string[];
+  settings?: Record<string, unknown>;
+  ui?: Record<string, unknown>;
+  display?: Record<string, unknown>;
+  agents?: Record<string, unknown>;
+  provides: LegacyProvideSpec[];
+}
 import type {
   CompatibilityDiagnostic,
   JsonValue,
@@ -33,7 +51,7 @@ const LEGACY_EFFECTS: Readonly<Record<string, readonly StandardEffect[]>> = Obje
 });
 
 /** Preserve the exact v0.2 structural admission rules during migration. */
-export function validateLegacyProtocolManifest(value: unknown): asserts value is PiProtocolManifest {
+export function validateLegacyProtocolManifest(value: unknown): asserts value is LegacyProtocolManifest {
   if (!isPlainObject(value)) throw new Error("Protocol manifest must be an object");
   rejectUnknownKeys(value, MANIFEST_KEYS, "manifest");
   if (value.protocolVersion !== "0.2.0") throw new Error('Protocol manifest protocolVersion must be "0.2.0"');
@@ -55,7 +73,7 @@ export function validateLegacyProtocolManifest(value: unknown): asserts value is
     rejectUnknownKeys(rawAgent, AGENT_KEYS, `manifest.agents.${agentName}`);
     optionalString(rawAgent.description, `manifest.agents.${agentName}.description`);
     validateLegacyAgentTools(value.nodeId as string, agentName, rawAgent.tools);
-    validateProtocolAccessPolicy(value.nodeId as string, agentName, rawAgent.protocolAccess as ProtocolAgentSpec["protocolAccess"]);
+    validateLegacyProtocolAccessPolicy(value.nodeId as string, agentName, rawAgent.protocolAccess);
     if (rawAgent.systemPrompt !== undefined) validateInstructionShape(rawAgent.systemPrompt, agentName);
     validateModelHintShape(rawAgent.modelHint, agentName);
   }
@@ -191,6 +209,20 @@ function mapLegacyEffects(effects: readonly string[] | undefined, path: string, 
     });
   }
   return STANDARD_EFFECTS.filter((effect) => mapped.has(effect));
+}
+
+function validateLegacyProtocolAccessPolicy(nodeId: string, agentName: string, value: unknown): void {
+  if (value === undefined) return;
+  if (!isPlainObject(value)) throw new Error(`Manifest ${nodeId} agent ${agentName} protocolAccess must be an object`);
+  rejectUnknownKeys(value, new Set(["allowedTargets", "deniedTargets"]), `manifest.agents.${agentName}.protocolAccess`);
+  for (const field of ["allowedTargets", "deniedTargets"] as const) {
+    const targets = value[field];
+    if (targets === undefined) continue;
+    if (!Array.isArray(targets) || targets.some((target) => typeof target !== "string" || !/^[a-z0-9][a-z0-9_-]*\.[a-z0-9][a-z0-9_-]*$/.test(target))) {
+      throw new Error(`Manifest ${nodeId} agent ${agentName} protocolAccess.${field} must contain exact node.provide targets`);
+    }
+    if (new Set(targets).size !== targets.length) throw new Error(`Manifest ${nodeId} agent ${agentName} protocolAccess.${field} contains a duplicate target`);
+  }
 }
 
 function validateModelHintShape(value: unknown, agentName: string): void {

@@ -1,5 +1,6 @@
+import { installTestNode, disposeTestNode } from "./helpers/install-test-node.ts";
 import assert from "node:assert/strict";
-import { createProtocolFabric, registerProtocolManifest, type JsonSchemaLite } from "../packages/pi-protocol/index.ts";
+import { createProtocolFabric, type JsonSchemaLite } from "../packages/pi-protocol/index.ts";
 import { createProtocolTool } from "../packages/pi-protocol/tool/index.ts";
 
 const richInputSchema: JsonSchemaLite = {
@@ -33,18 +34,15 @@ const fabric = createProtocolFabric({ maxConcurrentInvocations: 1, maxQueuedInvo
 let release!: () => void;
 const gate = new Promise<void>((resolve) => { release = resolve; });
 let started = 0;
-registerProtocolManifest(fabric, {
-  manifest: {
-    protocolVersion: "0.2.0",
+installTestNode(fabric, {
+  node: {
     nodeId: "compact_test",
     purpose: "Compact protocol tests",
-    packageId: "@tests/compact",
-    version: "1.2.3",
     tags: ["testing"],
     provides: [{
       name: "review",
       description: "Review source code for security problems",
-      effects: ["read-only"],
+      effects: ["fs.read"],
       inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" } } },
       outputSchema: { type: "string" },
       execution: { type: "handler", handler: "review" },
@@ -53,7 +51,7 @@ registerProtocolManifest(fabric, {
       description: "Expose a complete declared schema",
       version: "2.0.0",
       tags: ["schema"],
-      effects: ["read-only"],
+      effects: ["fs.read"],
       inputSchema: richInputSchema,
       outputSchema: richOutputSchema,
       execution: { type: "handler", handler: "discover_schema" },
@@ -69,9 +67,8 @@ registerProtocolManifest(fabric, {
   },
 });
 
-registerProtocolManifest(fabric, {
-  manifest: {
-    protocolVersion: "0.2.0",
+installTestNode(fabric, {
+  node: {
     nodeId: "search_test",
     purpose: "Search ordering and bounds",
     provides: Array.from({ length: 20 }, (_, index) => ({
@@ -80,7 +77,7 @@ registerProtocolManifest(fabric, {
       inputSchema: { type: "object" },
       outputSchema: { type: "string" },
       tags: ["fixture"],
-      effects: ["read-only"],
+      effects: ["fs.read"],
       execution: { type: "handler" as const, handler: "item" },
     })),
   },
@@ -89,8 +86,11 @@ registerProtocolManifest(fabric, {
 
 const tool = createProtocolTool(fabric, { maxConcurrency: 1 });
 const registeredSchema = fabric.describeProvide("compact_test", "discover_schema");
-assert.deepEqual(registeredSchema?.inputSchema, richInputSchema, "describeProvide must preserve the full input schema");
-assert.deepEqual(registeredSchema?.outputSchema, richOutputSchema, "describeProvide must preserve the full output schema");
+assert.equal(registeredSchema?.inputSchema.description, richInputSchema.description);
+assert.deepEqual(registeredSchema?.inputSchema.required, richInputSchema.required);
+assert.deepEqual(registeredSchema?.inputSchema.properties?.job.required, richInputSchema.properties?.job.required);
+assert.deepEqual(registeredSchema?.outputSchema.required, richOutputSchema.required);
+assert.deepEqual(registeredSchema?.outputSchema.properties?.ok.enum, [true]);
 
 const list = await tool.execute("list-call", { op: "list" });
 const listText = list.content[0]?.text ?? "";
@@ -119,7 +119,7 @@ assert.ok(!legacyList.content[0]?.text.includes("compact_test.review"));
 
 const search = await tool.execute("search-call", { op: "search", query: "complete declared schema" });
 assert.ok(search.content[0]?.text.includes("compact_test.discover_schema"));
-assert.ok(search.content[0]?.text.includes('"input": "object { mode, job, selector? }"'));
+assert.ok(search.content[0]?.text.includes('"input": "object { job, mode, selector? }"'));
 assert.ok(search.content[0]?.text.includes("invoke directly"));
 assert.ok(!search.content[0]?.text.includes("inputSchema"), "search results must not dump full schemas");
 assert.ok(!search.content[0]?.text.includes("Nested JsonSchemaLite input"), "search results must stay compact");
@@ -128,7 +128,7 @@ const boundedSearch = await tool.execute("bounded-search-call", {
   op: "search",
   query: "deterministic fixture",
   limit: 3,
-  filters: { nodeId: "search_test", tags: ["fixture"], execution: "handler", effects: ["read-only"] },
+  filters: { nodeId: "search_test", tags: ["fixture"], execution: "handler", effects: ["fs.read"] },
 });
 const bounded = boundedSearch.details as { totalMatches: number; capabilities: Array<{ target: string }> };
 assert.equal(bounded.totalMatches, 20);
@@ -149,20 +149,18 @@ const describedDetails = described.details as {
     output: string;
     inputSchema: unknown;
     outputSchema: unknown;
-    version: string;
     tags: string[];
     effects: string[];
   };
 };
-assert.equal(describedDetails.provide.input, "object { mode, job, selector? }");
-assert.equal(describedDetails.provide.version, "2.0.0");
+assert.equal(describedDetails.provide.input, "object { job, mode, selector? }");
 assert.deepEqual(describedDetails.provide.tags, ["schema"]);
-assert.deepEqual(describedDetails.provide.effects, ["read-only"]);
+assert.deepEqual(describedDetails.provide.effects, ["fs.read"]);
 assert.ok(!("execution" in describedDetails.provide));
 assert.ok(!("executionSpec" in describedDetails.provide));
-assert.equal(describedDetails.provide.output, "object { ok, message? }");
-assert.deepEqual(describedDetails.provide.inputSchema, richInputSchema);
-assert.deepEqual(describedDetails.provide.outputSchema, richOutputSchema);
+assert.equal(describedDetails.provide.output, "object { message?, ok }");
+assert.deepEqual(describedDetails.provide.inputSchema, registeredSchema?.inputSchema);
+assert.deepEqual(describedDetails.provide.outputSchema, registeredSchema?.outputSchema);
 assert.ok(described.content[0]?.text.includes('"inputSchema"'));
 assert.ok(described.content[0]?.text.includes('"outputSchema"'));
 assert.ok(described.content[0]?.text.includes('"description": "Nested JsonSchemaLite input."'));

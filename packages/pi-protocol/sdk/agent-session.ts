@@ -5,12 +5,7 @@ import { runWithProtocolInvocationContextValue } from "../context.ts";
 import { runWithInvocationControl, type InvocationControlState } from "../control.ts";
 import type { CurrentProtocolInvocationContext } from "../context.ts";
 import { ensureProtocolFabric } from "../fabric.ts";
-import { resolveManifestSystemPrompts } from "../manifest.ts";
-import type {
-  PiProtocolManifest,
-  ProtocolAgentExecutor,
-  ProtocolAgentSpec,
-} from "../types.ts";
+import type { ProtocolAgentExecutor } from "../types.ts";
 import { createProtocolTool, DEFAULT_PROTOCOL_TOOL_NAME } from "../tool/index.ts";
 import {
   createPiSdkAgentExecutor,
@@ -31,10 +26,9 @@ export interface PiSdkCreateAgentSessionOptions {
   [key: string]: unknown;
 }
 
-/** Session settings allowed alongside a manifest-owned agent tool allowlist. */
-export interface PiSdkManifestAgentSessionOptions extends Omit<PiSdkCreateAgentSessionOptions, "tools"> {
-  /** Tool exposure is declared exclusively by `manifest.agents.<name>.tools`. */
-  tools?: never;
+interface PrivateModelHint {
+  specific?: string;
+  provider?: string;
 }
 
 interface PiModelRegistryLike {
@@ -80,20 +74,6 @@ export interface CreateDefaultPiSdkAgentExecutorOptions
   sessionOptions?: PiSdkCreateAgentSessionOptions;
   systemPrompt?: string;
   systemPromptMode?: "append" | "replace";
-}
-
-export interface CreatePiSdkAgentExecutorsFromManifestOptions {
-  /** Required when the manifest uses `systemPrompt.file`; never inferred from process.cwd(). */
-  manifestBaseDir?: string;
-  /** Direct factory shared by every legacy agent. */
-  createSession?: PiSdkAgentSessionFactory;
-  /** Explicit per-agent factory; never inferred from callback arity. */
-  createSessionForAgent?: (agentName: string, agent: ProtocolAgentSpec) => PiSdkAgentSessionFactory | undefined;
-  sessionOptions?: PiSdkManifestAgentSessionOptions | ((agentName: string, agent: ProtocolAgentSpec) => PiSdkManifestAgentSessionOptions | undefined);
-  toPrompt?: CreatePiSdkAgentExecutorOptions["toPrompt"];
-  toPromptByAgent?: (agentName: string, agent: ProtocolAgentSpec) => CreatePiSdkAgentExecutorOptions["toPrompt"];
-  toOutput?: CreatePiSdkAgentExecutorOptions["toOutput"];
-  toOutputByAgent?: (agentName: string, agent: ProtocolAgentSpec) => CreatePiSdkAgentExecutorOptions["toOutput"];
 }
 
 export interface CreatePiSdkAgentExecutorsFromProfilesOptions {
@@ -165,30 +145,6 @@ export function createDefaultPiSdkAgentExecutor(
   });
 }
 
-export function createPiSdkAgentExecutorsFromManifest(
-  manifest: PiProtocolManifest,
-  options: CreatePiSdkAgentExecutorsFromManifestOptions = {},
-): Record<string, ProtocolAgentExecutor> {
-  const executors: Record<string, ProtocolAgentExecutor> = {};
-  // Resolve here as well as during registration so this factory is safe to use
-  // independently and file prompts behave exactly like inline prompt text.
-  const resolvedManifest = resolveManifestSystemPrompts(manifest, { manifestBaseDir: options.manifestBaseDir });
-  for (const [agentName, agent] of Object.entries(resolvedManifest.agents ?? {})) {
-    executors[agentName] = createDefaultPiSdkAgentExecutor({
-      createSession: options.createSessionForAgent?.(agentName, agent) ?? options.createSession,
-      sessionOptions: withManifestAgentToolAllowlist(
-        withAgentModelHint(resolveSessionOptions(options.sessionOptions, agentName, agent), agent),
-        agent,
-      ),
-      toPrompt: options.toPromptByAgent?.(agentName, agent) ?? options.toPrompt,
-      toOutput: options.toOutputByAgent?.(agentName, agent) ?? options.toOutput,
-      systemPrompt: agent.systemPrompt?.text,
-      systemPromptMode: agent.systemPrompt?.mode,
-    });
-  }
-  return executors;
-}
-
 export function createPiSdkAgentExecutorsFromProfiles(
   definition: ProtocolDefinition,
   profiles: ResolvedPiAgentProfiles,
@@ -226,31 +182,8 @@ export function createPiSdkAgentExecutorsFromProfiles(
   return executors;
 }
 
-function resolveSessionOptions(
-  value: CreatePiSdkAgentExecutorsFromManifestOptions["sessionOptions"],
-  agentName: string,
-  agent: ProtocolAgentSpec,
-): PiSdkManifestAgentSessionOptions | undefined {
-  return typeof value === "function" ? value(agentName, agent) : value;
-}
-
 function isToolNamed(tool: unknown, name: string): boolean {
   return typeof tool === "object" && tool !== null && (tool as { name?: unknown }).name === name;
-}
-
-function withManifestAgentToolAllowlist(
-  sessionOptions: PiSdkCreateAgentSessionOptions | undefined,
-  agent: ProtocolAgentSpec,
-): PiSdkCreateAgentSessionOptions {
-  // A manifest is the only authority for a spawned protocol agent's capabilities.
-  // Reject a caller-level tools setting rather than silently choosing one source.
-  if (sessionOptions && Object.hasOwn(sessionOptions, "tools")) {
-    throw new Error("Manifest-backed protocol agents must declare tools in manifest.agents.<name>.tools; sessionOptions.tools is not allowed.");
-  }
-  return {
-    ...(sessionOptions ?? {}),
-    tools: [...(agent.tools ?? DEFAULT_PROTOCOL_AGENT_TOOLS)],
-  };
 }
 
 function assertExactToolAllowlist(session: unknown, requestedTools: unknown): void {
@@ -275,24 +208,11 @@ function assertExactToolAllowlist(session: unknown, requestedTools: unknown): vo
   }
 }
 
-function withAgentModelHint(
-  sessionOptions: PiSdkCreateAgentSessionOptions | undefined,
-  agent: ProtocolAgentSpec,
-): PiSdkCreateAgentSessionOptions | undefined {
-  const hint = agent.modelHint;
-  if (!hint?.specific && !hint?.thinkingLevel) return sessionOptions;
-  return {
-    ...(sessionOptions ?? {}),
-    ...(hint.specific ? { protocolModelHint: hint } : {}),
-    ...(hint.thinkingLevel && !(sessionOptions && "thinkingLevel" in sessionOptions) ? { thinkingLevel: hint.thinkingLevel } : {}),
-  };
-}
-
 async function resolveModelHintSessionOptions(
   sdk: PiCodingAgentSdk,
   sessionOptions: PiSdkCreateAgentSessionOptions,
 ): Promise<PiSdkCreateAgentSessionOptions> {
-  const hint = sessionOptions.protocolModelHint as ProtocolAgentSpec["modelHint"] | undefined;
+  const hint = sessionOptions.protocolModelHint as PrivateModelHint | undefined;
   if (!hint?.specific || sessionOptions.model) return sessionOptions;
 
   const registry = getOrCreateModelRegistry(sdk, sessionOptions);
@@ -318,7 +238,7 @@ function getOrCreateModelRegistry(sdk: PiCodingAgentSdk, sessionOptions: PiSdkCr
   return sdk.ModelRegistry.create(auth, agentDir ? `${agentDir}/models.json` : undefined);
 }
 
-function resolveModelFromHint(registry: PiModelRegistryLike, hint: NonNullable<ProtocolAgentSpec["modelHint"]>): unknown {
+function resolveModelFromHint(registry: PiModelRegistryLike, hint: PrivateModelHint): unknown {
   const specific = hint.specific?.trim();
   if (!specific) return undefined;
 

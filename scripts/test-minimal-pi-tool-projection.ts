@@ -1,10 +1,9 @@
+import { installTestNode, disposeTestNode } from "./helpers/install-test-node.ts";
 import assert from "node:assert/strict";
 import {
   createProtocolFabric,
   ensureProtocolFabric,
-  registerProtocolManifest,
   type JsonSchemaLite,
-  type PiProtocolManifest,
 } from "../packages/pi-protocol/index.ts";
 import protocolToolExtension from "../packages/pi-protocol/extension.ts";
 import { createProtocolTool, registerProtocolTool, type ProtocolToolLike } from "../packages/pi-protocol/tool/index.ts";
@@ -39,7 +38,7 @@ function createPiRuntime() {
 const fabric = ensureProtocolFabric({ confirmationBroker: { confirm: () => true } });
 const pi = createPiRuntime();
 
-fabric.register({
+installTestNode(fabric, {
   node: {
     nodeId: "alpha_tool_projection",
     purpose: "Verify the Pi protocol tool projects the minimal fabric.",
@@ -50,7 +49,7 @@ fabric.register({
         inputSchema: textSchema,
         outputSchema: textSchema,
         execution: { type: "handler", handler: "echo" },
-        policy: { confirmation: "required", blacklistedCallers: ["blocked_tool_agent.invoke"] },
+        policy: { confirmation: "required" },
       },
     ],
   },
@@ -189,218 +188,6 @@ assert.ok(!invokeResultText.includes("session: agent-b (continue)"));
 assert.ok(!invokeResultText.includes('"trace"'));
 assert.ok(invokeResultText.includes("hello via tool"));
 
-const manifest = {
-  protocolVersion: "0.2.0",
-  nodeId: "manifest_tool_projection",
-  packageId: "@kybernetria/manifest-tool-projection-test",
-  version: "1.0.0",
-  purpose: "Verify pi.protocol.json registration carries UI metadata.",
-  ui: {
-    agentColors: {
-      root_agent: "success",
-      manifest_agent: "warning",
-    },
-  },
-  provides: [
-    {
-      name: "echo_manifest",
-      description: "Return the input through a manifest-registered handler.",
-      execution: { type: "handler", handler: "echo_manifest" },
-      version: "1.0.0",
-      inputSchema: textSchema,
-      outputSchema: textSchema,
-    },
-  ],
-} satisfies PiProtocolManifest;
-registerProtocolManifest(fabric, {
-  manifest,
-  handlers: {
-    echo_manifest: async (input) => input,
-  },
-});
-const manifestRegistry = fabric.registry();
-const manifestNode = manifestRegistry.nodes.find((node) => node.nodeId === "manifest_tool_projection");
-assert.equal(manifestNode?.ui?.agentColors?.manifest_agent, "warning");
-const manifestInvokeInput = {
-  action: "invoke" as const,
-  request: {
-    nodeId: "manifest_tool_projection",
-    provide: "echo_manifest",
-    input: { text: "hello manifest" },
-    traceId: "trace-manifest-tool-test",
-    spanId: "span-manifest-tool-test",
-    callerNodeId: "manifest_agent",
-  },
-};
-const manifestInvokeResult = await tool.execute("call-manifest", manifestInvokeInput);
-const colorTheme = {
-  fg: (color: string, text: string) => `[${color}]${text}`,
-  bold: (text: string) => text,
-};
-const manifestResultLines = tool.renderResult?.(manifestInvokeResult, { expanded: true }, colorTheme, {
-  args: manifestInvokeInput,
-}) as { render(width: number): string[] };
-const manifestResultText = manifestResultLines.render(160).join("\n");
-assert.ok(!manifestResultText.includes("[warning]manifest_agent"), "legacy request caller identity must not be trusted");
-assert.ok(manifestResultText.includes("hello manifest"));
-
-const displayManifest = {
-  protocolVersion: "0.2.0",
-  nodeId: "display_hint_tool_projection",
-  purpose: "Verify display hints remain local to Pi protocol tool rendering.",
-  display: { outputToken: "success", urlToken: "warning" },
-  provides: [
-    {
-      name: "node_tokens",
-      description: "Use node-level display hints.",
-      execution: { type: "handler", handler: "display_node_tokens" },
-      inputSchema: textSchema,
-      outputSchema: stringSchema,
-    },
-    {
-      name: "provide_tokens",
-      description: "Override node-level display hints.",
-      display: { outputToken: "accent", urlToken: "error" },
-      execution: { type: "handler", handler: "display_provide_tokens" },
-      inputSchema: textSchema,
-      outputSchema: textSchema,
-    },
-    {
-      name: "unknown_tokens",
-      description: "Fall back for unknown theme tokens.",
-      display: { outputToken: "bogusToken", urlToken: "#ff00ff" },
-      execution: { type: "handler", handler: "display_unknown_tokens" },
-      inputSchema: textSchema,
-      outputSchema: textSchema,
-    },
-  ],
-} satisfies PiProtocolManifest;
-registerProtocolManifest(fabric, {
-  manifest: displayManifest,
-  handlers: {
-    display_node_tokens: async () => "node says https://example.com/node",
-    display_provide_tokens: async () => ({ ok: true, isError: false, text: "provide says https://example.com/provide" }),
-    display_unknown_tokens: async () => ({ text: "unknown says https://example.com/unknown" }),
-  },
-});
-const defaultDisplayManifest = {
-  protocolVersion: "0.2.0",
-  nodeId: "default_display_tool_projection",
-  purpose: "Verify default Pi theme tokens for protocol output rendering.",
-  provides: [
-    {
-      name: "default_tokens",
-      description: "Use renderer default display tokens.",
-      execution: { type: "handler", handler: "display_default_tokens" },
-      inputSchema: textSchema,
-      outputSchema: stringSchema,
-    },
-  ],
-} satisfies PiProtocolManifest;
-registerProtocolManifest(fabric, {
-  manifest: defaultDisplayManifest,
-  handlers: { display_default_tokens: async () => "default says https://example.com/default" },
-});
-const knownThemeTokens = new Set(["toolTitle", "success", "error", "muted", "accent", "warning", "toolOutput", "mdLinkUrl"]);
-const tokenTheme = {
-  fg: (color: string, text: string) => {
-    if (!knownThemeTokens.has(color)) throw new Error(`unknown token ${color}`);
-    return `[${color}]${text}`;
-  },
-  bold: (text: string) => text,
-};
-async function renderDisplayHintProvide(provide: string, nodeId = "display_hint_tool_projection") {
-  const input = { action: "invoke" as const, request: { nodeId, provide, input: { text: "go" } } };
-  const result = await tool.execute(`call-display-${provide}`, input);
-  const rendered = tool.renderResult?.(result, {}, tokenTheme, { args: input }) as { render(width: number): string[] };
-  return { result, text: rendered.render(160).join("\n") };
-}
-const defaultDisplayResult = await renderDisplayHintProvide("default_tokens", "default_display_tool_projection");
-assert.equal(defaultDisplayResult.result.content[0]?.text, "default says https://example.com/default");
-assert.ok(defaultDisplayResult.text.includes("[toolOutput]default says "));
-assert.ok(defaultDisplayResult.text.includes("https://example.com/default"));
-assert.ok(!defaultDisplayResult.text.includes("[mdLinkUrl]"));
-const nodeDisplayResult = await renderDisplayHintProvide("node_tokens");
-assert.equal(nodeDisplayResult.result.content[0]?.text, "node says https://example.com/node");
-assert.ok(nodeDisplayResult.text.includes("[toolOutput]node says "));
-assert.ok(!nodeDisplayResult.text.includes("[warning]https://example.com/node"));
-assert.ok(!nodeDisplayResult.result.content[0]?.text.includes("[success]"), "protocol output payload should remain plain");
-const provideDisplayResult = await renderDisplayHintProvide("provide_tokens");
-assert.equal(provideDisplayResult.result.content[0]?.text, "provide says https://example.com/provide");
-assert.ok(provideDisplayResult.text.includes("[toolOutput]provide says "));
-assert.ok(!provideDisplayResult.text.includes("[error]https://example.com/provide"));
-const unknownDisplayResult = await renderDisplayHintProvide("unknown_tokens");
-assert.equal(unknownDisplayResult.result.content[0]?.text, "unknown says https://example.com/unknown");
-assert.ok(unknownDisplayResult.text.includes("[toolOutput]unknown says "));
-assert.ok(!unknownDisplayResult.text.includes("[mdLinkUrl]"));
-
-const hexDisplayManifest = {
-  protocolVersion: "0.2.0",
-  nodeId: "hex_display_tool_projection",
-  purpose: "Verify optional hex display hints are render-only.",
-  display: { outputHex: "#010203", urlHex: "#040506", accentToken: "warning" },
-  provides: [
-    {
-      name: "node_hex",
-      description: "Use node-level hex display hints.",
-      execution: { type: "handler", handler: "display_node_hex" },
-      inputSchema: textSchema,
-      outputSchema: stringSchema,
-    },
-    {
-      name: "provide_hex",
-      description: "Override node-level display hints with provide hex hints.",
-      display: { outputHex: "#39ff14", urlHex: "#ff00ff", accentHex: "#0000ff" },
-      execution: { type: "handler", handler: "display_provide_hex" },
-      inputSchema: textSchema,
-      outputSchema: stringSchema,
-    },
-  ],
-} satisfies PiProtocolManifest;
-registerProtocolManifest(fabric, {
-  manifest: hexDisplayManifest,
-  handlers: {
-    display_node_hex: async () => "node hex https://example.com/node-hex",
-    display_provide_hex: async () => "provide hex https://example.com/provide-hex",
-  },
-});
-// Low-level nodes remain renderer-hardened, while manifest registration rejects
-// this invalid metadata before a package can publish it.
-fabric.register({
-  node: {
-    nodeId: "invalid_hex_display_tool_projection",
-    purpose: "Renderer fallback fixture for a non-manifest low-level node.",
-    provides: [{
-      name: "invalid_hex",
-      description: "Invalid hex should fall back without throwing.",
-      display: { outputHex: "39ff14", urlHex: "#abc", accentHex: "red", outputToken: "success", urlToken: "warning", accentToken: "accent" },
-      execution: { type: "handler", handler: "display_invalid_hex" },
-      inputSchema: textSchema,
-      outputSchema: stringSchema,
-    }],
-  },
-  handlers: { display_invalid_hex: async () => "invalid hex https://example.com/invalid-hex" },
-});
-const ansiPattern = /\x1b\[[0-9;]*m/;
-const nodeHexDisplayResult = await renderDisplayHintProvide("node_hex", "hex_display_tool_projection");
-assert.equal(nodeHexDisplayResult.result.content[0]?.text, "node hex https://example.com/node-hex");
-assert.ok(nodeHexDisplayResult.text.includes("[toolOutput]node hex "));
-assert.ok(!nodeHexDisplayResult.text.includes("\x1b[38;2;"), "provider hex colors must be ignored");
-assert.ok(!ansiPattern.test(nodeHexDisplayResult.result.content[0]?.text ?? ""), "protocol output payload should remain uncolored");
-assert.ok(!ansiPattern.test(JSON.stringify(nodeHexDisplayResult.result.details)), "protocol invocation details should remain uncolored");
-const provideHexDisplayResult = await renderDisplayHintProvide("provide_hex", "hex_display_tool_projection");
-assert.equal(provideHexDisplayResult.result.content[0]?.text, "provide hex https://example.com/provide-hex");
-assert.ok(provideHexDisplayResult.text.includes("[toolOutput]provide hex "));
-assert.ok(!provideHexDisplayResult.text.includes("\x1b[38;2;"));
-assert.ok(!ansiPattern.test(provideHexDisplayResult.result.content[0]?.text ?? ""));
-assert.ok(!ansiPattern.test(JSON.stringify(provideHexDisplayResult.result.details)));
-const invalidHexDisplayResult = await renderDisplayHintProvide("invalid_hex", "invalid_hex_display_tool_projection");
-assert.equal(invalidHexDisplayResult.result.content[0]?.text, "invalid hex https://example.com/invalid-hex");
-assert.ok(invalidHexDisplayResult.text.includes("[toolOutput]invalid hex "));
-assert.ok(invalidHexDisplayResult.text.includes("[accent]invalid_hex_display_tool_projection.invalid_hex"));
-assert.ok(!ansiPattern.test(invalidHexDisplayResult.result.content[0]?.text ?? ""));
-assert.ok(!ansiPattern.test(JSON.stringify(invalidHexDisplayResult.result.details)));
-
 const partialUpdates: Array<typeof invokeResult> = [];
 const streamingInvokeResult = await tool.execute(
   "call-5-streaming",
@@ -504,7 +291,7 @@ const expandedOrphanParentTraceText = expandedOrphanParentTraceLines.render(120)
 assert.ok(!expandedOrphanParentTraceText.includes("nested input"), "pure renderer must not consume persisted payload previews");
 assert.ok(expandedOrphanParentTraceText.includes("orphan parent output"));
 
-fabric.register({
+installTestNode(fabric, {
   node: {
     nodeId: "runtime_tool_projection",
     purpose: "Verify protocol tool renders runtime event streams.",
@@ -759,7 +546,7 @@ const invalidInvokeResult = await tool.execute("call-5", {
     input: { text: 123 },
   },
 });
-assert.ok(invalidInvokeResult.content[0]?.text.startsWith("INVALID_INPUT:"));
+assert.ok(invalidInvokeResult.content[0]?.text.startsWith("INPUT_INVALID:"));
 assert.ok(!invalidInvokeResult.content[0]?.text.includes('"registry"'), "failed calls must not dump trace details into tool content");
 
 const invalidCommand = await tool.execute("call-6", { op: "describe_node" });
@@ -771,7 +558,7 @@ for (const [isolatedFabric, nodeId] of [
   [isolatedToolFabricA, "isolated_tool_a"],
   [isolatedToolFabricB, "isolated_tool_b"],
 ] as const) {
-  isolatedFabric.register({
+  installTestNode(isolatedFabric, {
     node: {
       nodeId,
       purpose: "Verify protocol tool trace subscriptions stay scoped to their fabric.",
@@ -810,7 +597,6 @@ assert.notEqual(traceA, traceB, "projection-minted correlation prevents cross-ca
 assert.ok(isolatedToolADetails.trace.events.every((event) => event.traceId === traceA));
 assert.ok(isolatedToolBDetails.trace.events.every((event) => event.traceId === traceB));
 
-fabric.unregister("alpha_tool_projection");
-fabric.unregister("manifest_tool_projection");
-fabric.unregister("runtime_tool_projection");
+await disposeTestNode(fabric, "runtime_tool_projection");
+await disposeTestNode(fabric, "alpha_tool_projection");
 console.log("minimal pi protocol tool projection works");

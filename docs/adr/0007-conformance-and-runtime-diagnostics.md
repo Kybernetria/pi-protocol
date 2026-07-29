@@ -12,7 +12,7 @@ The package ships three commands and a reusable `/conformance` API:
 
 - `pi-protocol check` recursively or directly admits canonical manifests, checks package identity/dependency compatibility, private profiles and prompt containment, deprecated compatibility, and configured generated artifacts.
 - `pi-protocol generate` deterministically emits target constants, exact binding types, input/output aliases, digest headers, and optional catalog JSON. Writes are contained and atomic; `--check` fails on drift.
-- `pi-protocol doctor` emits a versioned bounded report covering the host ABI and physical package copies, current and draining registrations, generations/digests/source metadata, admission queues, deprecated raw registration use, audit/observer health, and SDK session counts.
+- `pi-protocol doctor` emits a versioned bounded report covering the host ABI and physical package copies, current and draining owned registrations, generations/digests/source metadata, admission queues, audit/observer health, and SDK session counts. Raw-registration compatibility counters were retired after ecosystem migration.
 
 Recursive discovery is realpath-contained, cycle-safe, deterministic, depth/directory bounded, and finds nested packages. Static checks operate on parsed data rather than source regexes. A registration-time lexical catalog indexes public names, descriptions, tags, effects, and schema property names/descriptions; searches no longer rebuild a full registry snapshot.
 

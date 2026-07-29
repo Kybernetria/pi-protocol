@@ -1,3 +1,4 @@
+import { installTestNode, disposeTestNode } from "./helpers/install-test-node.ts";
 import { ensureProtocolFabric, type JsonSchemaLite } from "../packages/pi-protocol/index.ts";
 import { createDefaultPiSdkAgentExecutor } from "../packages/pi-protocol/sdk/agent-session.ts";
 
@@ -22,7 +23,7 @@ const outputSchema: JsonSchemaLite = {
 
 const fabric = ensureProtocolFabric();
 
-fabric.register({
+installTestNode(fabric, {
   node: {
     nodeId: "live_sdk_agent",
     purpose: "Manual live test node for Pi SDK agent session execution.",

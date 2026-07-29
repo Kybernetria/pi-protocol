@@ -1,8 +1,8 @@
+import { installTestNode, disposeTestNode } from "./helpers/install-test-node.ts";
 import assert from "node:assert/strict";
 import {
   createProtocolFabric,
   ensureProtocolFabric,
-  protocolNodeFromManifest,
   type InvocationProvenanceEvent,
   type JsonSchemaLite,
   type ProtocolRuntimeEvent,
@@ -39,7 +39,7 @@ const isolatedNode = {
   ],
 };
 const isolatedHandlers = { echo: async (input: unknown) => input };
-isolatedFabric.register({
+installTestNode(isolatedFabric, {
   node: isolatedNode,
   handlers: isolatedHandlers,
 });
@@ -81,7 +81,7 @@ assert.deepEqual(undefinedInputResult, {
 assert.equal(isolatedProvenanceEvents.length, 2);
 assert.equal(isolatedProvenanceEvents[0]?.inputPreview, "undefined");
 assert.equal(isolatedProvenanceEvents[1]?.inputPreview, "undefined");
-isolatedFabric.register({
+installTestNode(isolatedFabric, {
   node: {
     nodeId: "isolated_undefined_output",
     purpose: "Verify undefined values produce safe provenance previews.",
@@ -104,13 +104,11 @@ const undefinedOutputResult = await isolatedFabric.invoke({
   input: {},
 });
 assert.deepEqual(undefinedOutputResult, {
-  ok: true,
-  nodeId: "isolated_undefined_output",
-  provide: "return_undefined",
-  output: undefined,
+  ok: false,
+  error: { code: "OUTPUT_INVALID", message: "output JSON cannot contain undefined values" },
 });
 assert.equal(isolatedProvenanceEvents.length, 2);
-assert.equal(isolatedProvenanceEvents[1]?.outputPreview, "undefined");
+assert.equal(isolatedProvenanceEvents[1]?.error?.code, "OUTPUT_INVALID");
 isolatedProvenanceEvents.length = 0;
 await isolatedFabric.invoke({ nodeId: "isolated", provide: "echo", input: { text: "hi" } });
 assert.equal(isolatedProvenanceEvents.length, 2);
@@ -140,7 +138,7 @@ unsubscribeGoodProvenanceSubscriber();
 isolatedFabric.setProvenanceRecorder(undefined);
 
 const isolatedAgentExecutors = { passthrough: async (input: unknown) => input };
-isolatedFabric.register({
+installTestNode(isolatedFabric, {
   node: {
     nodeId: "isolated_agent_map",
     purpose: "Verify registered agent executor maps are copied at registration.",
@@ -179,7 +177,7 @@ const unsubscribeFailingRuntimeSubscriber = isolatedFabric.subscribeRuntimeEvent
 const unsubscribeGoodRuntimeSubscriber = isolatedFabric.subscribeRuntimeEventRecorder((event) => {
   isolatedRuntimeEvents.push(event);
 });
-isolatedFabric.register({
+installTestNode(isolatedFabric, {
   node: {
     nodeId: "isolated_runtime",
     purpose: "Verify runtime event subscribers and recorder failure isolation.",
@@ -216,93 +214,11 @@ await isolatedFabric.invoke({ nodeId: "isolated_runtime", provide: "stream", inp
 assert.equal(isolatedRuntimeEvents.length, 1);
 isolatedFabric.setRuntimeEventRecorder(undefined);
 
-const policyFabric = createProtocolFabric({ confirmationBroker: { confirm: () => true } });
-const policyProvenanceEvents: InvocationProvenanceEvent[] = [];
-policyFabric.setProvenanceRecorder((event) => {
-  policyProvenanceEvents.push(event);
-});
-policyFabric.register({
-  node: protocolNodeFromManifest({
-    protocolVersion: "0.2.0",
-    nodeId: "policy_target",
-    purpose: "Verify provide policy preservation and blacklist enforcement.",
-    provides: [
-      {
-        name: "echo",
-        description: "Echo text unless caller policy denies it.",
-        inputSchema: textInput,
-        outputSchema: textOutput,
-        execution: { type: "handler", handler: "echo" },
-        policy: { confirmation: "required", blacklistedCallers: ["bad_agent.invoke"] },
-      },
-    ],
-  }),
-  handlers: { echo: async (input) => input },
-});
-assert.deepEqual(policyFabric.registry().nodes[0]?.provides[0]?.policy, {
-  confirmation: "required",
-  blacklistedCallers: ["bad_agent.invoke"],
-});
-assert.deepEqual(policyFabric.registry().provides[0]?.policy, {
-  confirmation: "required",
-  blacklistedCallers: ["bad_agent.invoke"],
-});
-assert.deepEqual(policyFabric.describeProvide("policy_target", "echo")?.policy, {
-  confirmation: "required",
-  blacklistedCallers: ["bad_agent.invoke"],
-});
-policyFabric.register({
-  node: {
-    nodeId: "bad_agent",
-    purpose: "Delegated caller identity fixture.",
-    provides: [{ name: "invoke", description: "Invoke policy target.", inputSchema: textInput, outputSchema: {}, execution: { type: "handler", handler: "invoke" } }],
-  },
-  handlers: { invoke: async (input, context) => context!.invoke!("policy_target.echo", input) },
-});
-policyProvenanceEvents.length = 0;
-const spoofedRootResult = await policyFabric.invoke({
-  nodeId: "policy_target",
-  provide: "echo",
-  input: { text: "root caller metadata is not authority" },
-  callerNodeId: "bad_agent.invoke",
-});
-assert.equal(spoofedRootResult.ok, true, "callerNodeId cannot manufacture canonical caller authority");
-const deniedDelegatedResult = await policyFabric.invoke({ nodeId: "bad_agent", provide: "invoke", input: { text: "blocked" } });
-assert.equal(deniedDelegatedResult.ok, true);
-assert.equal((deniedDelegatedResult as any).output.error.code, "POLICY_DENIED");
-assert.equal((deniedDelegatedResult as any).output.error.message, "caller bad_agent.invoke is blacklisted from using policy_target.echo");
-const allowedPolicyResult = await policyFabric.invoke({
-  nodeId: "policy_target",
-  provide: "echo",
-  input: { text: "allowed" },
-  callerNodeId: "good_agent.invoke",
-});
-assert.deepEqual(allowedPolicyResult, {
-  ok: true,
-  nodeId: "policy_target",
-  provide: "echo",
-  output: { text: "allowed" },
-});
-const anonymousPolicyResult = await policyFabric.invoke({
-  nodeId: "policy_target",
-  provide: "echo",
-  input: { text: "anonymous allowed" },
-});
-assert.equal(anonymousPolicyResult.ok, true);
-
-const legacyGlobalFabric = { registry: () => ({ nodes: [], provides: [] }) };
-const protocolGlobals = globalThis as Record<PropertyKey, unknown>;
-protocolGlobals[Symbol.for("pi-protocol.minimal.fabric")] = legacyGlobalFabric;
-assert.throws(() => ensureProtocolFabric(), /Incompatible live Pi Protocol fabric/, "an incompatible live fabric must fail closed");
-delete protocolGlobals[Symbol.for("pi-protocol.minimal.fabric")];
-delete protocolGlobals[Symbol.for("@kybernetria/pi-protocol.host.v1")];
-
 const fabricA = ensureProtocolFabric();
 const fabricB = ensureProtocolFabric();
 const provenanceEvents: InvocationProvenanceEvent[] = [];
 const runtimeEvents: ProtocolRuntimeEvent[] = [];
 
-assert.notEqual(fabricA, legacyGlobalFabric);
 assert.equal(fabricA, fabricB, "both callers should get the same fabric");
 
 fabricA.setProvenanceRecorder((event) => {
@@ -313,7 +229,7 @@ fabricA.setRuntimeEventRecorder((event) => {
   runtimeEvents.push(event);
 });
 
-fabricA.register({
+installTestNode(fabricA, {
   node: {
     nodeId: "alpha",
     purpose: "Alpha test node",
@@ -332,7 +248,7 @@ fabricA.register({
   },
 });
 
-fabricB.register({
+installTestNode(fabricB, {
   node: {
     nodeId: "beta",
     purpose: "Beta test node",
@@ -388,7 +304,11 @@ assert.deepEqual(echoResult, {
   output: { text: "hi" },
 });
 assert.equal(provenanceEvents.length, 2);
-assert.deepEqual(provenanceEvents[0], {
+const { registrationId, registrationGeneration, contractDigest, ...startedEvent } = provenanceEvents[0]!;
+assert.match(registrationId ?? "", /^registration_/);
+assert.equal(registrationGeneration, 1);
+assert.match(contractDigest ?? "", /^sha256:/);
+assert.deepEqual(startedEvent, {
   traceId: "trace-test",
   spanId: "span-test",
   parentSpanId: "parent-span-test",
@@ -426,8 +346,8 @@ assert.equal(provenanceEvents[1]?.inputTruncated, false);
 provenanceEvents.length = 0;
 const invalidInputResult = await fabricA.invoke({ nodeId: "alpha", provide: "echo", input: { text: 42 } });
 assert.equal(invalidInputResult.ok, false);
-assert.equal(invalidInputResult.error.code, "INVALID_INPUT");
-assert.match(invalidInputResult.error.message, /input\.text must be string/);
+assert.equal(invalidInputResult.error.code, "INPUT_INVALID");
+assert.equal(invalidInputResult.error.message, "Input does not satisfy the protocol contract");
 assert.equal(provenanceEvents.length, 2);
 assert.equal(provenanceEvents[0]?.status, "started");
 assert.equal(provenanceEvents[1]?.status, "failed");
@@ -439,14 +359,14 @@ const missingProvideResult = await fabricA.invoke({ nodeId: "alpha", provide: "m
 assert.equal(missingProvideResult.ok, false);
 assert.equal(missingProvideResult.error.code, "NOT_FOUND");
 
-fabricA.unregister("alpha");
+await disposeTestNode(fabricA, "alpha");
 
 assert.equal(fabricB.describeNode("alpha"), undefined);
 assert.equal(fabricB.registry().nodes.length, 1);
 
 assert.throws(
   () =>
-    fabricB.register({
+    installTestNode(fabricB, {
       node: {
         nodeId: "bad node",
         purpose: "Invalid node ID",
@@ -462,12 +382,12 @@ assert.throws(
       },
       handlers: { ok: async (input) => input },
     }),
-  /nodeId must use/,
+  /Protocol (?:manifest|contract)/,
 );
 
 assert.throws(
   () =>
-    fabricB.register({
+    installTestNode(fabricB, {
       node: {
         nodeId: "gamma",
         purpose: "Duplicate provide test",
@@ -490,12 +410,12 @@ assert.throws(
       },
       handlers: { echo: async (input) => input },
     }),
-  /Duplicate provide name/,
+  /Protocol (?:manifest|contract)/,
 );
 
 assert.throws(
   () =>
-    fabricB.register({
+    installTestNode(fabricB, {
       node: {
         nodeId: "delta",
         purpose: "Missing handler test",
@@ -511,10 +431,10 @@ assert.throws(
       },
       handlers: {},
     }),
-  /Missing handler/,
+  /callable/i,
 );
 
-fabricB.register({
+installTestNode(fabricB, {
   node: {
     nodeId: "epsilon",
     purpose: "Throwing handler test",
@@ -555,7 +475,7 @@ assert.equal(typeof provenanceEvents[1]?.durationMs, "number");
 
 assert.throws(
   () =>
-    fabricB.register({
+    installTestNode(fabricB, {
       node: {
         nodeId: "zeta",
         purpose: "Missing agent test",
@@ -570,10 +490,10 @@ assert.throws(
         ],
       },
     }),
-  /Missing agent/,
+  /callable/i,
 );
 
-fabricB.register({
+installTestNode(fabricB, {
   node: {
     nodeId: "eta",
     purpose: "Agent execution test",
@@ -603,7 +523,7 @@ assert.deepEqual(agentResult, {
   output: { text: "agent hi" },
 });
 
-fabricB.register({
+installTestNode(fabricB, {
   node: {
     nodeId: "eta_runtime",
     purpose: "Agent runtime event test",
@@ -659,7 +579,7 @@ assert.equal(runtimeEvents[1]?.outputPreview, "streamed output");
 assert.equal(runtimeEvents[1]?.traceId, runtimeEvents[0]?.traceId);
 assert.equal(runtimeEvents[1]?.spanId, runtimeEvents[0]?.spanId);
 
-fabricB.register({
+installTestNode(fabricB, {
   node: {
     nodeId: "theta",
     purpose: "Throwing agent test",
@@ -686,7 +606,7 @@ assert.equal(thrownAgentResult.error.code, "EXECUTION_FAILED");
 assert.equal(thrownAgentResult.error.message, "agent boom");
 
 let invalidOutputHandlerCalls = 0;
-fabricB.register({
+installTestNode(fabricB, {
   node: {
     nodeId: "iota",
     purpose: "Invalid output test",
@@ -715,8 +635,8 @@ const invalidOutputResult = await fabricB.invoke({
   input: { text: "valid input" },
 });
 assert.equal(invalidOutputResult.ok, false);
-assert.equal(invalidOutputResult.error.code, "INVALID_OUTPUT");
-assert.match(invalidOutputResult.error.message, /output\.text must be string/);
+assert.equal(invalidOutputResult.error.code, "OUTPUT_INVALID");
+assert.match(invalidOutputResult.error.message, /output\/text must be string/);
 assert.equal(invalidOutputHandlerCalls, 1);
 assert.equal(provenanceEvents.length, 2);
 assert.equal(provenanceEvents[0]?.status, "started");

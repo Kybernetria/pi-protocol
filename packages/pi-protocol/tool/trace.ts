@@ -118,7 +118,7 @@ export async function invokeWithTraceUpdates(
       schemaVersion: 1,
       op: "call",
       action: "invoke",
-      state: result.ok ? "completed" : result.error.code === "OUTCOME_UNKNOWN" ? "outcome_unknown" : result.error.code === "ABORTED" || result.error.code === "CANCELLED" ? "aborted" : "failed",
+      state: result.ok ? "completed" : result.error.code === "OUTCOME_UNKNOWN" ? "outcome_unknown" : result.error.code === "CANCELLED" ? "aborted" : "failed",
       ...(toolCallId ? { toolCallId } : {}),
       result,
       receipt: tracked.receipt,

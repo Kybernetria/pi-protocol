@@ -1,3 +1,4 @@
+import { installTestNode, disposeTestNode } from "./helpers/install-test-node.ts";
 import assert from "node:assert/strict";
 import {
   ensureProtocolFabric,
@@ -67,7 +68,7 @@ fabric.setRuntimeEventRecorder((event) => {
   runtimeEvents.push(event);
 });
 
-fabric.register({
+installTestNode(fabric, {
   node: {
     nodeId: "sdk_adapter_test",
     purpose: "Verify fabric invocation through the Pi SDK adapter seam.",
@@ -139,7 +140,7 @@ assert.deepEqual(runtimeEvents, [
 ]);
 
 const statefulFakes: ReturnType<typeof createFakeSession>[] = [];
-fabric.register({
+installTestNode(fabric, {
   node: {
     nodeId: "sdk_stateful_adapter_test",
     purpose: "Verify fabric session metadata reaches the Pi SDK adapter seam.",

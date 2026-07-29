@@ -62,7 +62,7 @@ try {
   await writeFile(join(fixture, "package.json"), JSON.stringify({
     name: "@tests/isolated-extension",
     version: "1.0.0",
-    dependencies: { "@kybernetria/pi-protocol": "^2.0.0" },
+    dependencies: { "@kybernetria/pi-protocol": "^3.0.0" },
     piProtocol: { generated: "protocol.generated.ts" },
   }));
   await writeFile(join(fixture, "pi.protocol.json"), JSON.stringify({

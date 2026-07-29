@@ -16,77 +16,6 @@ export type ExecutionSpec =
   | { type: "handler"; handler: string }
   | { type: "agent"; agent: string };
 
-export type ProtocolSettingSpec =
-  | {
-      type: "string";
-      label?: string;
-      description?: string;
-      default?: string;
-      enum?: string[];
-    }
-  | {
-      type: "boolean";
-      label?: string;
-      description?: string;
-      default?: boolean;
-    }
-  | {
-      type: "number" | "integer";
-      label?: string;
-      description?: string;
-      default?: number;
-      minimum?: number;
-      maximum?: number;
-    };
-
-export type ProtocolAgentInstructionSpec =
-  | { /** Inline agent instructions. */ text: string; file?: never; mode?: "append" | "replace" }
-  | { /** Prompt file, resolved relative to an explicit manifestBaseDir. */ file: string; text?: never; mode?: "append" | "replace" };
-
-export interface ProtocolAccessPolicySpec {
-  /** Exact capability ids (node.provide) this agent may access. When present, nonmatches are denied. */
-  allowedTargets?: string[];
-  /** Exact capability ids (node.provide) this agent may not access. Deny rules take precedence. */
-  deniedTargets?: string[];
-}
-
-export interface ProtocolAgentSpec {
-  description?: string;
-  /** Caller-side discovery and invocation policy for this agent's protocol calls. */
-  protocolAccess?: ProtocolAccessPolicySpec;
-  /**
-   * Exact Pi SDK tool allowlist for this agent. When omitted, protocol-backed
-   * SDK agents receive only the `protocol` tool.
-   */
-  tools?: string[];
-  systemPrompt?: ProtocolAgentInstructionSpec;
-  modelHint?: {
-    /** Advisory strength class for UIs/routing layers. */
-    tier?: "fast" | "balanced" | "reasoning";
-    /** Concrete model override. Use provider/model-id when possible, e.g. "deepseek/deepseek-chat". */
-    specific?: string;
-    /** Optional provider when specific is only a model id. */
-    provider?: string;
-    /** Optional Pi thinking level for this protocol-backed agent session. */
-    thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  };
-}
-
-export interface ProtocolUiSpec {
-  agentColors?: Record<string, string>;
-}
-
-export interface ProtocolDisplaySpec {
-  label?: string;
-  accentToken?: string;
-  outputToken?: string;
-  urlToken?: string;
-  accentHex?: string;
-  outputHex?: string;
-  urlHex?: string;
-  resultMode?: string;
-}
-
 export type ProtocolHandler = (
   input: unknown,
   context?: ProtocolInvocationContext,
@@ -213,21 +142,13 @@ export interface ProtocolNode {
   nodeId: string;
   purpose: string;
   provides: ProvideSpec[];
-  protocolVersion?: string;
-  packageId?: string;
-  version?: string;
   tags?: string[];
-  settings?: Record<string, ProtocolSettingSpec>;
-  ui?: ProtocolUiSpec;
-  display?: ProtocolDisplaySpec;
-  agents?: Record<string, ProtocolAgentSpec>;
 }
 
 // A provide is one callable/discoverable capability inside a node.
 // Schemas define the contract; execution defines what implements it.
 export interface ProvidePolicySpec {
   confirmation?: "free" | "required";
-  blacklistedCallers?: string[];
 }
 
 export interface ProvideSpec {
@@ -240,13 +161,6 @@ export interface ProvideSpec {
   tags?: string[];
   effects?: string[];
   policy?: ProvidePolicySpec;
-  display?: ProtocolDisplaySpec;
-}
-
-export interface RegisterNodeInput {
-  node: ProtocolNode;
-  handlers?: Record<string, ProtocolHandler>;
-  agentExecutors?: Record<string, ProtocolAgentExecutor>;
 }
 
 export interface ProtocolBindings {
@@ -287,11 +201,6 @@ export interface ProtocolRegistration {
 
 // A provide snapshot is what discovery returns when a provide is viewed
 // outside its node. It adds ownership information.
-export interface PiProtocolManifest extends Omit<ProtocolNode, "provides"> {
-  protocolVersion: string;
-  provides: ProvideSpec[];
-}
-
 export interface ProvideSnapshot extends ProvideSpec {
   nodeId: string;
   globalId: string;
@@ -316,19 +225,17 @@ export interface ProtocolSearchResult {
 export interface ProtocolFabricDiagnostics {
   readonly registrations: readonly {
     readonly nodeId: string;
-    readonly registrationId?: string;
-    readonly generation?: number;
-    readonly contractDigest?: string;
+    readonly registrationId: string;
+    readonly generation: number;
+    readonly contractDigest: string;
     readonly packageId?: string;
     readonly packageVersion?: string;
     readonly sourcePath?: string;
     readonly buildId?: string;
     readonly inFlight: number;
     readonly draining: boolean;
-    readonly owned: boolean;
   }[];
   readonly admission: { readonly active: number; readonly queued: number };
-  readonly deprecatedRawRegistrations: number;
 }
 
 export interface InvokeRequest {
@@ -347,9 +254,7 @@ export type InvokeErrorCode =
   | "INVALID_TARGET" | "NOT_FOUND" | "CONTRACT_CHANGED" | "INPUT_INVALID" | "OUTPUT_INVALID"
   | "FORBIDDEN" | "CONFIRMATION_REQUIRED" | "CONFIRMATION_DENIED" | "DEADLINE_EXCEEDED"
   | "CANCELLED" | "OUTCOME_UNKNOWN" | "OVERLOADED" | "CONFLICT" | "SESSION_NOT_FOUND"
-  | "AUDIT_UNAVAILABLE" | "EXECUTION_FAILED"
-  // v0.x compatibility codes:
-  | "INVALID_INPUT" | "INVALID_OUTPUT" | "ABORTED" | "POLICY_DENIED";
+  | "AUDIT_UNAVAILABLE" | "EXECUTION_FAILED";
 
 export type InvokeResult =
   | { ok: true; nodeId: string; provide: string; output: unknown }
@@ -402,8 +307,6 @@ export interface ProtocolFabric {
   mintPrincipal(id: string, kind?: ProtocolPrincipal["kind"]): ProtocolPrincipal;
   invokeAs(principal: ProtocolPrincipal, target: string, input: unknown, options: InvokeAsOptions): Promise<InvokeTrackedResult>;
   install(definition: ProtocolDefinition, bindings: ProtocolBindings, metadata?: ProtocolRegistrationMetadata): ProtocolRegistration;
-  register(input: RegisterNodeInput): void;
-  unregister(nodeId: string): void;
   registry(): RegistrySnapshot;
   search(query: string, options?: ProtocolSearchOptions): ProtocolSearchResult;
   describeNode(nodeId: string): ProtocolNode | undefined;
