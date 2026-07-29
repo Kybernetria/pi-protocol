@@ -40,6 +40,7 @@ import type {
   RegistrationProvenanceRecorder,
   StandardProtocolEffect,
   ProvideSnapshot,
+  ProvideSpec,
   RecorderUnsubscribe,
   RegistrySnapshot,
 } from "./types.ts";
@@ -80,6 +81,7 @@ interface RegisteredNode {
 }
 
 interface SearchCatalogEntry {
+  readonly provideIndex: number;
   readonly provideName: string;
   readonly searchText: string;
 }
@@ -689,24 +691,29 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
     search(query, searchOptions = {}) {
       const terms = query.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 32);
       const limit = boundedInteger(searchOptions.limit, 12, 1, 50, "search limit");
-      const matches: Array<{ score: number; provide: ProvideSnapshot }> = [];
+      const matches: Array<{ score: number; node: ProtocolNode; provide: ProvideSpec }> = [];
+      const control = getInvocationControl();
       for (const [nodeId, entries] of searchCatalog) {
         const registered = nodes.get(nodeId);
         if (!registered) continue;
         for (const catalogEntry of entries) {
-          const provide = registered.node.provides.find((item) => item.name === catalogEntry.provideName);
-          if (!provide) continue;
-          const control = getInvocationControl();
+          const provide = registered.node.provides[catalogEntry.provideIndex];
+          if (!provide || provide.name !== catalogEntry.provideName) continue;
           if (control && (!targetAllowed(control.grant, `${nodeId}.${provide.name}`) || !effectsAllowed(control.grant, provide.effects ?? []))) continue;
           if (searchOptions.tags?.length && !searchOptions.tags.every((tag) => provide.tags?.includes(tag))) continue;
           if (searchOptions.effects?.length && !searchOptions.effects.every((effect) => provide.effects?.includes(effect))) continue;
           const score = terms.reduce((total, term) => total + (catalogEntry.searchText.includes(term) ? 1 : 0), 0);
           if (terms.length && score === 0) continue;
-          matches.push({ score, provide: createProvideSnapshot(registered.node, provide.name) });
+          matches.push({ score, node: registered.node, provide });
         }
       }
-      matches.sort((left, right) => right.score - left.score || left.provide.globalId.localeCompare(right.provide.globalId));
-      return freezeSnapshot({ totalMatches: matches.length, provides: matches.slice(0, limit).map((match) => match.provide) });
+      matches.sort((left, right) => right.score - left.score
+        || left.node.nodeId.localeCompare(right.node.nodeId)
+        || left.provide.name.localeCompare(right.provide.name));
+      return freezeSnapshot({
+        totalMatches: matches.length,
+        provides: matches.slice(0, limit).map((match) => createProvideSnapshotFromProvide(match.node, match.provide)),
+      });
     },
 
     describeNode(nodeId) {
@@ -1122,7 +1129,8 @@ function stringifyPreviewValue(value: unknown): string {
 }
 
 function buildSearchCatalog(node: ProtocolNode): readonly SearchCatalogEntry[] {
-  return Object.freeze(node.provides.map((provide) => Object.freeze({
+  return Object.freeze(node.provides.map((provide, provideIndex) => Object.freeze({
+    provideIndex,
     provideName: provide.name,
     searchText: [
       node.purpose,
@@ -1185,7 +1193,10 @@ function cloneProvide<T extends ProtocolNode["provides"][number]>(provide: T): T
 function createProvideSnapshot(node: ProtocolNode, provideName: string): ProvideSnapshot {
   const provide = node.provides.find((item) => item.name === provideName);
   if (!provide) throw new Error(`Provide not found in node snapshot: ${node.nodeId}.${provideName}`);
+  return createProvideSnapshotFromProvide(node, provide);
+}
 
+function createProvideSnapshotFromProvide(node: ProtocolNode, provide: ProvideSpec): ProvideSnapshot {
   return {
     ...cloneProvide(provide),
     nodeId: node.nodeId,

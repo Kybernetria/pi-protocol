@@ -8519,7 +8519,7 @@ import { createHash as createHash2 } from "node:crypto";
 // packages/pi-protocol/package.json
 var package_default = {
   name: "@kybernetria/pi-protocol",
-  version: "3.0.1",
+  version: "3.0.2",
   description: "Pi Protocol \u2014 shared in-memory fabric with handler/agent execution, protocol tool, and pi SDK adapter",
   type: "module",
   main: "./index.ts",
@@ -9775,23 +9775,26 @@ function createProtocolFabric(options = {}) {
       const terms = query.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 32);
       const limit = boundedInteger(searchOptions.limit, 12, 1, 50, "search limit");
       const matches = [];
+      const control = getInvocationControl();
       for (const [nodeId, entries] of searchCatalog) {
         const registered = nodes.get(nodeId);
         if (!registered) continue;
         for (const catalogEntry of entries) {
-          const provide = registered.node.provides.find((item) => item.name === catalogEntry.provideName);
-          if (!provide) continue;
-          const control = getInvocationControl();
+          const provide = registered.node.provides[catalogEntry.provideIndex];
+          if (!provide || provide.name !== catalogEntry.provideName) continue;
           if (control && (!targetAllowed(control.grant, `${nodeId}.${provide.name}`) || !effectsAllowed(control.grant, provide.effects ?? []))) continue;
           if (searchOptions.tags?.length && !searchOptions.tags.every((tag) => provide.tags?.includes(tag))) continue;
           if (searchOptions.effects?.length && !searchOptions.effects.every((effect) => provide.effects?.includes(effect))) continue;
           const score = terms.reduce((total, term) => total + (catalogEntry.searchText.includes(term) ? 1 : 0), 0);
           if (terms.length && score === 0) continue;
-          matches.push({ score, provide: createProvideSnapshot(registered.node, provide.name) });
+          matches.push({ score, node: registered.node, provide });
         }
       }
-      matches.sort((left, right) => right.score - left.score || left.provide.globalId.localeCompare(right.provide.globalId));
-      return freezeSnapshot({ totalMatches: matches.length, provides: matches.slice(0, limit).map((match) => match.provide) });
+      matches.sort((left, right) => right.score - left.score || left.node.nodeId.localeCompare(right.node.nodeId) || left.provide.name.localeCompare(right.provide.name));
+      return freezeSnapshot({
+        totalMatches: matches.length,
+        provides: matches.slice(0, limit).map((match) => createProvideSnapshotFromProvide(match.node, match.provide))
+      });
     },
     describeNode(nodeId) {
       const node = nodes.get(nodeId)?.node;
@@ -10115,7 +10118,8 @@ function stringifyPreviewValue(value) {
   }
 }
 function buildSearchCatalog(node) {
-  return Object.freeze(node.provides.map((provide) => Object.freeze({
+  return Object.freeze(node.provides.map((provide, provideIndex) => Object.freeze({
+    provideIndex,
     provideName: provide.name,
     searchText: [
       node.purpose,
@@ -10173,6 +10177,9 @@ function cloneProvide(provide) {
 function createProvideSnapshot(node, provideName) {
   const provide = node.provides.find((item) => item.name === provideName);
   if (!provide) throw new Error(`Provide not found in node snapshot: ${node.nodeId}.${provideName}`);
+  return createProvideSnapshotFromProvide(node, provide);
+}
+function createProvideSnapshotFromProvide(node, provide) {
   return {
     ...cloneProvide(provide),
     nodeId: node.nodeId,
