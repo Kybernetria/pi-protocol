@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { createProtocolFabric, type ConfirmationRequest, type ProtocolInvocationContext } from "../packages/pi-protocol/index.ts";
 import { parseProtocolManifest } from "../packages/pi-protocol/contract/index.ts";
+import { getInvocationControl } from "../packages/pi-protocol/control.ts";
+import {
+  runWithPiSdkProtocolControlContext,
+  type PiSdkProtocolControlContext,
+} from "../packages/pi-protocol/sdk/index.ts";
 
 const fabric = createProtocolFabric();
 const principal = fabric.mintPrincipal("agent:test", "agent");
 let seenPrincipal = "";
 let progressSeen = false;
+let bridgedControl: PiSdkProtocolControlContext | undefined;
 fabric.subscribeProgress({ emit: () => { progressSeen = true; } });
 fabric.install(definition("control_node"), {
   handlers: {
@@ -22,6 +28,7 @@ fabric.install(definition("control_node"), {
       second: await context!.invoke!("control_node.child", {}),
     }),
     discover: async () => ({ targets: fabric.registry().provides.map((provide) => provide.globalId) }),
+    bridge: async () => { bridgedControl = getInvocationControl(); return null; },
     progress: async (_input, context) => { context!.progress!({ message: "working", completed: 1, total: 1 }); return null; },
     external: async () => ({ charged: true }),
     gate: async () => null,
@@ -69,6 +76,14 @@ const discovery = await fabric.invokeAs(principal, "control_node.discover", {}, 
 });
 assert.ok(discovery.ok);
 assert.deepEqual((discovery.output as any).targets, ["control_node.child", "control_node.discover"]);
+
+await fabric.invokeAs(principal, "control_node.bridge", {}, {
+  grant: { targets: ["control_node.bridge", "control_node.child"] },
+});
+assert.ok(bridgedControl);
+const bridgedTargets = runWithPiSdkProtocolControlContext(bridgedControl, () =>
+  fabric.registry().provides.map((provide) => provide.globalId));
+assert.deepEqual(bridgedTargets, ["control_node.child", "control_node.bridge"]);
 
 await fabric.invokeAs(principal, "control_node.progress", {}, { grant: { targets: ["control_node.progress"] } });
 await new Promise((resolve) => setTimeout(resolve, 0));
@@ -191,7 +206,7 @@ assert.equal(afterDetached.ok, true, "detached child completion does not leak a 
 console.log("host principals, attenuated delegation, budgets, deadlines, confirmation, discovery filtering, and overload control work");
 
 function definition(nodeId: string) {
-  const names = ["identity", "child", "secret", "parent_allowed", "parent_forbidden", "fanout", "discover", "progress", "external", "gate"];
+  const names = ["identity", "child", "secret", "parent_allowed", "parent_forbidden", "fanout", "discover", "bridge", "progress", "external", "gate"];
   return parseProtocolManifest({
     $schema: "https://pi.dev/protocol/manifest-v1.schema.json", schemaVersion: 1,
     node: { id: nodeId, purpose: "Delegation control fixture." },

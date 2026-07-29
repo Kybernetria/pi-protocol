@@ -1,5 +1,5 @@
 import { getCurrentProtocolInvocationContext } from "../context.ts";
-import { getInvocationControl, intersectGrant, type InvocationControlState } from "../control.ts";
+import { getInvocationControl, intersectGrant, runWithInvocationControl, type InvocationControlState } from "../control.ts";
 import type { CurrentProtocolInvocationContext } from "../context.ts";
 import type {
   ProtocolAgentExecutor,
@@ -29,6 +29,16 @@ export type PiSdkAgentSessionEventLike =
     }
   | { type: string };
 
+export type PiSdkProtocolControlContext = InvocationControlState;
+
+/** Run a custom Pi SDK session callback under host-provided attenuated control. */
+export function runWithPiSdkProtocolControlContext<T>(
+  context: PiSdkProtocolControlContext | undefined,
+  callback: () => T,
+): T {
+  return context ? runWithInvocationControl(context, callback) : callback();
+}
+
 export interface PiSdkAgentSessionLike {
   prompt(text: string): Promise<void>;
   subscribe(listener: (event: PiSdkAgentSessionEventLike) => void): () => void;
@@ -36,7 +46,7 @@ export interface PiSdkAgentSessionLike {
   readonly model?: unknown;
   readonly thinkingLevel?: string;
   setProtocolInvocationContext?(context: CurrentProtocolInvocationContext | undefined): void;
-  setProtocolControlContext?(context: InvocationControlState | undefined): void;
+  setProtocolControlContext?(context: PiSdkProtocolControlContext | undefined): void;
 }
 
 export type PiSdkAgentSessionFactory = () => PiSdkAgentSessionLike | Promise<PiSdkAgentSessionLike>;
