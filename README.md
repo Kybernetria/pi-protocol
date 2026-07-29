@@ -256,4 +256,4 @@ npm run audit:extensions -- /absolute/path/to/extensions
 
 `npm test` includes canonical and previous-version fixtures, adversarial admission cases, the existing runtime/adapter suite, a core import-boundary test, and package tarball installation in an isolated module root.
 
-Architecture decisions are recorded under `docs/adr/`, including canonical admission/trust and owned atomic registrations.
+Architecture decisions are recorded under `docs/adr/`, including canonical admission/trust, owned atomic registrations, compatibility retirement, and the evidence-based deferral of generated native provide tools.

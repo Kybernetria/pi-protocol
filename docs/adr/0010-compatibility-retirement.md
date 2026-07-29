@@ -16,6 +16,8 @@ The fabric ABI advances to version 9 so a process cannot silently combine a runt
 
 A bounded v0.2 decoder remains only in canonical contract admission for previous-version fixtures and offline migration. Production conformance rejects it by default, and production extensions use strict v1 admission. Private deployment policy remains in `pi.agents.json` profiles.
 
+The compatibility-retired runtime is distributed as `@kybernetria/pi-protocol@3.0.1` from the portable GitHub release artifact. All ten recursively discovered ecosystem packages pin that artifact and pass their package tests plus executable conformance.
+
 Test fixtures use a test-only helper that creates canonical definitions and owned registrations. No production compatibility registration path is retained for tests.
 
 ## Consequences
