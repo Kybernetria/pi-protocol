@@ -4,7 +4,7 @@ export {
   invokeFromCurrentContext,
   runWithProtocolInvocationContextValue,
 } from "../context.ts";
-export { createProtocolFabric, ensureProtocolFabric } from "../fabric.ts";
+export { createProtocolFabric, ensureProtocolFabric, getProtocolHostDiagnostics } from "../fabric.ts";
 export type { CurrentProtocolInvocationContext } from "../context.ts";
 export type {
   ExecutionSpec,
@@ -27,6 +27,11 @@ export type {
   ProtocolRuntimeEvent,
   ProtocolRuntimeEventEmitter,
   ProtocolRuntimeEventRecorder,
+  ProtocolBindings,
+  ProtocolRegistration,
+  ProtocolRegistrationMetadata,
+  RegistrationProvenanceEvent,
+  RegistrationProvenanceRecorder,
   ProtocolSettingSpec,
   ProtocolUiSpec,
   ProvenanceRecorder,

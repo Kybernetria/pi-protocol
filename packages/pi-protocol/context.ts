@@ -10,6 +10,8 @@ export interface CurrentProtocolInvocationContext {
   callerNodeId?: string;
   session?: InvokeRequest["session"];
   abortSignal?: AbortSignal;
+  registrationId?: string;
+  registrationGeneration?: number;
   childCounter: number;
 }
 
@@ -41,6 +43,8 @@ export function runWithProtocolInvocationContext<T>(
     callerNodeId: provenance.callerNodeId,
     session: request.session,
     abortSignal: request.abortSignal ?? parent?.abortSignal,
+    registrationId: provenance.registrationId,
+    registrationGeneration: provenance.registrationGeneration,
     childCounter: 0,
   };
   if (localProtocolAccess) {

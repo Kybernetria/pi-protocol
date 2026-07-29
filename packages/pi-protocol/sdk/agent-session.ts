@@ -323,7 +323,9 @@ async function createResourceLoader(
     appendSystemPromptOverride?: (base: string[]) => string[];
   } = {
     cwd: sessionOptions.cwd ?? process.cwd(),
-    ...(sdk.getAgentDir ? { agentDir: sdk.getAgentDir() } : {}),
+    ...(typeof sessionOptions.agentDir === "string"
+      ? { agentDir: sessionOptions.agentDir }
+      : sdk.getAgentDir ? { agentDir: sdk.getAgentDir() } : {}),
   };
 
   if (mode === "replace" && trimmed) {

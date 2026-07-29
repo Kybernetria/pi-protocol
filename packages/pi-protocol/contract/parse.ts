@@ -1,3 +1,4 @@
+import { markAdmittedProtocolDefinition } from "../definition-abi.ts";
 import { decodeLegacyProtocolManifest } from "./compat-v02.ts";
 import { ProtocolContractError } from "./errors.ts";
 import { fingerprintProtocolManifest } from "./fingerprint.ts";
@@ -97,6 +98,7 @@ function createDefinition(
     diagnostics: normalizedDiagnostics,
     ...(normalizedCompatibility ? { compatibility: normalizedCompatibility } : {}),
   };
+  markAdmittedProtocolDefinition(definition);
   return Object.freeze(definition);
 }
 

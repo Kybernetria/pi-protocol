@@ -136,9 +136,32 @@ New manifests, fixtures, generated artifacts, and documentation use v1 only. The
 
 The core import graph does not load Ajv, Pi coding-agent/model/TUI APIs, tools, rendering, agent sessions, or filesystem manifest resolution. The package root does not eagerly load Pi APIs. Prior root convenience imports for Pi tool/SDK runtime functions must move to the existing `/pi` (`/tool`) or `/pi/agents` (`/sdk`) entrypoints; vNext is held from a compatible 1.x publication until ecosystem migration and the major-release gate.
 
-## Current runtime compatibility
+## Owned atomic registrations
 
-Owned atomic registrations, canonical causal provenance, bounded delegation control, hardened agent profiles/sessions, and the simplified Pi projection are delivered in later vNext phases. Existing v0.2 extensions can continue using the deprecated local registration adapter during migration:
+Canonical definitions install with exact provide-name bindings and return an ownership lease:
+
+```ts
+const registration = fabric.install(definition, {
+  handlers: { notify: notifyHandler },
+  agents: {}
+}, {
+  packageId: "@example/notifications",
+  packageVersion: "1.0.0"
+});
+
+await registration.replace(nextDefinition, nextBindings);
+await registration.dispose();
+```
+
+Every provide has exactly one handler or agent binding; missing, duplicate, inherited, or extra bindings fail before publication. Replacement retains the registration ID, increments its generation, and publishes atomically. Existing calls remain pinned to the old implementation, validators, and digest while it drains; old resources dispose only after those calls finish. Only the lease can replace or remove an owned registration.
+
+Compatible physical package copies connect through a structural global host ABI. Incompatible live hosts/fabrics fail loudly rather than being replaced. Runtime diagnostics report package versions and module paths.
+
+Canonical causal receipts, bounded delegation control, hardened agent profiles/sessions, and the simplified Pi projection are delivered in later vNext phases.
+
+## Current v0.2 runtime compatibility
+
+Existing v0.2 extensions can continue using the deprecated local registration adapter during migration:
 
 ```ts
 import {
@@ -172,4 +195,4 @@ npm run audit:extensions -- /absolute/path/to/extensions
 
 `npm test` includes canonical and previous-version fixtures, adversarial admission cases, the existing runtime/adapter suite, a core import-boundary test, and package tarball installation in an isolated module root.
 
-Architecture and trust decisions are recorded in `docs/adr/0001-contract-admission-and-trust.md`.
+Architecture decisions are recorded under `docs/adr/`, including canonical admission/trust and owned atomic registrations.

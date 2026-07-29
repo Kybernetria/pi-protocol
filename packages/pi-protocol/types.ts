@@ -1,3 +1,5 @@
+import type { ProtocolDefinition } from "./contract/types.ts";
+
 export type JsonSchemaLite = {
   type?: "string" | "number" | "integer" | "boolean" | "object" | "array" | "null";
   required?: string[];
@@ -161,6 +163,9 @@ export interface InvocationProvenanceEvent {
   outputPreview?: string;
   outputTruncated?: boolean;
   error?: { code: InvokeErrorCode; message: string };
+  registrationId?: string;
+  registrationGeneration?: number;
+  contractDigest?: string;
 }
 
 export type ProvenanceRecorder = (event: InvocationProvenanceEvent) => void | Promise<void>;
@@ -207,6 +212,42 @@ export interface RegisterNodeInput {
   agentExecutors?: Record<string, ProtocolAgentExecutor>;
 }
 
+export interface ProtocolBindings {
+  handlers?: Record<string, ProtocolHandler>;
+  agents?: Record<string, ProtocolAgentExecutor>;
+  dispose?: () => void | Promise<void>;
+}
+
+export interface ProtocolRegistrationMetadata {
+  packageId?: string;
+  packageVersion?: string;
+  sourcePath?: string;
+  buildId?: string;
+}
+
+export type RegistrationProvenanceEvent = {
+  type: "registration.requested" | "registration.installed" | "registration.replaced" | "registration.removed" | "registration.rejected";
+  timestamp: number;
+  registrationId: string;
+  nodeId: string;
+  generation?: number;
+  contractDigest?: string;
+  previousContractDigest?: string;
+  error?: { code: "CONFLICT" | "CONTRACT_CHANGED" | "INVALID_BINDINGS" | "INVALID_DEFINITION"; message: string };
+  metadata?: ProtocolRegistrationMetadata;
+};
+
+export type RegistrationProvenanceRecorder = (event: RegistrationProvenanceEvent) => void | Promise<void>;
+
+export interface ProtocolRegistration {
+  readonly registrationId: string;
+  readonly nodeId: string;
+  readonly generation: number;
+  readonly contractDigest: string;
+  replace(definition: ProtocolDefinition, bindings: ProtocolBindings): Promise<void>;
+  dispose(): Promise<void>;
+}
+
 // A provide snapshot is what discovery returns when a provide is viewed
 // outside its node. It adds ownership information.
 export interface PiProtocolManifest extends Omit<ProtocolNode, "provides"> {
@@ -249,6 +290,9 @@ export interface ProtocolFabric {
   subscribeProvenanceRecorder(recorder: ProvenanceRecorder): RecorderUnsubscribe;
   setRuntimeEventRecorder(recorder?: ProtocolRuntimeEventRecorder): void;
   subscribeRuntimeEventRecorder(recorder: ProtocolRuntimeEventRecorder): RecorderUnsubscribe;
+  subscribeRegistrationProvenanceRecorder(recorder: RegistrationProvenanceRecorder): RecorderUnsubscribe;
+  registrationProvenance(): readonly RegistrationProvenanceEvent[];
+  install(definition: ProtocolDefinition, bindings: ProtocolBindings, metadata?: ProtocolRegistrationMetadata): ProtocolRegistration;
   register(input: RegisterNodeInput): void;
   unregister(nodeId: string): void;
   registry(): RegistrySnapshot;

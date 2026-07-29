@@ -288,14 +288,18 @@ const anonymousPolicyResult = await policyFabric.invoke({
 assert.equal(anonymousPolicyResult.ok, true);
 
 const legacyGlobalFabric = { registry: () => ({ nodes: [], provides: [] }) };
-(globalThis as Record<PropertyKey, unknown>)[Symbol.for("pi-protocol.minimal.fabric")] = legacyGlobalFabric;
+const protocolGlobals = globalThis as Record<PropertyKey, unknown>;
+protocolGlobals[Symbol.for("pi-protocol.minimal.fabric")] = legacyGlobalFabric;
+assert.throws(() => ensureProtocolFabric(), /Incompatible live Pi Protocol fabric/, "an incompatible live fabric must fail closed");
+delete protocolGlobals[Symbol.for("pi-protocol.minimal.fabric")];
+delete protocolGlobals[Symbol.for("@kybernetria/pi-protocol.host.v1")];
 
 const fabricA = ensureProtocolFabric();
 const fabricB = ensureProtocolFabric();
 const provenanceEvents: InvocationProvenanceEvent[] = [];
 const runtimeEvents: ProtocolRuntimeEvent[] = [];
 
-assert.notEqual(fabricA, legacyGlobalFabric, "incompatible legacy global fabric should be replaced");
+assert.notEqual(fabricA, legacyGlobalFabric);
 assert.equal(fabricA, fabricB, "both callers should get the same fabric");
 
 fabricA.setProvenanceRecorder((event) => {
