@@ -189,16 +189,15 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
         execution: kind === "handler"
           ? { type: "handler" as const, handler: provide.name }
           : { type: "agent" as const, agent: provide.name },
-        tags: provide.tags ? [...provide.tags] : undefined,
-        effects: provide.effects ? [...provide.effects] : undefined,
+        ...(provide.tags ? { tags: [...provide.tags] } : {}),
+        ...(provide.effects ? { effects: [...provide.effects] } : {}),
       };
     });
     return {
       node: freezeSnapshot({
         nodeId: definition.manifest.node.id,
         purpose: definition.manifest.node.purpose,
-        tags: definition.manifest.node.tags ? [...definition.manifest.node.tags] : undefined,
-        protocolVersion: "1",
+        ...(definition.manifest.node.tags ? { tags: [...definition.manifest.node.tags] } : {}),
         provides,
       }),
       handlers: runtimeHandlers,

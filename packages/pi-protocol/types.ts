@@ -7,6 +7,7 @@ export type JsonSchemaLite = {
   type?: "string" | "number" | "integer" | "boolean" | "object" | "array" | "null";
   required?: string[];
   properties?: Record<string, JsonSchemaLite>;
+  additionalProperties?: boolean;
   items?: JsonSchemaLite;
   enum?: unknown[];
   description?: string;

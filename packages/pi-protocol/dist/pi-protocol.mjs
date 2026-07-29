@@ -8519,7 +8519,7 @@ import { createHash as createHash2 } from "node:crypto";
 // packages/pi-protocol/package.json
 var package_default = {
   name: "@kybernetria/pi-protocol",
-  version: "3.0.0",
+  version: "3.0.1",
   description: "Pi Protocol \u2014 shared in-memory fabric with handler/agent execution, protocol tool, and pi SDK adapter",
   type: "module",
   main: "./index.ts",
@@ -9300,16 +9300,15 @@ function createProtocolFabric(options = {}) {
         inputSchema: provide.inputSchema,
         outputSchema: provide.outputSchema,
         execution: kind === "handler" ? { type: "handler", handler: provide.name } : { type: "agent", agent: provide.name },
-        tags: provide.tags ? [...provide.tags] : void 0,
-        effects: provide.effects ? [...provide.effects] : void 0
+        ...provide.tags ? { tags: [...provide.tags] } : {},
+        ...provide.effects ? { effects: [...provide.effects] } : {}
       };
     });
     return {
       node: freezeSnapshot({
         nodeId: definition.manifest.node.id,
         purpose: definition.manifest.node.purpose,
-        tags: definition.manifest.node.tags ? [...definition.manifest.node.tags] : void 0,
-        protocolVersion: "1",
+        ...definition.manifest.node.tags ? { tags: [...definition.manifest.node.tags] } : {},
         provides
       }),
       handlers: runtimeHandlers,
