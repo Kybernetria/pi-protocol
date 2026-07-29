@@ -1,26 +1,38 @@
-import { createChildInvokeRequest } from "../context.ts";
+import { createChildInvokeRequest, getCurrentProtocolInvocationContext } from "../context.ts";
 import type {
   InvocationProvenanceEvent,
   InvokeRequest,
   ProtocolFabric,
   ProtocolRuntimeEvent,
-  RegistrySnapshot,
 } from "../types.ts";
+import type { InvocationReceiptSummary } from "../provenance/receipt.ts";
 import { createProtocolToolId } from "./helpers.ts";
 import type { ProtocolToolExecutionResult, ProtocolToolUpdateCallback } from "./types.ts";
+
+export interface ProtocolTraceRegistry {
+  nodes: Array<{
+    nodeId: string;
+    display?: import("../types.ts").ProtocolDisplaySpec;
+    ui?: { agentColors?: Record<string, string> };
+    provides: Array<{ name: string; display?: import("../types.ts").ProtocolDisplaySpec }>;
+  }>;
+}
 
 export interface ProtocolTraceDetails {
   events: InvocationProvenanceEvent[];
   runtimeEvents?: ProtocolRuntimeEvent[];
-  registry?: RegistrySnapshot;
+  registry?: ProtocolTraceRegistry;
 }
 
 export interface ProtocolInvokeToolDetails {
   ok: true;
+  schemaVersion?: 1;
+  op?: "call";
   action: "invoke";
-  state: "running" | "completed" | "failed" | "aborted";
+  state: "running" | "completed" | "failed" | "aborted" | "outcome_unknown";
   toolCallId?: string;
   result: unknown;
+  receipt?: InvocationReceiptSummary;
   trace?: ProtocolTraceDetails;
 }
 
@@ -31,11 +43,14 @@ export async function invokeWithTraceUpdates(
   signal?: AbortSignal,
   toolCallId?: string,
 ): Promise<ProtocolInvokeToolDetails> {
+  const nested = Boolean(getCurrentProtocolInvocationContext());
   const contextualRequest = createChildInvokeRequest(request);
   const tracedRequest: InvokeRequest = {
     ...contextualRequest,
-    traceId: contextualRequest.traceId ?? createProtocolToolId("trace"),
-    spanId: contextualRequest.spanId ?? createProtocolToolId("span"),
+    // Root correlation is minted by this projection. Model-supplied trace and
+    // caller fields were removed by the command decoder before this boundary.
+    traceId: nested ? contextualRequest.traceId : createProtocolToolId("trace"),
+    spanId: nested ? contextualRequest.spanId : createProtocolToolId("span"),
     abortSignal: contextualRequest.abortSignal ?? signal,
   };
   const traceId = tracedRequest.traceId;
@@ -44,13 +59,15 @@ export async function invokeWithTraceUpdates(
   let runtimeChars = 0;
   let lastRuntimeUpdateAt = 0;
   const flush = (text: string) => {
-    onUpdate?.({
+    safeUpdate(onUpdate, {
       content: [{ type: "text", text }],
       details: {
         ok: true,
+        schemaVersion: 1,
+        op: "call",
         action: "invoke",
         state: "running",
-        toolCallId,
+        ...(toolCallId ? { toolCallId } : {}),
         result: { ok: true },
         trace: { events: [...events], runtimeEvents: [...runtimeEvents], registry: traceRegistry(fabric.registry(), events) },
       },
@@ -58,7 +75,8 @@ export async function invokeWithTraceUpdates(
   };
   const unsubscribeProvenance = fabric.subscribeProvenanceRecorder((event) => {
     if (traceId && event.traceId !== traceId) return;
-    events.push(event);
+    events.push(sanitizeProvenanceEvent(event));
+    if (events.length > 256) events.shift();
     flush("protocol running...");
   });
   const unsubscribeRuntimeEvents = fabric.subscribeRuntimeEventRecorder((event) => {
@@ -67,7 +85,7 @@ export async function invokeWithTraceUpdates(
     if (!bounded) return;
     runtimeChars += runtimeEventChars(bounded);
     runtimeEvents.push(bounded);
-    if (runtimeEvents.length > 500) runtimeEvents.shift();
+    if (runtimeEvents.length > 256) runtimeEvents.shift();
     const now = Date.now();
     if (now - lastRuntimeUpdateAt < 1_000) return;
     lastRuntimeUpdateAt = now;
@@ -75,13 +93,17 @@ export async function invokeWithTraceUpdates(
   });
 
   try {
-    const result = await invokeAbortable(fabric, tracedRequest);
+    const tracked = await fabric.invokeTracked(tracedRequest);
+    const result = tracked.result;
     return {
       ok: true,
+      schemaVersion: 1,
+      op: "call",
       action: "invoke",
-      state: result.ok ? "completed" : result.error.code === "ABORTED" ? "aborted" : "failed",
-      toolCallId,
+      state: result.ok ? "completed" : result.error.code === "OUTCOME_UNKNOWN" ? "outcome_unknown" : result.error.code === "ABORTED" || result.error.code === "CANCELLED" ? "aborted" : "failed",
+      ...(toolCallId ? { toolCallId } : {}),
       result,
+      receipt: tracked.receipt,
       trace: { events: [...events], runtimeEvents: [...runtimeEvents], registry: traceRegistry(fabric.registry(), events) },
     };
   } finally {
@@ -90,51 +112,52 @@ export async function invokeWithTraceUpdates(
   }
 }
 
-async function invokeAbortable(fabric: ProtocolFabric, request: InvokeRequest): ReturnType<ProtocolFabric["invoke"]> {
-  const signal = request.abortSignal;
-  if (signal?.aborted) return createAbortedInvokeResult();
-  if (!signal) return fabric.invoke(request);
+function safeUpdate(callback: ProtocolToolUpdateCallback | undefined, update: ProtocolToolExecutionResult): void {
+  try { callback?.(update); } catch { /* Projection observers are non-authoritative. */ }
+}
 
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (result: Awaited<ReturnType<ProtocolFabric["invoke"]>>) => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", onAbort);
-      resolve(result);
-    };
-    const onAbort = () => finish(createAbortedInvokeResult());
-    signal.addEventListener("abort", onAbort, { once: true });
-    void fabric.invoke(request).then(finish);
-  });
+function sanitizeProvenanceEvent(event: InvocationProvenanceEvent): InvocationProvenanceEvent {
+  const { inputPreview: _input, inputTruncated: _inputTruncated, outputPreview: _output, outputTruncated: _outputTruncated, error, ...safe } = event;
+  return {
+    ...safe,
+    ...(error ? { error: { code: error.code, message: "Invocation failed" } } : {}),
+  };
 }
 
 function runtimeEventChars(event: ProtocolRuntimeEvent): number {
   if (event.type === "executor_output_delta") return event.textDelta.length;
-  if (event.type === "executor_input_snapshot") return event.inputPreview.length;
+  if (event.type === "executor_input_snapshot") return 0;
   if (event.type === "executor_output_snapshot") return event.outputPreview.length;
   return 0;
 }
 
 function boundRuntimeEvent(event: ProtocolRuntimeEvent, remaining: number): ProtocolRuntimeEvent | undefined {
-  if (event.type === "executor_session_model") return event;
-  if (remaining <= 0) return undefined;
-  if (event.type === "executor_output_delta") return { ...event, textDelta: event.textDelta.slice(0, remaining) };
-  if (event.type === "executor_input_snapshot") return { ...event, inputPreview: event.inputPreview.slice(0, remaining), inputTruncated: event.inputTruncated || event.inputPreview.length > remaining };
-  return { ...event, outputPreview: event.outputPreview.slice(0, remaining), outputTruncated: event.outputTruncated || event.outputPreview.length > remaining };
+  if (event.type === "executor_session_model") return {
+    type: event.type,
+    traceId: event.traceId,
+    spanId: event.spanId,
+    model: event.model,
+    ...(event.thinkingLevel ? { thinkingLevel: event.thinkingLevel } : {}),
+  };
+  if (event.type === "executor_input_snapshot" || remaining <= 0) return undefined;
+  if (event.type === "executor_output_delta") return { type: event.type, traceId: event.traceId, spanId: event.spanId, textDelta: event.textDelta.slice(0, remaining) };
+  const truncated = Boolean(event.outputTruncated) || event.outputPreview.length > remaining;
+  return { type: event.type, traceId: event.traceId, spanId: event.spanId, outputPreview: event.outputPreview.slice(0, remaining), ...(truncated ? { outputTruncated: true } : {}) };
 }
 
-function traceRegistry(registry: RegistrySnapshot, events: InvocationProvenanceEvent[]): RegistrySnapshot | undefined {
+function traceRegistry(registry: ReturnType<ProtocolFabric["registry"]>, events: InvocationProvenanceEvent[]): ProtocolTraceRegistry | undefined {
   const targets = new Set(events.map((event) => `${event.nodeId}.${event.provide}`));
   if (targets.size === 0) return undefined;
   const nodeIds = new Set([...targets].map((target) => target.slice(0, target.lastIndexOf("."))));
   const nodes = registry.nodes
     .filter((node) => nodeIds.has(node.nodeId))
-    .map((node) => ({ ...node, provides: node.provides.filter((provide) => targets.has(`${node.nodeId}.${provide.name}`)) }));
-  const provides = registry.provides.filter((provide) => targets.has(provide.globalId));
-  return { nodes, provides };
-}
-
-function createAbortedInvokeResult(): Awaited<ReturnType<ProtocolFabric["invoke"]>> {
-  return { ok: false, error: { code: "ABORTED", message: "Invocation aborted" } };
+    .map((node) => ({
+      nodeId: node.nodeId,
+      ...(node.display ? { display: node.display } : {}),
+      ...(node.ui?.agentColors ? { ui: { agentColors: node.ui.agentColors } } : {}),
+      provides: node.provides
+        .filter((provide) => targets.has(`${node.nodeId}.${provide.name}`))
+        .map((provide) => ({ name: provide.name, ...(provide.display ? { display: provide.display } : {}) })),
+    }));
+  return { nodes };
 }

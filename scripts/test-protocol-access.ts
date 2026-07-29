@@ -146,7 +146,7 @@ assert.deepEqual(exact.search.capabilities.map((item: any) => item.target), ["pi
 assert.deepEqual(exact.allowedNode.node.provides.map((item: any) => item.target), ["pi_dev.scout"]);
 assert.equal(exact.hiddenNode.error.code, "NOT_FOUND");
 assert.equal(exact.hiddenProvide.error.code, "NOT_FOUND");
-assert.deepEqual(exact.registry.registry.provides.map((item: any) => item.globalId), ["pi_dev.scout"]);
+assert.deepEqual(exact.registry.capabilities.map((item: any) => item.target), ["pi_dev.scout"]);
 assert.equal(exact.allowed.ok, true);
 assert.deepEqual(exact.denied, {
   ok: false,

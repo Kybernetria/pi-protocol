@@ -34,6 +34,7 @@ assert.equal(success.receipt.state, "succeeded");
 assert.equal(success.receipt.generation, 1);
 assert.equal(success.receipt.contractDigest, registration.contractDigest);
 assert.ok(Object.isFrozen(success.receipt));
+assert.deepEqual(success.receipt, JSON.parse(JSON.stringify(success.receipt)), "receipts must be strict JSON without undefined fields");
 assert.equal(fabric.getReceipt(success.receipt.invocationId, deniedAuthority), undefined);
 assert.equal(fabric.getReceipt("invocation_unknown", authority), undefined);
 assert.deepEqual(fabric.getReceipt(success.receipt.invocationId, authority), success.receipt);

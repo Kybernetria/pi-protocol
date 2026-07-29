@@ -77,30 +77,30 @@ assert.equal(tool.name, "protocol");
 assert.equal(typeof tool.renderCall, "function");
 assert.equal(typeof tool.renderResult, "function");
 assert.ok(
-  tool.promptGuidelines.some((line) => line.includes("request.session.mode = \"continue\"")),
+  tool.promptGuidelines.some((line) => line.includes("session.mode = \"continue\"")),
   "protocol tool should advertise continued-session invocation controls",
 );
-assert.ok(JSON.stringify(tool.parameters).includes("session"), "protocol tool schema should expose request.session");
+assert.ok(JSON.stringify(tool.parameters).includes("session"), "protocol tool schema should expose canonical session control");
+assert.ok(!JSON.stringify(tool.parameters).includes("callerNodeId"), "model-facing schema must not expose caller identity");
+assert.ok(!JSON.stringify(tool.parameters).includes("traceId"), "model-facing schema must not expose causal identity");
 
 const testTheme = {
   fg: (_color: string, text: string) => text,
   bold: (text: string) => text,
 };
 
-const registryResult = await tool.execute("call-1", { action: "registry" });
+const registryResult = await tool.execute("call-1", { op: "list" });
 const registryDetails = registryResult.details as {
   ok: true;
-  action: "registry";
-  registry: { nodes: Array<{ nodeId: string }>; provides: Array<{ globalId: string }> };
+  schemaVersion: 1;
+  op: "list";
+  nodes: Array<{ nodeId: string }>;
 };
-assert.equal(registryDetails.action, "registry");
-assert.ok(registryDetails.registry.nodes.some((node) => node.nodeId === "alpha_tool_projection"));
-assert.ok(registryDetails.registry.provides.some((provide) => provide.globalId === "alpha_tool_projection.echo"));
-assert.ok(registryResult.content[0]?.text.includes("protocol registry"));
+assert.equal(registryDetails.op, "list");
+assert.equal(registryDetails.schemaVersion, 1);
+assert.ok(registryDetails.nodes.some((node) => node.nodeId === "alpha_tool_projection"));
 assert.ok(registryResult.content[0]?.text.includes("alpha_tool_projection"));
-assert.ok(registryResult.content[0]?.text.includes("echo"));
-assert.ok(registryResult.content[0]?.text.includes("request.session"));
-assert.ok(!registryResult.content[0]?.text.includes("inputSchema"), "registry tool content should stay compact");
+assert.ok(!registryResult.content[0]?.text.includes("inputSchema"), "list tool content should stay compact");
 
 const nodeResult = await tool.execute("call-2", {
   action: "describe_node",
@@ -120,9 +120,9 @@ assert.ok(provideResult.content[0]?.text.includes('"globalId": "alpha_tool_proje
 assert.ok(provideResult.content[0]?.text.includes('"session"'));
 assert.ok(provideResult.content[0]?.text.includes('"requiresIdFor"'));
 assert.ok(provideResult.content[0]?.text.includes('"mode": "continue"'));
-assert.ok(provideResult.content[0]?.text.includes('"policy"'));
-assert.ok(provideResult.content[0]?.text.includes('"confirmation": "required"'));
-assert.ok(provideResult.content[0]?.text.includes('"blocked_tool_agent.invoke"'));
+assert.ok(!provideResult.content[0]?.text.includes('"policy"'), "host policy must not be projected to models");
+assert.ok(!provideResult.content[0]?.text.includes('"execution"'), "implementation kind must not be projected to models");
+assert.ok(!provideResult.content[0]?.text.includes("blocked_tool_agent.invoke"));
 
 const invokeResult = await tool.execute("call-4", {
   action: "invoke",
@@ -159,33 +159,24 @@ assert.deepEqual(invokeDetails.result, {
 });
 assert.equal(invokeDetails.trace.events.length, 2);
 assert.equal(invokeDetails.trace.events[0]?.status, "started");
-assert.equal(invokeDetails.trace.events[0]?.traceId, "trace-tool-test");
-assert.equal(invokeDetails.trace.events[0]?.spanId, "span-tool-test");
-assert.equal(invokeDetails.trace.events[0]?.inputPreview, '{"text":"hello via tool"}');
+assert.match(invokeDetails.trace.events[0]?.traceId ?? "", /^trace_/);
+assert.match(invokeDetails.trace.events[0]?.spanId ?? "", /^span_/);
+assert.equal(invokeDetails.trace.events[0]?.inputPreview, undefined, "persisted projection trace must omit payloads");
 assert.equal(invokeDetails.trace.events[1]?.status, "succeeded");
-assert.equal(invokeDetails.trace.events[1]?.inputPreview, '{"text":"hello via tool"}');
-assert.equal(invokeDetails.trace.events[1]?.outputPreview, '{"text":"hello via tool"}');
+assert.equal(invokeDetails.trace.events[1]?.traceId, invokeDetails.trace.events[0]?.traceId);
+assert.equal(invokeDetails.trace.events[1]?.outputPreview, undefined, "persisted projection trace must omit payloads");
 assert.equal(typeof invokeDetails.trace.events[1]?.durationMs, "number");
 
 const invokeRenderInput = {
-  action: "invoke" as const,
-  request: {
-    nodeId: "alpha_tool_projection",
-    provide: "echo",
-    input: { text: "hello via tool" },
-    traceId: "trace-tool-test",
-    parentSpanId: "span-parent-test",
-    spanId: "span-tool-test",
-    callerNodeId: "pi-chat",
-    session: { id: "agent-b", mode: "continue" as const },
-  },
+  op: "call" as const,
+  target: "alpha_tool_projection.echo",
+  input: { text: "hello via tool" },
+  session: { id: "agent-b", mode: "continue" as const },
 };
 const invokeCallLines = tool.renderCall?.(invokeRenderInput, testTheme) as { render(width: number): string[] };
-assert.ok(invokeCallLines.render(120).join("\n").includes("protocol invoke alpha_tool_projection.echo · from pi-chat"));
+assert.ok(invokeCallLines.render(120).join("\n").includes("protocol call alpha_tool_projection.echo"));
 assert.ok(invokeCallLines.render(120).join("\n").includes("session: agent-b (continue)"));
-assert.ok(invokeCallLines.render(120).join("\n").includes("trace: trace-tool-test"));
-assert.ok(invokeCallLines.render(120).join("\n").includes("parent: span-parent-test"));
-assert.ok(invokeCallLines.render(120).join("\n").includes("span: span-tool-test"));
+assert.ok(!invokeCallLines.render(120).join("\n").includes("trace:"));
 
 const invokeResultLines = tool.renderResult?.(invokeResult, {}, testTheme, { args: invokeRenderInput }) as {
   render(width: number): string[];
@@ -250,7 +241,7 @@ const manifestResultLines = tool.renderResult?.(manifestInvokeResult, { expanded
   args: manifestInvokeInput,
 }) as { render(width: number): string[] };
 const manifestResultText = manifestResultLines.render(160).join("\n");
-assert.ok(manifestResultText.includes("[warning]manifest_agent"));
+assert.ok(!manifestResultText.includes("[warning]manifest_agent"), "legacy request caller identity must not be trusted");
 assert.ok(manifestResultText.includes("hello manifest"));
 
 const displayManifest = {
@@ -573,7 +564,7 @@ const runtimeResultLines = tool.renderResult?.(runtimeInvokeResult, { expanded: 
 }) as { render(width: number): string[] };
 const runtimeResultText = runtimeResultLines.render(120).join("\n");
 assert.ok(!runtimeResultText.includes("stream:\n    streamed runtime"));
-assert.ok(runtimeResultText.includes("output:\n    {\"text\":\"runtime output\"}"));
+assert.ok(runtimeResultText.includes("runtime output"));
 
 const rootDuplicateLines = tool.renderResult?.(
   {
@@ -774,10 +765,8 @@ const invalidInvokeResult = await tool.execute("call-5", {
 assert.ok(invalidInvokeResult.content[0]?.text.startsWith("INVALID_INPUT:"));
 assert.ok(!invalidInvokeResult.content[0]?.text.includes('"registry"'), "failed calls must not dump trace details into tool content");
 
-await assert.rejects(
-  () => tool.execute("call-6", { action: "describe_node" }),
-  /requires nodeId/,
-);
+const invalidCommand = await tool.execute("call-6", { op: "describe_node" });
+assert.equal((invalidCommand.details as { error?: { code?: string } }).error?.code, "INVALID_REQUEST");
 
 const isolatedToolFabricA = createProtocolFabric();
 const isolatedToolFabricB = createProtocolFabric();
@@ -816,8 +805,13 @@ const isolatedToolADetails = isolatedToolAResult.details as { trace: { events: A
 const isolatedToolBDetails = isolatedToolBResult.details as { trace: { events: Array<{ traceId: string }> } };
 assert.equal(isolatedToolADetails.trace.events.length, 2);
 assert.equal(isolatedToolBDetails.trace.events.length, 2);
-assert.ok(isolatedToolADetails.trace.events.every((event) => event.traceId === "trace-isolated-a"));
-assert.ok(isolatedToolBDetails.trace.events.every((event) => event.traceId === "trace-isolated-b"));
+const traceA = isolatedToolADetails.trace.events[0]?.traceId;
+const traceB = isolatedToolBDetails.trace.events[0]?.traceId;
+assert.match(traceA ?? "", /^trace_/);
+assert.match(traceB ?? "", /^trace_/);
+assert.notEqual(traceA, traceB, "projection-minted correlation prevents cross-call trace capture");
+assert.ok(isolatedToolADetails.trace.events.every((event) => event.traceId === traceA));
+assert.ok(isolatedToolBDetails.trace.events.every((event) => event.traceId === traceB));
 
 fabric.unregister("alpha_tool_projection");
 fabric.unregister("manifest_tool_projection");

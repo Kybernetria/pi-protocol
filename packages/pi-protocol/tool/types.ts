@@ -2,21 +2,27 @@ import type { InvokeRequest } from "../types.ts";
 
 export const DEFAULT_PROTOCOL_TOOL_NAME = "protocol";
 
-export type ProtocolToolAction = "list" | "search" | "call" | "registry" | "describe_node" | "describe_provide" | "invoke";
+export type ProtocolToolOperation = "list" | "search" | "call" | "describe_node" | "describe_provide";
+/** @deprecated Legacy aliases accepted by the migration decoder. */
+export type ProtocolToolAction = ProtocolToolOperation | "registry" | "invoke";
 
 export interface ProtocolToolInput {
-  /** Compact API: omit op/action to call target directly. Legacy action remains supported. */
-  op?: "list" | "search" | "call" | "describe_node" | "describe_provide";
+  /** Compact API: omit op to call target directly. */
+  op?: ProtocolToolOperation;
+  /** @deprecated Accepted by the migration decoder but omitted from the Pi schema. */
   action?: ProtocolToolAction;
   query?: string;
-  /** Legacy flat capability listing. Default list output is node-first. */
+  /** @deprecated Legacy flat capability listing, bounded by limit. */
   expandProvides?: boolean;
+  /** Opaque cursor returned by bounded list or node-description results. */
+  cursor?: string;
   /** Bounded search result count (default 12, maximum 50). */
   limit?: number;
   /** Optional search filters. */
   filters?: {
     nodeId?: string;
     tags?: string[];
+    /** @deprecated Implementation kind is not exposed by the canonical projection. */
     execution?: "handler" | "agent";
     effects?: string[];
   };
@@ -24,6 +30,9 @@ export interface ProtocolToolInput {
   nodeId?: string;
   provide?: string;
   input?: unknown;
+  /** Canonical continuation control. Provenance and caller identity are host-owned. */
+  session?: InvokeRequest["session"];
+  /** @deprecated Only target, input, and session are read; identity/trace fields are ignored. */
   request?: Partial<InvokeRequest>;
 }
 
@@ -38,10 +47,6 @@ export interface ProtocolToolExecutionResult {
 }
 
 export type ProtocolToolUpdateCallback = (partial: ProtocolToolExecutionResult) => void;
-
-export interface ProtocolInvocationScheduler {
-  run<T>(task: () => Promise<T>, signal?: AbortSignal, onQueued?: () => void): Promise<T>;
-}
 
 export interface ProtocolToolLike {
   name: string;
@@ -79,6 +84,6 @@ export interface ProtocolToolOptions {
   toolName?: string;
   label?: string;
   description?: string;
-  /** Maximum direct calls through this tool instance. Calls beyond it queue FIFO. */
+  /** @deprecated Concurrency is owned by the fabric admission limiter. */
   maxConcurrency?: number;
 }

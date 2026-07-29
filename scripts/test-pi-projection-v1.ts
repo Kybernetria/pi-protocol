@@ -1,0 +1,123 @@
+import assert from "node:assert/strict";
+import { createProtocolFabric, type JsonSchemaLite } from "../packages/pi-protocol/index.ts";
+import { createProtocolTool } from "../packages/pi-protocol/tool/index.ts";
+
+const schema: JsonSchemaLite = { type: "object", properties: {} };
+const fabric = createProtocolFabric({ maxConcurrentInvocations: 2, maxQueuedInvocations: 2 });
+for (let index = 0; index < 15; index++) {
+  const nodeId = `projection_${String(index).padStart(2, "0")}`;
+  fabric.register({
+    node: {
+      nodeId,
+      purpose: `Projection pagination fixture ${index}`,
+      provides: Array.from({ length: index === 0 ? 20 : 1 }, (_, provideIndex) => ({
+        name: `provide_${String(provideIndex).padStart(2, "0")}`,
+        description: "Bounded projected capability",
+        inputSchema: index === 0 && provideIndex === 19 ? { ...schema, description: "x".repeat(100_000) } : schema,
+        outputSchema: schema,
+        execution: { type: "handler" as const, handler: "run" },
+      })),
+    },
+    handlers: { run: () => ({}) },
+  });
+}
+let effect = false;
+let release!: () => void;
+const gate = new Promise<void>((resolve) => { release = resolve; });
+fabric.register({
+  node: {
+    nodeId: "projection_effect",
+    purpose: "Cancellation truth fixture",
+    provides: [{
+      name: "commit",
+      description: "Perform a non-cooperative effect",
+      inputSchema: schema,
+      outputSchema: schema,
+      execution: { type: "handler", handler: "commit" },
+    }],
+  },
+  handlers: { commit: async () => { effect = true; await gate; return {}; } },
+});
+
+const tool = createProtocolTool(fabric, { maxConcurrency: 1 });
+const parameterText = JSON.stringify(tool.parameters);
+assert(!parameterText.includes("request"));
+assert(!parameterText.includes("action"));
+assert(!parameterText.includes("traceId"));
+assert(!parameterText.includes("callerNodeId"));
+
+const first = await tool.execute("page-one", { op: "list" });
+const firstDetails = first.details as { schemaVersion: 1; nodes: unknown[]; nextCursor?: string };
+assert.equal(firstDetails.schemaVersion, 1);
+assert.equal(firstDetails.nodes.length, 12);
+assert.match(firstDetails.nextCursor ?? "", /^p:/);
+const second = await tool.execute("page-two", { op: "list", cursor: firstDetails.nextCursor });
+assert.equal((second.details as { nodes: unknown[] }).nodes.length, 4);
+
+const node = await tool.execute("node-page", { op: "describe_node", nodeId: "projection_00", limit: 5 });
+const nodeDetails = node.details as { node: { provides: unknown[]; nextCursor?: string } };
+assert.equal(nodeDetails.node.provides.length, 5);
+assert.match(nodeDetails.node.nextCursor ?? "", /^p:/);
+const nextNode = await tool.execute("node-page-two", { op: "describe_node", nodeId: "projection_00", limit: 5, cursor: nodeDetails.node.nextCursor });
+assert.equal((nextNode.details as { node: { provides: unknown[] } }).node.provides.length, 5);
+const largeSchema = await tool.execute("large-schema", { op: "describe_provide", nodeId: "projection_00", provide: "provide_19" });
+assert.equal((largeSchema.details as { provide: { schemaTruncated: boolean } }).provide.schemaTruncated, true);
+assert((largeSchema.content[0]?.text.length ?? 0) < 70_000, "exact contract projection must have a hard output bound");
+
+const conflict = await tool.execute("bad-command", { op: "list", action: "invoke" });
+assert.deepEqual((conflict.details as { error: unknown }).error, { code: "INVALID_REQUEST", message: "Protocol tool request is invalid" });
+const badCursor = await tool.execute("bad-cursor", { op: "list", cursor: "../../secret" });
+assert.equal((badCursor.details as { error: { code: string } }).error.code, "INVALID_REQUEST");
+
+const legacyIdentity = await tool.execute("identity", {
+  action: "invoke",
+  request: {
+    nodeId: "projection_01",
+    provide: "provide_00",
+    input: {},
+    traceId: "model-forged-trace",
+    spanId: "model-forged-span",
+    callerNodeId: "model-forged-caller",
+  },
+});
+const identityDetails = legacyIdentity.details as {
+  schemaVersion: 1;
+  op: "call";
+  receipt: { schemaVersion: 1; invocationId: string };
+  trace: { events: Array<{ traceId: string; spanId: string; callerNodeId?: string; inputPreview?: string }> };
+};
+assert.equal(identityDetails.schemaVersion, 1);
+assert.equal(identityDetails.op, "call");
+assert.equal(identityDetails.receipt.schemaVersion, 1);
+assert.deepEqual(legacyIdentity.details, JSON.parse(JSON.stringify(legacyIdentity.details)), "persisted details must be strict JSON");
+assert(identityDetails.trace.events.every((event) => event.traceId !== "model-forged-trace"));
+assert(identityDetails.trace.events.every((event) => event.spanId !== "model-forged-span"));
+assert(identityDetails.trace.events.every((event) => event.callerNodeId !== "model-forged-caller"));
+assert(identityDetails.trace.events.every((event) => event.inputPreview === undefined));
+
+let updates = 0;
+const withFailingObserver = await tool.execute("observer", { target: "projection_01.provide_00", input: {} }, undefined, () => {
+  updates += 1;
+  throw new Error("observer failed");
+});
+assert.equal((withFailingObserver.details as { state: string }).state, "completed");
+assert(updates > 0);
+
+const controller = new AbortController();
+const pending = tool.execute("effect", { target: "projection_effect.commit", input: {} }, controller.signal);
+while (!effect) await new Promise((resolve) => setTimeout(resolve, 1));
+controller.abort();
+const unknown = await pending;
+const unknownDetails = unknown.details as {
+  state: string;
+  result: { ok: false; error: { code: string } };
+  receipt: { state: string; effectsMayHaveOccurred: boolean };
+};
+assert.equal(unknownDetails.state, "outcome_unknown");
+assert.equal(unknownDetails.result.error.code, "OUTCOME_UNKNOWN");
+assert.equal(unknownDetails.receipt.state, "outcome_unknown");
+assert.equal(unknownDetails.receipt.effectsMayHaveOccurred, true);
+assert.match(unknown.content[0]?.text ?? "", /^OUTCOME_UNKNOWN:/);
+release();
+
+console.log("canonical thin Pi projection is bounded, host-authoritative, and cancellation-truthful");

@@ -29,7 +29,7 @@ const richOutputSchema: JsonSchemaLite = {
   },
 };
 
-const fabric = createProtocolFabric();
+const fabric = createProtocolFabric({ maxConcurrentInvocations: 1, maxQueuedInvocations: 4 });
 let release!: () => void;
 const gate = new Promise<void>((resolve) => { release = resolve; });
 let started = 0;
@@ -95,7 +95,7 @@ assert.deepEqual(registeredSchema?.outputSchema, richOutputSchema, "describeProv
 const list = await tool.execute("list-call", { op: "list" });
 const listText = list.content[0]?.text ?? "";
 assert.ok(listText.includes('"nodeId": "compact_test"'));
-assert.ok(listText.includes('"packageId": "@tests/compact"'));
+assert.ok(!listText.includes("packageId"), "projection must omit deployment identity");
 assert.ok(listText.includes('"provideCount": 20'));
 assert.ok(!listText.includes("compact_test.review"), "default list must not expand provides");
 assert.ok(!listText.includes("inputSchema"), "node catalog must not dump schemas");
@@ -105,7 +105,7 @@ const expandedNode = await tool.execute("node-call", { op: "describe_node", node
 const expandedNodeText = expandedNode.content[0]?.text ?? "";
 assert.ok(expandedNodeText.includes("compact_test.review"));
 assert.ok(expandedNodeText.includes('"input": "object { text }"'));
-assert.ok(expandedNodeText.includes('"execution": "handler"'));
+assert.ok(!expandedNodeText.includes("execution"), "projection must remain implementation-neutral");
 assert.ok(expandedNodeText.includes('"effects"'));
 assert.ok(expandedNodeText.includes("invoke directly"));
 assert.ok(!expandedNodeText.includes("search_test.item_00"), "node expansion must include only the selected node");
@@ -150,16 +150,14 @@ const describedDetails = described.details as {
     version: string;
     tags: string[];
     effects: string[];
-    execution: string;
-    executionSpec: unknown;
   };
 };
 assert.equal(describedDetails.provide.input, "object { mode, job, selector? }");
 assert.equal(describedDetails.provide.version, "2.0.0");
 assert.deepEqual(describedDetails.provide.tags, ["schema"]);
 assert.deepEqual(describedDetails.provide.effects, ["read-only"]);
-assert.equal(describedDetails.provide.execution, "handler");
-assert.deepEqual(describedDetails.provide.executionSpec, { type: "handler", handler: "discover_schema" });
+assert.ok(!("execution" in describedDetails.provide));
+assert.ok(!("executionSpec" in describedDetails.provide));
 assert.equal(describedDetails.provide.output, "object { ok, message? }");
 assert.deepEqual(describedDetails.provide.inputSchema, richInputSchema);
 assert.deepEqual(describedDetails.provide.outputSchema, richOutputSchema);
@@ -187,7 +185,7 @@ const second = tool.execute(
   (update) => queuedUpdates.push(update.details),
 );
 await new Promise((resolve) => setTimeout(resolve, 5));
-assert.equal((queuedUpdates[0] as { state?: string })?.state, "queued");
+assert.equal(queuedUpdates.length, 0, "fabric-owned queue emits no false running update before dispatch");
 controller.abort();
 const aborted = await second;
 assert.equal((aborted.details as { state?: string }).state, "aborted");

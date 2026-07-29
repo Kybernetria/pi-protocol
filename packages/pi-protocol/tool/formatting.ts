@@ -3,11 +3,10 @@ import type {
   InvokeRequest,
   ProtocolDisplaySpec,
   ProtocolRuntimeEvent,
-  RegistrySnapshot,
 } from "../types.ts";
 import { formatTarget, formatValue, indentPreviewLines } from "./helpers.ts";
-import { isInvokeToolResult, isRegistryToolResult, isSuccessfulInvokeToolResult, isTextObject } from "./guards.ts";
-import type { ProtocolTraceDetails } from "./trace.ts";
+import { isInvokeToolResult, isSuccessfulInvokeToolResult, isTextObject } from "./guards.ts";
+import type { ProtocolTraceDetails, ProtocolTraceRegistry } from "./trace.ts";
 import type { ProtocolToolExecutionResult, ProtocolToolInput, ProtocolToolThemeLike } from "./types.ts";
 
 const COLLAPSED_OUTPUT_MAX_CHARS = 160;
@@ -32,10 +31,6 @@ export function formatProtocolToolResult(result: unknown): string {
     return `${code}: ${result.result.error?.message ?? (code === "ABORTED" ? "Invocation aborted" : "Invocation failed")}`;
   }
 
-  if (isRegistryToolResult(result)) {
-    return formatRegistrySummary(result.registry);
-  }
-
   return JSON.stringify(result, null, 2);
 }
 
@@ -47,18 +42,16 @@ export function formatProtocolToolCallDisplay(input: ProtocolToolInput, theme: P
     return boundStyledText(title + theme.fg("muted", `${action}${query}`), 500, 5, "protocol call");
   }
 
-  const request = input.request;
+  const request = input.request ?? input;
   const separator = input.target?.lastIndexOf(".") ?? -1;
   const nodeId = request?.nodeId ?? input.nodeId ?? (separator > 0 ? input.target!.slice(0, separator) : undefined);
   const provide = request?.provide ?? input.provide ?? (separator > 0 ? input.target!.slice(separator + 1) : undefined);
   const target = boundedTarget(nodeId, provide);
   const verb = action === "invoke" ? "invoke" : "call";
   const lines = [title + theme.fg("accent", `${verb} `) + theme.fg("muted", target)];
-  if (request?.callerNodeId) lines[0] += theme.fg("muted", ` · from ${boundScalar(request.callerNodeId)}`);
   if (request?.session?.id || (request?.session?.mode && request.session.mode !== "ephemeral")) {
     lines.push(`session: ${formatSession(request.session)}`);
   }
-  lines.push(...formatTraceLines(request));
 
   return boundStyledText(lines.join("\n"), 2_000, 16, "protocol call");
 }
@@ -86,7 +79,9 @@ export function formatProtocolToolResultDisplay(
   const output = formatProtocolOutput(boundedOutput.text, theme, outputStyle);
   const traceLines = details.state === "queued"
     ? [theme.fg("warning", `○ protocol queued${details.toolCallId ? ` · ${shortToolCallId(details.toolCallId)}` : ""}`)]
-    : formatProtocolTrace(details.trace, theme, options, boundedOutput.text);
+    : details.state === "outcome_unknown"
+      ? [theme.fg("warning", "? protocol outcome unknown · effects may have occurred")]
+      : formatProtocolTrace(details.trace, theme, options, boundedOutput.text);
   if (options.expanded && details.toolCallId && traceLines.length > 0 && details.state !== "queued") {
     traceLines[0] += theme.fg("muted", ` · ${shortToolCallId(details.toolCallId)}`);
   }
@@ -168,7 +163,7 @@ function formatProtocolTrace(
   return lines;
 }
 
-function formatSimpleTrace(event: InvocationProvenanceEvent, registry: RegistrySnapshot | undefined, theme: ProtocolToolThemeLike): string[] {
+function formatSimpleTrace(event: InvocationProvenanceEvent, registry: ProtocolTraceRegistry | undefined, theme: ProtocolToolThemeLike): string[] {
   const target = safeStyle(theme, resolveProtocolOutputStyle(registry, event.nodeId, event.provide).accent, boundedTarget(event.nodeId, event.provide), "accent");
   const duration = typeof event.durationMs === "number" ? ` ${event.durationMs}ms` : "";
   if (event.status === "started") return [`${theme.fg("warning", "↗")} ${target}${theme.fg("muted", " running")}`];
@@ -529,36 +524,6 @@ function formatSession(session: InvokeRequest["session"] | undefined): string {
   return id ? `${id} (${mode})` : mode;
 }
 
-function formatTraceLines(request: Partial<InvokeRequest> | undefined): string[] {
-  return [
-    request?.traceId ? `trace: ${boundScalar(request.traceId)}` : undefined,
-    request?.parentSpanId ? `parent: ${boundScalar(request.parentSpanId)}` : undefined,
-    request?.spanId ? `span: ${boundScalar(request.spanId)}` : undefined,
-  ].filter((line): line is string => typeof line === "string");
-}
-
-function formatRegistrySummary(registry: RegistrySnapshot): string {
-  const lines = [
-    `protocol registry`,
-    `nodes: ${registry.nodes.length}`,
-    `provides: ${registry.provides.length}`,
-    "",
-    "nodes:",
-  ];
-
-  for (const node of registry.nodes) {
-    const provides = node.provides.map((provide) => provide.name).join(", ");
-    lines.push(`- ${node.nodeId}: ${node.purpose} (${provides || "no provides"})`);
-  }
-
-  lines.push(
-    "",
-    "invoke controls: use request.session { id, mode: ephemeral|continue|end } for protocol session continuation",
-    "next: describe_node -> invoke (describe_provide only when exact schema details are needed)",
-  );
-  return lines.join("\n");
-}
-
 function formatProvideOutput(output: unknown): string {
   if (typeof output === "string") return output;
   if (isTextObject(output)) return output.text;
@@ -649,7 +614,7 @@ function resolveDisplayTarget(
 }
 
 function resolveProtocolOutputStyle(
-  registry: RegistrySnapshot | undefined,
+  registry: ProtocolTraceRegistry | undefined,
   nodeId: string | undefined,
   provideName: string | undefined,
 ): ResolvedProtocolOutputStyle {

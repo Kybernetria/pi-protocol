@@ -1,8 +1,9 @@
-export { handleProtocolToolInput } from "./actions.ts";
+export { handleProtocolToolInput, normalizeProtocolToolInput } from "./actions.ts";
 export { createProtocolTool, registerProtocolTool } from "./tool.ts";
 export {
   DEFAULT_PROTOCOL_TOOL_NAME,
   type ProtocolToolAction,
+  type ProtocolToolOperation,
   type ProtocolToolExecutionResult,
   type ProtocolToolInput,
   type ProtocolToolLike,

@@ -91,9 +91,9 @@ export class AuditLedger {
   }
 
   bind(receipt: MutableReceipt, registration: { registrationId?: string; generation?: number; contractDigest?: string }): void {
-    receipt.registrationId = registration.registrationId;
-    receipt.generation = registration.generation;
-    receipt.contractDigest = registration.contractDigest;
+    if (registration.registrationId !== undefined) receipt.registrationId = registration.registrationId;
+    if (registration.generation !== undefined) receipt.generation = registration.generation;
+    if (registration.contractDigest !== undefined) receipt.contractDigest = registration.contractDigest;
     receipt.revision += 1;
   }
 
@@ -196,7 +196,7 @@ export class AuditLedger {
   }
 
   snapshot(receipt: MutableReceipt): InvocationReceiptSummary {
-    return deepFreeze({ ...receipt, childInvocationIds: [...receipt.childInvocationIds] });
+    return deepFreeze(omitUndefined({ ...receipt, childInvocationIds: [...receipt.childInvocationIds] })) as InvocationReceiptSummary;
   }
 
   trackedResult(result: InvokeResult, receipt: MutableReceipt): InvokeTrackedResult {
@@ -245,7 +245,7 @@ export class AuditLedger {
     packageVersion?: string;
     outcomeCode?: string;
   }): void {
-    this.append(deepFreeze({ schemaVersion: 1, eventId: `event_${crypto.randomUUID()}`, sequence: ++this.sequence, ...event }));
+    this.append(deepFreeze(omitUndefined({ schemaVersion: 1, eventId: `event_${crypto.randomUUID()}`, sequence: ++this.sequence, ...event })) as RegistrationProvenanceEventV1);
   }
 
   subscribe(observer: (event: CanonicalProvenanceEventV1) => void | Promise<void>): RecorderUnsubscribe {
@@ -260,7 +260,7 @@ export class AuditLedger {
   }
 
   progress(event: ProgressEventV1): void {
-    const bounded = deepFreeze({ ...event, message: event.message?.slice(0, 1_024) });
+    const bounded = deepFreeze(omitUndefined({ ...event, ...(event.message !== undefined ? { message: event.message.slice(0, 1_024) } : {}) })) as ProgressEventV1;
     for (const observer of this.progressObservers) {
       const queue = this.progressQueues.get(observer) ?? [];
       if (!this.progressQueues.has(observer)) this.progressQueues.set(observer, queue);
@@ -308,7 +308,7 @@ export class AuditLedger {
   }
 
   private event(receipt: MutableReceipt, type: ProvenanceEventV1["type"], extra: Partial<ProvenanceEventV1> = {}): ProvenanceEventV1 {
-    return deepFreeze({
+    return deepFreeze(omitUndefined({
       schemaVersion: 1,
       eventId: `event_${crypto.randomUUID()}`,
       sequence: ++this.sequence,
@@ -324,7 +324,7 @@ export class AuditLedger {
       contractDigest: receipt.contractDigest,
       externalAudit: receipt.externalAudit,
       ...extra,
-    });
+    })) as ProvenanceEventV1;
   }
 
   private append(event: CanonicalProvenanceEventV1): void {
@@ -414,6 +414,10 @@ export function jsonBytes(value: unknown): number {
 
 function isTerminal(state: InvocationReceiptState): boolean {
   return state === "rejected" || state === "succeeded" || state === "failed" || state === "cancelled";
+}
+
+function omitUndefined<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, child]) => child !== undefined)) as T;
 }
 
 function deepFreeze<T>(value: T): T {
