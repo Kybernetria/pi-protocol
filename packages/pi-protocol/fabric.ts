@@ -1,8 +1,12 @@
 import packageMetadata from "./package.json" with { type: "json" };
 import type { CompiledProvideContract, ProtocolDefinition } from "./contract/types.ts";
+import { AuditLedger, jsonBytes } from "./provenance/ledger.ts";
 import { isAdmittedProtocolDefinition } from "./definition-abi.ts";
 import type {
+  CreateProtocolFabricOptions,
+  InvokeErrorCode,
   InvokeRequest,
+  InvokeResult,
   InvocationProvenanceEvent,
   ProtocolAgentExecutor,
   ProtocolBindings,
@@ -33,7 +37,7 @@ import { validateRegistration } from "./validation.ts";
 // can find the same fabric through globalThis.
 const FABRIC_KEY = Symbol.for("pi-protocol.minimal.fabric");
 const FABRIC_VERSION_KEY = Symbol.for("pi-protocol.minimal.fabric.version");
-const FABRIC_VERSION = 4;
+const FABRIC_VERSION = 5;
 const HOST_ABI_KEY = Symbol.for("@kybernetria/pi-protocol.host.v1");
 const HOST_ABI_VERSION = 1;
 const MAX_REGISTRATION_EVENTS = 1_024;
@@ -65,7 +69,7 @@ interface ProtocolHostAbi {
   readonly runtimeCopies: Array<{ moduleUrl: string; packageVersion: string }>;
 }
 
-export function createProtocolFabric(): ProtocolFabric {
+export function createProtocolFabric(options: CreateProtocolFabricOptions = {}): ProtocolFabric {
   const nodes = new Map<string, RegisteredNode>();
   let provenanceRecorder: ProvenanceRecorder | undefined;
   let runtimeEventRecorder: ProtocolRuntimeEventRecorder | undefined;
@@ -73,6 +77,7 @@ export function createProtocolFabric(): ProtocolFabric {
   const runtimeEventSubscribers = new Set<ProtocolRuntimeEventRecorder>();
   const registrationSubscribers = new Set<RegistrationProvenanceRecorder>();
   const registrationEvents: RegistrationProvenanceEvent[] = [];
+  const audit = new AuditLedger(options.audit);
 
   const emitRegistration = (event: RegistrationProvenanceEvent): void => {
     const snapshot = freezeSnapshot({
@@ -81,6 +86,18 @@ export function createProtocolFabric(): ProtocolFabric {
       ...(event.error ? { error: { ...event.error } } : {}),
     });
     registrationEvents.push(snapshot);
+    audit.registration({
+      type: snapshot.type,
+      occurredAt: snapshot.timestamp,
+      registrationId: snapshot.registrationId,
+      nodeId: snapshot.nodeId,
+      generation: snapshot.generation,
+      contractDigest: snapshot.contractDigest,
+      previousContractDigest: snapshot.previousContractDigest,
+      packageId: snapshot.metadata?.packageId,
+      packageVersion: snapshot.metadata?.packageVersion,
+      outcomeCode: snapshot.error?.code,
+    });
     if (registrationEvents.length > MAX_REGISTRATION_EVENTS) registrationEvents.shift();
     for (const recorder of registrationSubscribers) {
       queueMicrotask(() => {
@@ -159,6 +176,135 @@ export function createProtocolFabric(): ProtocolFabric {
     };
   };
 
+  const performAuditedInvocation = async (request: InvokeRequest, waitForOutcome: boolean) => {
+    try { request = snapshotInvokeRequest(request); }
+    catch {
+      const receipt = audit.createReceipt({ traceId: createId("trace"), spanId: createId("span"), target: "invalid.invalid" });
+      audit.reject(receipt, "INVALID_INPUT");
+      const result: InvokeResult = { ok: false, error: { code: "INVALID_INPUT", message: "Invocation request must contain ordinary data fields" } };
+      return audit.trackedResult(result, receipt);
+    }
+    const canonicalTraceId = createId("trace");
+    const canonicalSpanId = createId("span");
+    const safeTarget = validTargetPart(request.nodeId) && validTargetPart(request.provide)
+      ? `${request.nodeId}.${request.provide}`
+      : "invalid.invalid";
+    const receipt = audit.createReceipt({ traceId: canonicalTraceId, spanId: canonicalSpanId, target: safeTarget });
+    const compatibilityProvenance = createInvocationProvenance(request);
+    const compatibilityStartedAt = Date.now();
+    const reject = (code: InvokeErrorCode, message: string) => {
+      audit.reject(receipt, code);
+      const error = { code, message };
+      const preview = createInputPreview(request.input);
+      recordProvenance(provenanceRecorder, provenanceSubscribers, { ...compatibilityProvenance, status: "started", ...preview });
+      recordProvenance(provenanceRecorder, provenanceSubscribers, { ...compatibilityProvenance, status: code === "ABORTED" ? "aborted" : "failed", durationMs: Date.now() - compatibilityStartedAt, ...preview, error });
+      const result: InvokeResult = { ok: false, error };
+      return audit.trackedResult(result, receipt);
+    };
+    if (safeTarget === "invalid.invalid") return reject("NOT_FOUND", "Invalid protocol target");
+    if (request.abortSignal?.aborted) return reject("ABORTED", "Invocation aborted before execution");
+    if (!isProtocolTargetAllowedFromCurrentContext(request.nodeId, request.provide)) {
+      return reject("POLICY_DENIED", `Protocol access denied for target ${safeTarget}`);
+    }
+    const selected = nodes.get(request.nodeId);
+    if (!selected) return reject("NOT_FOUND", `Node not found: ${request.nodeId}`);
+    const provide = selected.node.provides.find((candidate) => candidate.name === request.provide);
+    if (!provide) return reject("NOT_FOUND", `Provide not found: ${safeTarget}`);
+    if (request.callerNodeId && provide.policy?.blacklistedCallers?.includes(request.callerNodeId)) {
+      return reject("POLICY_DENIED", `caller ${request.callerNodeId} is blacklisted from using ${safeTarget}`);
+    }
+    const compiled = selected.definition?.provides[request.provide];
+    if (compiled && !compiled.validateInput(request.input).valid) return reject("INVALID_INPUT", "Input does not satisfy the protocol contract");
+
+    // Pin before any required sink await. Replacement can publish, but this exact
+    // generation remains leased and is the only one dispatched for this receipt.
+    selected.inFlight += 1;
+    audit.bind(receipt, selected);
+    let released = false;
+    const release = () => { if (!released) { released = true; releaseRegisteredNode(selected); } };
+    const auditAccepted = await audit.start(receipt, jsonBytes(request.input));
+    if (!auditAccepted) {
+      release();
+      return reject("AUDIT_UNAVAILABLE", "Required audit sink unavailable");
+    }
+    if (request.abortSignal?.aborted) {
+      audit.cancelRequested(receipt);
+      release();
+      return reject("ABORTED", "Invocation aborted before dispatch");
+    }
+
+    audit.dispatched(receipt);
+    const executionRequest: InvokeRequest = {
+      nodeId: request.nodeId,
+      provide: request.provide,
+      input: request.input,
+      traceId: request.traceId ?? canonicalTraceId,
+      spanId: request.spanId ?? canonicalSpanId,
+      ...(request.parentSpanId ? { parentSpanId: request.parentSpanId } : {}),
+      ...(request.callerNodeId ? { callerNodeId: request.callerNodeId } : {}),
+      ...(request.session ? { session: request.session } : {}),
+      ...(request.abortSignal ? { abortSignal: request.abortSignal } : {}),
+    };
+    const actual = audit.runWithReceipt(receipt.invocationId, () => executePinned(selected, provide, executionRequest));
+    const settled = Promise.resolve(actual)
+      .catch((): InvokeResult => ({ ok: false, error: { code: "EXECUTION_FAILED", message: "Invocation pipeline failed" } }))
+      .then((result) => {
+        audit.settle(receipt, result);
+        release();
+        return audit.trackedResult(result, receipt);
+      });
+    if (waitForOutcome || !request.abortSignal) return settled;
+
+    let removeAbort: () => void = () => undefined;
+    const cancellation = new Promise<"cancel">((resolve) => {
+      const onAbort = () => resolve("cancel");
+      request.abortSignal!.addEventListener("abort", onAbort, { once: true });
+      removeAbort = () => request.abortSignal!.removeEventListener("abort", onAbort);
+      if (request.abortSignal!.aborted) resolve("cancel");
+    });
+    const raced = await Promise.race([settled, cancellation]);
+    removeAbort();
+    if (raced !== "cancel") return raced;
+    audit.cancelRequested(receipt);
+    audit.outcomeUnknown(receipt);
+    void settled.catch(() => undefined);
+    const unknown: InvokeResult = { ok: false, error: { code: "OUTCOME_UNKNOWN", message: "Caller stopped waiting; execution outcome remains unknown" } };
+    return audit.trackedResult(unknown, receipt);
+  };
+
+  const executePinned = async (registered: RegisteredNode, provide: ProtocolNode["provides"][number], request: InvokeRequest): Promise<InvokeResult> => {
+    const provenance = {
+      ...createInvocationProvenance(request),
+      ...(registered.registrationId ? { registrationId: registered.registrationId } : {}),
+      ...(registered.generation !== undefined ? { registrationGeneration: registered.generation } : {}),
+      ...(registered.contractDigest ? { contractDigest: registered.contractDigest } : {}),
+    };
+    const inputPreview = createInputPreview(request.input);
+    const startedAt = Date.now();
+    recordProvenance(provenanceRecorder, provenanceSubscribers, { ...provenance, status: "started", ...inputPreview });
+    const localProtocolAccess = provide.execution.type === "agent"
+      ? registered.node.agents?.[provide.execution.agent]?.protocolAccess
+      : undefined;
+    const canonicalProvide = registered.definition?.provides[request.provide];
+    const canonicalBinding = registered.bindingsByProvide?.[request.provide];
+    const result = await runWithProtocolInvocationContext(
+      request,
+      provenance,
+      () => canonicalProvide && canonicalBinding
+        ? executeAdmittedProvide({ request, provenance, provide: canonicalProvide, binding: canonicalBinding, emitRuntimeEvent: createRuntimeEventEmitter(runtimeEventRecorder, runtimeEventSubscribers) })
+        : executeProvide({ request, provenance, provide, handlers: registered.handlers, agentExecutors: registered.agentExecutors, emitRuntimeEvent: createRuntimeEventEmitter(runtimeEventRecorder, runtimeEventSubscribers) }),
+      localProtocolAccess,
+    );
+    await recordProvenance(provenanceRecorder, provenanceSubscribers, {
+      ...provenance,
+      status: result.ok ? "succeeded" : result.error.code === "ABORTED" ? "aborted" : "failed",
+      durationMs: Date.now() - startedAt,
+      ...inputPreview,
+      ...(result.ok ? createOutputPreview(result.output) : { error: result.error }),
+    });
+    return result;
+  };
+
   const fabric: ProtocolFabric = {
     setProvenanceRecorder(recorder) {
       provenanceRecorder = recorder;
@@ -185,6 +331,30 @@ export function createProtocolFabric(): ProtocolFabric {
 
     registrationProvenance() {
       return freezeSnapshot(registrationEvents.map((event) => ({ ...event })));
+    },
+
+    subscribeAudit(observer) {
+      return audit.subscribe(observer);
+    },
+
+    subscribeProgress(observer) {
+      return audit.subscribeProgress(observer);
+    },
+
+    auditDiagnostics() {
+      return audit.diagnostics();
+    },
+
+    getReceipt(invocationId, authority) {
+      return audit.getReceipt(invocationId, authority);
+    },
+
+    lookupCausalProvenance(invocationId, authority, lookupOptions) {
+      return audit.causal(invocationId, authority, lookupOptions);
+    },
+
+    invokeTracked(request) {
+      return performAuditedInvocation(request, false);
     },
 
     install(definition, bindings, metadata) {
@@ -335,113 +505,7 @@ export function createProtocolFabric(): ProtocolFabric {
     },
 
     async invoke(request) {
-      const provenance = createInvocationProvenance(request);
-      const inputPreview = createInputPreview(request.input);
-      const startedAt = Date.now();
-      await recordProvenance(provenanceRecorder, provenanceSubscribers, { ...provenance, status: "started", ...inputPreview });
-
-      const durationMs = () => Date.now() - startedAt;
-      if (!isProtocolTargetAllowedFromCurrentContext(request.nodeId, request.provide)) {
-        const error = {
-          code: "POLICY_DENIED" as const,
-          message: `Protocol access denied for target ${request.nodeId}.${request.provide}`,
-        };
-        await recordProvenance(provenanceRecorder, provenanceSubscribers, {
-          ...provenance,
-          status: "failed",
-          durationMs: durationMs(),
-          ...inputPreview,
-          error,
-        });
-        return { ok: false, error };
-      }
-
-      const registered = nodes.get(request.nodeId);
-      if (!registered) {
-        const error = { code: "NOT_FOUND" as const, message: `Node not found: ${request.nodeId}` };
-        await recordProvenance(provenanceRecorder, provenanceSubscribers, {
-          ...provenance,
-          status: "failed",
-          durationMs: durationMs(),
-          ...inputPreview,
-          error,
-        });
-        return { ok: false, error };
-      }
-
-      const provide = registered.node.provides.find((item) => item.name === request.provide);
-      if (!provide) {
-        const error = { code: "NOT_FOUND" as const, message: `Provide not found: ${request.nodeId}.${request.provide}` };
-        await recordProvenance(provenanceRecorder, provenanceSubscribers, {
-          ...provenance,
-          status: "failed",
-          durationMs: durationMs(),
-          ...inputPreview,
-          error,
-        });
-        return { ok: false, error };
-      }
-
-      if (request.callerNodeId && provide.policy?.blacklistedCallers?.includes(request.callerNodeId)) {
-        const error = {
-          code: "POLICY_DENIED" as const,
-          message: `caller ${request.callerNodeId} is blacklisted from using ${request.nodeId}.${request.provide}`,
-        };
-        await recordProvenance(provenanceRecorder, provenanceSubscribers, {
-          ...provenance,
-          status: "failed",
-          durationMs: durationMs(),
-          ...inputPreview,
-          error,
-        });
-        return { ok: false, error };
-      }
-
-      const pinnedProvenance = {
-        ...provenance,
-        ...(registered.registrationId ? { registrationId: registered.registrationId } : {}),
-        ...(registered.generation !== undefined ? { registrationGeneration: registered.generation } : {}),
-        ...(registered.contractDigest ? { contractDigest: registered.contractDigest } : {}),
-      };
-      const localProtocolAccess = provide.execution.type === "agent"
-        ? registered.node.agents?.[provide.execution.agent]?.protocolAccess
-        : undefined;
-      registered.inFlight += 1;
-      try {
-        const canonicalProvide = registered.definition?.provides[request.provide];
-        const canonicalBinding = registered.bindingsByProvide?.[request.provide];
-        const result = await runWithProtocolInvocationContext(
-          request,
-          pinnedProvenance,
-          () => canonicalProvide && canonicalBinding
-            ? executeAdmittedProvide({
-                request,
-                provenance: pinnedProvenance,
-                provide: canonicalProvide,
-                binding: canonicalBinding,
-                emitRuntimeEvent: createRuntimeEventEmitter(runtimeEventRecorder, runtimeEventSubscribers),
-              })
-            : executeProvide({
-                request,
-                provenance: pinnedProvenance,
-                provide,
-                handlers: registered.handlers,
-                agentExecutors: registered.agentExecutors,
-                emitRuntimeEvent: createRuntimeEventEmitter(runtimeEventRecorder, runtimeEventSubscribers),
-              }),
-          localProtocolAccess,
-        );
-        await recordProvenance(provenanceRecorder, provenanceSubscribers, {
-          ...pinnedProvenance,
-          status: result.ok ? "succeeded" : result.error.code === "ABORTED" ? "aborted" : "failed",
-          durationMs: durationMs(),
-          ...inputPreview,
-          ...(result.ok ? createOutputPreview(result.output) : { error: result.error }),
-        });
-        return result;
-      } finally {
-        releaseRegisteredNode(registered);
-      }
+      return (await performAuditedInvocation(request, true)).result;
     },
   };
 
@@ -492,6 +556,12 @@ function isCompatibleProtocolFabric(value: ProtocolFabric | undefined): value is
     typeof value.subscribeRuntimeEventRecorder === "function" &&
     typeof value.subscribeRegistrationProvenanceRecorder === "function" &&
     typeof value.registrationProvenance === "function" &&
+    typeof value.subscribeAudit === "function" &&
+    typeof value.subscribeProgress === "function" &&
+    typeof value.auditDiagnostics === "function" &&
+    typeof value.getReceipt === "function" &&
+    typeof value.lookupCausalProvenance === "function" &&
+    typeof value.invokeTracked === "function" &&
     typeof value.install === "function" &&
     typeof value.register === "function" &&
     typeof value.unregister === "function" &&
@@ -612,6 +682,28 @@ function rejectedRegistrationEvent(
   };
 }
 
+function snapshotInvokeRequest(value: InvokeRequest): InvokeRequest {
+  if (typeof value !== "object" || value === null) throw new Error("invalid request");
+  const prototype = Object.getPrototypeOf(value);
+  const allowed = new Set(["nodeId", "provide", "globalId", "input", "traceId", "spanId", "parentSpanId", "callerNodeId", "session", "abortSignal"]);
+  if ((prototype !== Object.prototype && prototype !== null) || Reflect.ownKeys(value).some((key) => typeof key !== "string" || !allowed.has(key))) {
+    throw new Error("invalid request");
+  }
+  const fields: Record<string, unknown> = {};
+  for (const key of allowed) {
+    if (!Object.hasOwn(value, key)) continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) throw new Error("invalid request");
+    fields[key] = descriptor.value;
+  }
+  if (typeof fields.nodeId !== "string" || typeof fields.provide !== "string" || !Object.hasOwn(fields, "input")) throw new Error("invalid request");
+  return fields as unknown as InvokeRequest;
+}
+
+function validTargetPart(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 128 && /^[a-z0-9][a-z0-9_-]*$/.test(value);
+}
+
 function safeDefinitionNodeId(definition: ProtocolDefinition): string {
   try { return typeof definition?.manifest?.node?.id === "string" ? definition.manifest.node.id : "invalid"; }
   catch { return "invalid"; }
@@ -634,12 +726,12 @@ function createInvocationProvenance(request: InvokeRequest): Omit<InvocationProv
   };
 }
 
-async function recordProvenance(
+function recordProvenance(
   recorder: ProvenanceRecorder | undefined,
   subscribers: Set<ProvenanceRecorder>,
   event: InvocationProvenanceEvent,
-): Promise<void> {
-  await recordAll(recorder, subscribers, event);
+): void {
+  recordAll(recorder, subscribers, event);
 }
 
 function createRuntimeEventEmitter(
@@ -649,22 +741,19 @@ function createRuntimeEventEmitter(
   if (!recorder && subscribers.size === 0) return undefined;
 
   return async (event) => {
-    await recordAll(recorder, subscribers, event);
+    recordAll(recorder, subscribers, event);
   };
 }
 
-async function recordAll<T>(
+function recordAll<T>(
   recorder: ((event: T) => void | Promise<void>) | undefined,
   subscribers: Set<(event: T) => void | Promise<void>>,
   event: T,
-): Promise<void> {
+): void {
   const recorders = [recorder, ...subscribers].filter((item): item is (event: T) => void | Promise<void> => Boolean(item));
   for (const nextRecorder of recorders) {
-    try {
-      await nextRecorder(event);
-    } catch {
-      // Observational recorders must not affect invocation.
-    }
+    try { void Promise.resolve(nextRecorder(event)).catch(() => undefined); }
+    catch { /* Observational recorders cannot affect invocation. */ }
   }
 }
 

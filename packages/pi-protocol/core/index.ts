@@ -7,6 +7,7 @@ export {
 export { createProtocolFabric, ensureProtocolFabric, getProtocolHostDiagnostics } from "../fabric.ts";
 export type { CurrentProtocolInvocationContext } from "../context.ts";
 export type {
+  CreateProtocolFabricOptions,
   ExecutionSpec,
   InvokeErrorCode,
   InvokeRequest,
@@ -42,3 +43,17 @@ export type {
   RegisterNodeInput,
   RegistrySnapshot,
 } from "../types.ts";
+export type {
+  AuditDiagnostics,
+  AuditPolicy,
+  AuditSink,
+  CanonicalProvenanceEventV1,
+  CausalReceiptResult,
+  InvocationReceiptState,
+  InvocationReceiptSummary,
+  InvokeTrackedResult,
+  ProgressEventV1,
+  ProgressObserver,
+  ProvenanceEventV1,
+  RegistrationProvenanceEventV1,
+} from "../provenance/index.ts";

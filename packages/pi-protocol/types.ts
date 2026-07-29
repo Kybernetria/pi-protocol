@@ -1,4 +1,7 @@
 import type { ProtocolDefinition } from "./contract/types.ts";
+import type { AuditDiagnostics, AuditPolicy, ProgressObserver } from "./provenance/sink.ts";
+import type { CausalReceiptResult, InvocationReceiptSummary, InvokeTrackedResult } from "./provenance/receipt.ts";
+import type { CanonicalProvenanceEventV1 } from "./provenance/events.ts";
 
 export type JsonSchemaLite = {
   type?: "string" | "number" | "integer" | "boolean" | "object" | "array" | "null";
@@ -277,13 +280,17 @@ export interface InvokeRequest {
   abortSignal?: AbortSignal;
 }
 
-export type InvokeErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "INVALID_OUTPUT" | "EXECUTION_FAILED" | "ABORTED" | "POLICY_DENIED";
+export type InvokeErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "INVALID_OUTPUT" | "EXECUTION_FAILED" | "ABORTED" | "POLICY_DENIED" | "AUDIT_UNAVAILABLE" | "OUTCOME_UNKNOWN";
 
 export type InvokeResult =
   | { ok: true; nodeId: string; provide: string; output: unknown }
   | { ok: false; error: { code: InvokeErrorCode; message: string } };
 
 export type RecorderUnsubscribe = () => void;
+
+export interface CreateProtocolFabricOptions {
+  audit?: AuditPolicy;
+}
 
 export interface ProtocolFabric {
   setProvenanceRecorder(recorder?: ProvenanceRecorder): void;
@@ -292,6 +299,12 @@ export interface ProtocolFabric {
   subscribeRuntimeEventRecorder(recorder: ProtocolRuntimeEventRecorder): RecorderUnsubscribe;
   subscribeRegistrationProvenanceRecorder(recorder: RegistrationProvenanceRecorder): RecorderUnsubscribe;
   registrationProvenance(): readonly RegistrationProvenanceEvent[];
+  subscribeAudit(observer: (event: CanonicalProvenanceEventV1) => void | Promise<void>): RecorderUnsubscribe;
+  subscribeProgress(observer: ProgressObserver): RecorderUnsubscribe;
+  auditDiagnostics(): AuditDiagnostics;
+  getReceipt(invocationId: string, authority: object): InvocationReceiptSummary | undefined;
+  lookupCausalProvenance(invocationId: string, authority: object, options?: { maxDepth?: number; limit?: number }): CausalReceiptResult | undefined;
+  invokeTracked(request: InvokeRequest): Promise<InvokeTrackedResult>;
   install(definition: ProtocolDefinition, bindings: ProtocolBindings, metadata?: ProtocolRegistrationMetadata): ProtocolRegistration;
   register(input: RegisterNodeInput): void;
   unregister(nodeId: string): void;

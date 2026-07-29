@@ -1,4 +1,5 @@
 export * from "./core/index.ts";
+export { PROVENANCE_SCHEMA_VERSION } from "./provenance/index.ts";
 
 // v0.2 compatibility surface. New packages should import canonical admission
 // from `@kybernetria/pi-protocol/contract` and keep private agent profiles out

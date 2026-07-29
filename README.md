@@ -157,7 +157,26 @@ Every provide has exactly one handler or agent binding; missing, duplicate, inhe
 
 Compatible physical package copies connect through a structural global host ABI. Incompatible live hosts/fabrics fail loudly rather than being replaced. Runtime diagnostics report package versions and module paths.
 
-Canonical causal receipts, bounded delegation control, hardened agent profiles/sessions, and the simplified Pi projection are delivered in later vNext phases.
+## Canonical causal provenance
+
+Use `invokeTracked()` when the caller needs a trustworthy receipt:
+
+```ts
+const tracked = await fabric.invokeTracked({
+  nodeId: "pi_ng",
+  provide: "notify",
+  input: { message: "Done" },
+  abortSignal
+});
+
+console.log(tracked.receipt.invocationId, tracked.receipt.state);
+```
+
+Canonical events omit payload content by default and record bounded sizes, stable outcomes, causal parent/children, and the pinned registration generation/digest. Authorized hosts can query one receipt or a bounded causal subtree; lookup is default-deny.
+
+Best-effort audit sinks are bounded and never block execution. Required sinks must accept the start event before a binding runs or the call fails closed with `AUDIT_UNAVAILABLE`. Cancellation after dispatch may return `OUTCOME_UNKNOWN`; the same receipt later records the actual outcome instead of falsely claiming cancellation.
+
+Bounded delegation control, hardened agent profiles/sessions, and the simplified Pi projection are delivered in later vNext phases.
 
 ## Current v0.2 runtime compatibility
 
