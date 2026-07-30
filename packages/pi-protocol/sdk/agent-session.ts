@@ -36,10 +36,16 @@ interface PiModelRegistryLike {
   getAll?(): unknown[];
 }
 
+interface PiModelRuntimeLike {
+  getModel(provider: string, modelId: string): unknown;
+  getModels(provider?: string): readonly unknown[];
+}
+
 interface PiCodingAgentSdk {
   createAgentSession(options?: PiSdkCreateAgentSessionOptions): Promise<{ session: unknown }>;
   AuthStorage?: { create(authPath?: string): unknown };
   ModelRegistry?: { create(authStorage: unknown, modelsJsonPath?: string): PiModelRegistryLike };
+  ModelRuntime?: { create(options?: unknown): Promise<PiModelRuntimeLike> };
   SessionManager: {
     create(cwd?: string): unknown;
     inMemory(cwd?: string): unknown;
@@ -215,14 +221,49 @@ async function resolveModelHintSessionOptions(
   const hint = sessionOptions.protocolModelHint as PrivateModelHint | undefined;
   if (!hint?.specific || sessionOptions.model) return sessionOptions;
 
-  const registry = getOrCreateModelRegistry(sdk, sessionOptions);
-  const model = resolveModelFromHint(registry, hint);
-  if (!model) {
-    throw new Error(`Protocol modelHint.specific ${JSON.stringify(hint.specific)} could not be resolved. Use "provider/model-id" or include modelHint.provider.`);
+  const { protocolModelHint: _protocolModelHint, ...rest } = sessionOptions;
+  if (sdk.ModelRuntime) {
+    const runtime = isModelRuntimeLike(sessionOptions.modelRuntime)
+      ? sessionOptions.modelRuntime
+      : await sdk.ModelRuntime.create();
+    const model = resolveModelFromRuntime(runtime, hint);
+    if (!model) throw unresolvedModelHint(hint.specific);
+    return { ...rest, model, modelRuntime: runtime };
   }
 
-  const { protocolModelHint: _protocolModelHint, ...rest } = sessionOptions;
+  const registry = getOrCreateModelRegistry(sdk, sessionOptions);
+  const model = resolveModelFromHint(registry, hint);
+  if (!model) throw unresolvedModelHint(hint.specific);
   return { ...rest, model, modelRegistry: sessionOptions.modelRegistry ?? registry };
+}
+
+function unresolvedModelHint(specific: string): Error {
+  return new Error(`Protocol modelHint.specific ${JSON.stringify(specific)} could not be resolved. Use "provider/model-id" or include modelHint.provider.`);
+}
+
+function isModelRuntimeLike(value: unknown): value is PiModelRuntimeLike {
+  return typeof value === "object" && value !== null
+    && typeof (value as PiModelRuntimeLike).getModel === "function"
+    && typeof (value as PiModelRuntimeLike).getModels === "function";
+}
+
+function resolveModelFromRuntime(runtime: PiModelRuntimeLike, hint: PrivateModelHint): unknown {
+  const specific = hint.specific?.trim();
+  if (!specific) return undefined;
+  const slash = specific.indexOf("/");
+  if (slash > 0) {
+    const provider = specific.slice(0, slash).trim();
+    const modelId = specific.slice(slash + 1).trim();
+    return provider && modelId ? runtime.getModel(provider, modelId) : undefined;
+  }
+  if (hint.provider?.trim()) return runtime.getModel(hint.provider.trim(), specific);
+  const normalized = normalizeModelPattern(specific);
+  const matches = runtime.getModels().filter((model) => {
+    const candidate = model as { id?: unknown; model?: unknown; name?: unknown; provider?: unknown };
+    return [candidate.id, candidate.model, candidate.name, `${candidate.provider ?? ""}/${candidate.id ?? candidate.model ?? ""}`]
+      .some((value) => normalizeModelPattern(String(value ?? "")) === normalized);
+  });
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function getOrCreateModelRegistry(sdk: PiCodingAgentSdk, sessionOptions: PiSdkCreateAgentSessionOptions): PiModelRegistryLike {
