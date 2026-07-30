@@ -20,6 +20,31 @@ import type {
   ResolvedPiAgentProfiles,
 } from "./agent-profile.ts";
 
+export {
+  createPiSdkAgentExecutor,
+  disposeAllProtocolAgentSessions,
+  getProtocolAgentSessionDiagnostics,
+  runWithPiSdkProtocolControlContext,
+} from "./index.ts";
+export type {
+  CreatePiSdkAgentExecutorOptions,
+  PiSdkAgentSessionEventLike,
+  PiSdkAgentSessionFactory,
+  PiSdkAgentSessionLike,
+  PiSdkProtocolControlContext,
+} from "./index.ts";
+export {
+  parsePiAgentProfiles,
+  resolvePiAgentProfiles,
+  validateAgentProvideBindings,
+} from "./agent-profile.ts";
+export type {
+  PiAgentProfilesFile,
+  PiAgentProvideBindings,
+  ResolvedPiAgentProfile,
+  ResolvedPiAgentProfiles,
+} from "./agent-profile.ts";
+
 export interface PiSdkCreateAgentSessionOptions {
   cwd?: string;
   sessionManager?: unknown;
@@ -31,11 +56,6 @@ interface PrivateModelHint {
   provider?: string;
 }
 
-interface PiModelRegistryLike {
-  find(provider: string, modelId: string): unknown;
-  getAll?(): unknown[];
-}
-
 interface PiModelRuntimeLike {
   getModel(provider: string, modelId: string): unknown;
   getModels(provider?: string): readonly unknown[];
@@ -43,20 +63,18 @@ interface PiModelRuntimeLike {
 
 interface PiCodingAgentSdk {
   createAgentSession(options?: PiSdkCreateAgentSessionOptions): Promise<{ session: unknown }>;
-  AuthStorage?: { create(authPath?: string): unknown };
-  ModelRegistry?: { create(authStorage: unknown, modelsJsonPath?: string): PiModelRegistryLike };
   ModelRuntime?: { create(options?: unknown): Promise<PiModelRuntimeLike> };
   SessionManager: {
     create(cwd?: string): unknown;
     inMemory(cwd?: string): unknown;
   };
+  getAgentDir?: () => string;
   DefaultResourceLoader?: new (options: {
     cwd: string;
     agentDir?: string;
     systemPromptOverride?: () => string;
     appendSystemPromptOverride?: (base: string[]) => string[];
   }) => { reload(): Promise<void> };
-  getAgentDir?: () => string;
 }
 
 /** Shared protocol guidance, loaded from the package-local editable Markdown source. */
@@ -222,19 +240,13 @@ async function resolveModelHintSessionOptions(
   if (!hint?.specific || sessionOptions.model) return sessionOptions;
 
   const { protocolModelHint: _protocolModelHint, ...rest } = sessionOptions;
-  if (sdk.ModelRuntime) {
-    const runtime = isModelRuntimeLike(sessionOptions.modelRuntime)
-      ? sessionOptions.modelRuntime
-      : await sdk.ModelRuntime.create();
-    const model = resolveModelFromRuntime(runtime, hint);
-    if (!model) throw unresolvedModelHint(hint.specific);
-    return { ...rest, model, modelRuntime: runtime };
-  }
-
-  const registry = getOrCreateModelRegistry(sdk, sessionOptions);
-  const model = resolveModelFromHint(registry, hint);
+  if (!sdk.ModelRuntime) throw new Error("Pi SDK ModelRuntime is required by Pi Protocol v4");
+  const runtime = isModelRuntimeLike(sessionOptions.modelRuntime)
+    ? sessionOptions.modelRuntime
+    : await sdk.ModelRuntime.create();
+  const model = resolveModelFromRuntime(runtime, hint);
   if (!model) throw unresolvedModelHint(hint.specific);
-  return { ...rest, model, modelRegistry: sessionOptions.modelRegistry ?? registry };
+  return { ...rest, model, modelRuntime: runtime };
 }
 
 function unresolvedModelHint(specific: string): Error {
@@ -263,43 +275,6 @@ function resolveModelFromRuntime(runtime: PiModelRuntimeLike, hint: PrivateModel
     return [candidate.id, candidate.model, candidate.name, `${candidate.provider ?? ""}/${candidate.id ?? candidate.model ?? ""}`]
       .some((value) => normalizeModelPattern(String(value ?? "")) === normalized);
   });
-  return matches.length === 1 ? matches[0] : undefined;
-}
-
-function getOrCreateModelRegistry(sdk: PiCodingAgentSdk, sessionOptions: PiSdkCreateAgentSessionOptions): PiModelRegistryLike {
-  const existing = sessionOptions.modelRegistry as PiModelRegistryLike | undefined;
-  if (existing?.find) return existing;
-  if (!sdk.AuthStorage || !sdk.ModelRegistry) {
-    throw new Error("Protocol modelHint.specific requires Pi SDK AuthStorage and ModelRegistry exports.");
-  }
-  const agentDir = typeof sessionOptions.agentDir === "string"
-    ? sessionOptions.agentDir
-    : sdk.getAgentDir?.();
-  const auth = sdk.AuthStorage.create(agentDir ? `${agentDir}/auth.json` : undefined);
-  return sdk.ModelRegistry.create(auth, agentDir ? `${agentDir}/models.json` : undefined);
-}
-
-function resolveModelFromHint(registry: PiModelRegistryLike, hint: PrivateModelHint): unknown {
-  const specific = hint.specific?.trim();
-  if (!specific) return undefined;
-
-  const slash = specific.indexOf("/");
-  if (slash > 0) {
-    const provider = specific.slice(0, slash).trim();
-    const modelId = specific.slice(slash + 1).trim();
-    return provider && modelId ? registry.find(provider, modelId) : undefined;
-  }
-
-  if (hint.provider?.trim()) {
-    return registry.find(hint.provider.trim(), specific);
-  }
-
-  const normalized = normalizeModelPattern(specific);
-  const matches = registry.getAll?.().filter((model) => {
-    const candidate = model as { id?: unknown; model?: unknown; name?: unknown; provider?: unknown };
-    return [candidate.id, candidate.model, candidate.name, `${candidate.provider ?? ""}/${candidate.id ?? candidate.model ?? ""}`]
-      .some((value) => normalizeModelPattern(String(value ?? "")) === normalized);
-  }) ?? [];
   return matches.length === 1 ? matches[0] : undefined;
 }
 

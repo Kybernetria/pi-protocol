@@ -19,11 +19,19 @@ const fetchedText = [
   ...Array.from({ length: 300 }, (_, index) => `Fetched paragraph ${index}: useful extracted content ${"detail ".repeat(12)}`),
 ].join("\n");
 
+const baseEvent = {
+  schemaVersion: 1 as const,
+  invocationId: "invocation-renderer",
+  traceId: "trace-renderer",
+  spanId: "span-renderer",
+  target: "pi-search-extension.fetch_content",
+};
 const details = {
   ok: true,
-  action: "invoke",
+  schemaVersion: 1,
+  op: "call",
   state: "completed",
-  toolCallId: "protocol_historical_completed_renderer_regression",
+  toolCallId: "protocol_completed_renderer_regression",
   result: {
     ok: true,
     nodeId: "pi-search-extension",
@@ -32,56 +40,13 @@ const details = {
   },
   trace: {
     events: [
-      {
-        traceId: "trace-historical",
-        spanId: "span-historical",
-        nodeId: "pi-search-extension",
-        provide: "fetch_content",
-        status: "started",
-        inputPreview: JSON.stringify({ url: longUrl, max_chars: 50_000 }),
-      },
-      {
-        traceId: "trace-historical",
-        spanId: "span-historical",
-        nodeId: "pi-search-extension",
-        provide: "fetch_content",
-        status: "succeeded",
-        durationMs: 842,
-        inputPreview: JSON.stringify({ url: longUrl, max_chars: 50_000 }),
-        outputPreview: fetchedText,
-        outputTruncated: false,
-      },
+      { ...baseEvent, eventId: "event-1", sequence: 1, type: "invocation.started", occurredAt: 1 },
+      { ...baseEvent, eventId: "event-2", sequence: 2, type: "invocation.succeeded", occurredAt: 2, durationMs: 842 },
     ],
-    runtimeEvents: [
-      {
-        type: "executor_session_model",
-        traceId: "trace-historical",
-        spanId: "span-historical",
-        model: "provider/search-model",
-        thinkingLevel: "high",
-      },
-      {
-        type: "executor_output_delta",
-        traceId: "trace-historical",
-        spanId: "span-historical",
-        textDelta: fetchedText,
-      },
+    executionEvents: [
+      { schemaVersion: 1, type: "executor.session", traceId: "trace-renderer", spanId: "span-renderer", model: "provider/search-model", thinkingLevel: "high" },
+      { schemaVersion: 1, type: "executor.output_delta", traceId: "trace-renderer", spanId: "span-renderer", textDelta: fetchedText },
     ],
-    registry: {
-      nodes: [{
-        protocolVersion: "0.2.0",
-        nodeId: "pi-search-extension",
-        purpose: "Search and fetch content",
-        provides: [{
-          name: "fetch_content",
-          description: "Fetch readable content",
-          inputSchema: { type: "object" },
-          outputSchema: { type: "object" },
-          execution: { type: "handler", handler: "fetch_content" },
-        }],
-      }],
-      provides: [],
-    },
   },
 };
 const result = {
@@ -98,8 +63,8 @@ const boundedSearchCall = tool.renderCall?.({ op: "search", query: "query ".repe
 assert.ok(boundedSearchCall.render(240).length <= 5, "oversized search calls have a source-line bound");
 assert.ok(stripAnsi(boundedSearchCall.render(240).join("\n")).trimEnd().length <= 500, "oversized search query scalars are clipped");
 const boundedCallerCall = tool.renderCall?.({
-  action: "invoke",
-  request: { nodeId: "node", provide: "provide", callerNodeId: "caller".repeat(20_000) },
+  target: `node.${"provide".repeat(20_000)}`,
+  input: {},
 }, ansiTheme) as { render(width: number): string[] };
 assert.ok(stripAnsi(boundedCallerCall.render(240).join("\n")).trimEnd().length <= 2_000, "oversized caller scalars are clipped");
 
@@ -150,18 +115,23 @@ assert.ok(expandedSourceLines.length - finalOutputStart <= 120, "the output-spec
 const crowdedResult = structuredClone(result) as ProtocolToolExecutionResult;
 const crowdedDetails = crowdedResult.details as typeof details;
 (crowdedDetails.trace as { events: Array<Record<string, unknown>> }).events = Array.from({ length: 80 }, (_, index) => ({
+  schemaVersion: 1,
+  eventId: `event-${index}`,
+  sequence: index,
+  type: "invocation.succeeded",
+  occurredAt: index,
+  invocationId: `invocation-${index}`,
+  ...(index ? { parentInvocationId: `invocation-${index - 1}` } : {}),
   traceId: "trace-crowded",
   spanId: `span-${index}`,
-  nodeId: `nested-node-${index}`,
-  provide: "search",
-  status: "succeeded",
+  target: `nested-node-${index}.search`,
   durationMs: index,
-  outputPreview: `trace preview ${index} ${"x".repeat(500)}`,
 }));
-(crowdedDetails.trace as { runtimeEvents: Array<Record<string, unknown>> }).runtimeEvents = Array.from(
+(crowdedDetails.trace as { executionEvents: Array<Record<string, unknown>> }).executionEvents = Array.from(
   { length: 300 },
   (_, index) => ({
-    type: "executor_output_delta",
+    schemaVersion: 1,
+    type: "executor.output_delta",
     traceId: "trace-crowded",
     spanId: "span-16",
     textDelta: `delta-${index} ${"y".repeat(200)}`,
@@ -189,21 +159,21 @@ for (let index = 0; index < 100; index++) {
   assert.equal(component, initialComponent);
   assert.deepEqual(component.render(80), firstExpandedLines, "expanded rerenders do not append output or wrapped lines");
 }
-assert.equal(JSON.stringify(result), before, "rendering must not mutate historical result/details");
+assert.equal(JSON.stringify(result), before, "rendering must not mutate canonical result details");
 
 const cyclicResult = structuredClone(result) as ProtocolToolExecutionResult;
 const cyclicDetails = cyclicResult.details as typeof details;
 (cyclicDetails.trace as { events: Array<Record<string, unknown>> }).events = [{
   ...cyclicDetails.trace.events[1]!,
-  spanId: "cycle-span",
-  parentSpanId: "cycle-span",
+  invocationId: "cycle-invocation",
+  parentInvocationId: "cycle-invocation",
 }];
 const cyclicComponent = tool.renderResult?.(cyclicResult, { expanded: true, isPartial: false }, ansiTheme, { args: input }) as {
   render(width: number): string[];
 };
-assert.ok(stripAnsi(cyclicComponent.render(80).join("\n")).includes("causal trace truncated"), "cyclic historical traces terminate with a diagnostic");
+assert.ok(stripAnsi(cyclicComponent.render(80).join("\n")).includes("causal trace truncated"), "cyclic canonical traces terminate with a diagnostic");
 
-console.log("protocol historical invoke rendering is compact, bounded, immutable, and stable across rerenders");
+console.log("protocol canonical call rendering is compact, bounded, immutable, and stable across rerenders");
 
 function stripAnsi(text: string): string {
   return text.replace(/\x1b\[[0-9;]*m/g, "");

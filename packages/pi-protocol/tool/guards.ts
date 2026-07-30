@@ -1,27 +1,15 @@
-import type { RegistrySnapshot } from "../types.ts";
 import type { ProtocolTraceDetails } from "./trace.ts";
 
 export function isInvokeToolResult(
   result: unknown,
-): result is { ok: true; action: "invoke"; state?: "queued" | "running" | "completed" | "failed" | "aborted" | "outcome_unknown"; toolCallId?: string; result: { ok: boolean; error?: { code?: string; message?: string } }; trace?: ProtocolTraceDetails } {
-  return isPlainObject(result) && result.ok === true && result.action === "invoke" && isPlainObject(result.result);
-}
-
-export function isRegistryToolResult(result: unknown): result is { ok: true; action: "registry"; registry: RegistrySnapshot } {
-  return isPlainObject(result) && result.ok === true && result.action === "registry" && isPlainObject(result.registry);
+): result is { ok: true; schemaVersion: 1; op: "call"; state?: "running" | "completed" | "failed" | "aborted" | "outcome_unknown"; toolCallId?: string; result: { ok: boolean; error?: { code?: string; message?: string } }; trace?: ProtocolTraceDetails } {
+  return isPlainObject(result) && result.ok === true && result.schemaVersion === 1 && result.op === "call" && isPlainObject(result.result);
 }
 
 export function isSuccessfulInvokeToolResult(
   result: unknown,
-): result is { ok: true; action: "invoke"; result: { ok: true; output: unknown } } {
-  return (
-    isPlainObject(result) &&
-    result.ok === true &&
-    result.action === "invoke" &&
-    isPlainObject(result.result) &&
-    result.result.ok === true &&
-    "output" in result.result
-  );
+): result is { ok: true; schemaVersion: 1; op: "call"; result: { ok: true; output: unknown } } {
+  return isInvokeToolResult(result) && result.result.ok === true && "output" in result.result;
 }
 
 export function isTextObject(value: unknown): value is { text: string } {

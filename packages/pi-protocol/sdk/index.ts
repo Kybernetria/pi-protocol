@@ -5,9 +5,8 @@ import type {
   ProtocolAgentExecutor,
   ProtocolGrant,
   ProtocolInvocationContext,
-  ProtocolRuntimeEvent,
 } from "../types.ts";
-import { ProtocolSessionCache, type SessionCacheOptions } from "./session-cache.ts";
+import { ProtocolSessionCache, type SessionCacheIdentity, type SessionCacheOptions } from "./session-cache.ts";
 export { disposeAllProtocolAgentSessions, getProtocolAgentSessionDiagnostics } from "./session-cache.ts";
 
 /**
@@ -71,13 +70,7 @@ export function createPiSdkAgentExecutor(
     const sessionMode = context?.session?.mode ?? "ephemeral";
     const sessionId = continuationSessionId(context);
     const leasedSession = sessionId
-      ? await sessions.acquire({
-          executorId,
-          principalId: context?.principal?.id ?? context?.callerNodeId ?? "legacy:anonymous",
-          target: `${context?.nodeId ?? "unknown"}.${context?.provide ?? "unknown"}`,
-          contractDigest: context?.contractDigest ?? "legacy",
-          sessionId,
-        }, options.createSession)
+      ? await sessions.acquire(continuationSessionKey(executorId, sessionId, context), options.createSession)
       : await sessions.ephemeral(options.createSession);
     if (signal?.aborted) {
       leasedSession.release(false);
@@ -85,15 +78,13 @@ export function createPiSdkAgentExecutor(
     }
     const session = leasedSession.session;
     let text = "";
-    let outputTruncated = false;
     const unsubscribe = session.subscribe((event) => {
       if (isTextDeltaMessageUpdate(event)) {
         const delta = event.assistantMessageEvent.delta;
         const remaining = 1_000_000 - text.length;
         if (remaining > 0) text += delta.slice(0, remaining);
-        if (delta.length > Math.max(0, remaining)) outputTruncated = true;
-        void emitRuntimeEventSafely(context, {
-          type: "executor_output_delta",
+        void emitExecutionEventSafely(context, {
+          type: "executor.output_delta",
           traceId: context?.traceId,
           spanId: context?.spanId,
           textDelta: delta.slice(0, 16_384),
@@ -106,33 +97,19 @@ export function createPiSdkAgentExecutor(
       const prompt = toPrompt(options, input);
       const modelLabel = formatSessionModel(session);
       if (modelLabel) {
-        await emitRuntimeEventSafely(context, {
-          type: "executor_session_model",
+        await emitExecutionEventSafely(context, {
+          type: "executor.session",
           traceId: context?.traceId,
           spanId: context?.spanId,
           model: modelLabel,
           thinkingLevel: typeof session.thinkingLevel === "string" ? session.thinkingLevel : undefined,
         });
       }
-      await emitRuntimeEventSafely(context, {
-        type: "executor_input_snapshot",
-        traceId: context?.traceId,
-        spanId: context?.spanId,
-        inputPreview: prompt.slice(0, 20_000),
-        inputTruncated: prompt.length > 20_000,
-      });
       const invocationContext = toCurrentProtocolInvocationContext(context);
       const controlContext = attenuatedControlContext(options.protocolGrant);
       session.setProtocolInvocationContext?.(invocationContext);
       session.setProtocolControlContext?.(controlContext);
       await runAbortable(session.prompt(prompt), signal);
-      await emitRuntimeEventSafely(context, {
-        type: "executor_output_snapshot",
-        traceId: context?.traceId,
-        spanId: context?.spanId,
-        outputPreview: text,
-        outputTruncated,
-      });
       return options.toOutput ? options.toOutput(text, input) : text;
     } finally {
       session.setProtocolInvocationContext?.(undefined);
@@ -144,81 +121,17 @@ export function createPiSdkAgentExecutor(
   };
 }
 
-async function emitRuntimeEventSafely(
+async function emitExecutionEventSafely(
   context: ProtocolInvocationContext | undefined,
-  event: RuntimeEventDraft,
+  event: { type: "executor.session"; traceId?: string; spanId?: string; model: string; thinkingLevel?: string }
+    | { type: "executor.output_delta"; traceId?: string; spanId?: string; textDelta: string },
 ): Promise<void> {
-  if (!context?.emitRuntimeEvent || !event.traceId || !event.spanId) return;
-  const { traceId, spanId } = event;
-
+  if (!context?.emitExecutionEvent || !event.traceId || !event.spanId) return;
   try {
-    await context.emitRuntimeEvent(toRuntimeEvent(event, traceId, spanId));
+    await context.emitExecutionEvent({ schemaVersion: 1, ...event, traceId: event.traceId, spanId: event.spanId });
   } catch {
-    // Runtime events are observational; direct adapter callers should get the same safety as fabric invocations.
+    // Execution observers are non-authoritative.
   }
-}
-
-type RuntimeEventDraft =
-  | {
-      type: "executor_session_model";
-      traceId?: string;
-      spanId?: string;
-      model: string;
-      thinkingLevel?: string;
-    }
-  | {
-      type: "executor_input_snapshot";
-      traceId?: string;
-      spanId?: string;
-      inputPreview: string;
-      inputTruncated?: boolean;
-    }
-  | { type: "executor_output_delta"; traceId?: string; spanId?: string; textDelta: string }
-  | {
-      type: "executor_output_snapshot";
-      traceId?: string;
-      spanId?: string;
-      outputPreview: string;
-      outputTruncated?: boolean;
-    };
-
-function toRuntimeEvent(event: RuntimeEventDraft, traceId: string, spanId: string): ProtocolRuntimeEvent {
-  if (event.type === "executor_session_model") {
-    return {
-      type: event.type,
-      traceId,
-      spanId,
-      model: event.model,
-      thinkingLevel: event.thinkingLevel,
-    };
-  }
-
-  if (event.type === "executor_input_snapshot") {
-    return {
-      type: event.type,
-      traceId,
-      spanId,
-      inputPreview: event.inputPreview,
-      inputTruncated: event.inputTruncated,
-    };
-  }
-
-  if (event.type === "executor_output_delta") {
-    return {
-      type: event.type,
-      traceId,
-      spanId,
-      textDelta: event.textDelta,
-    };
-  }
-
-  return {
-    type: event.type,
-    traceId,
-    spanId,
-    outputPreview: event.outputPreview,
-    outputTruncated: event.outputTruncated,
-  };
 }
 
 function formatSessionModel(session: PiSdkAgentSessionLike): string | undefined {
@@ -261,6 +174,23 @@ function isTextDeltaMessageUpdate(event: PiSdkAgentSessionEventLike): event is {
     "assistantMessageEvent" in event &&
     event.assistantMessageEvent.type === "text_delta"
   );
+}
+
+function continuationSessionKey(
+  executorId: string,
+  sessionId: string,
+  context: ProtocolInvocationContext | undefined,
+): SessionCacheIdentity {
+  if (!context?.principal?.id || !context.contractDigest) {
+    throw new Error("Continued protocol sessions require host-owned principal and contract context");
+  }
+  return {
+    executorId,
+    principalId: context.principal.id,
+    target: `${context.nodeId}.${context.provide}`,
+    contractDigest: context.contractDigest,
+    sessionId,
+  };
 }
 
 function continuationSessionId(context: ProtocolInvocationContext | undefined): string | undefined {

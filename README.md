@@ -118,24 +118,17 @@ INVALID_JSON  INVALID_JSON_VALUE  BUDGET_EXCEEDED
 UNSUPPORTED_VERSION  MANIFEST_INVALID  SCHEMA_INVALID
 ```
 
-Diagnostics are bounded and do not include manifest values.
-
-### v0.2 compatibility
-
-The canonical reader retains a bounded previous-version decoder for conformance fixtures and offline migration. It can decode a valid `protocolVersion: "0.2.0"` document into a canonical v1 contract and emits structured deprecation diagnostics. Production admission should use `{ allowLegacyV02: false }`.
-
-The v0.2 runtime registration helpers and schema evaluator were removed after the ecosystem migrated. New manifests, generated artifacts, runtime registrations, and documentation use v1 only.
+Validation issues are bounded and do not include manifest values. Pi Protocol v4 admits schema-version-1 contracts only; previous manifest formats must be migrated before runtime admission.
 
 ## Package boundaries
 
 - `@kybernetria/pi-protocol` — contracts and local fabric
 - `@kybernetria/pi-protocol/contract` — canonical admission, validators, limits, normalization, digest
 - `@kybernetria/pi-protocol/core` — Pi-independent local fabric only
-- `@kybernetria/pi-protocol/pi` — Pi tool projection (`/tool` compatibility alias)
-- `@kybernetria/pi-protocol/pi/agents` — Pi agent adapter (`/sdk/agent-session` compatibility alias)
-- `@kybernetria/pi-protocol/sdk/agent-profile` — private profile admission and prompt resolution
+- `@kybernetria/pi-protocol/pi` — canonical Pi tool projection
+- `@kybernetria/pi-protocol/pi/agents` — canonical Pi agent adapter, private profiles, and sessions
 
-The core import graph does not load Ajv, Pi coding-agent/model/TUI APIs, tools, rendering, agent sessions, or filesystem manifest resolution. The package root does not eagerly load Pi APIs. Prior root convenience imports for Pi tool/SDK runtime functions must move to the existing `/pi` (`/tool`) or `/pi/agents` (`/sdk`) entrypoints; the compatibility-retired runtime ships as the 3.x contract/runtime line after repository-by-repository ecosystem migration and the major-release gate.
+The core import graph does not load Ajv, Pi coding-agent/model/TUI APIs, tools, rendering, agent sessions, or filesystem manifest resolution. The package root does not eagerly load Pi APIs. Pi Protocol v4 exposes no alternate tool, SDK, or agent-session entrypoint aliases.
 
 ## Owned atomic registrations
 
@@ -204,13 +197,15 @@ Confirmation-required effects are approved only through the host confirmation br
 Pi implementation policy is loaded separately from the public contract:
 
 ```ts
-import { parsePiAgentProfiles, resolvePiAgentProfiles } from "@kybernetria/pi-protocol/sdk/agent-profile";
-import { createPiSdkAgentExecutorsFromProfiles } from "@kybernetria/pi-protocol/pi/agents";
+import {
+  createPiSdkAgentExecutorsFromProfiles,
+  parsePiAgentProfiles,
+  resolvePiAgentProfiles,
+} from "@kybernetria/pi-protocol/pi/agents";
 
 const profiles = resolvePiAgentProfiles(parsePiAgentProfiles(profileSource), packageDirectory);
 const agents = createPiSdkAgentExecutorsFromProfiles(definition, profiles, {
-  agentByProvide: { notify: "notification_agent" },
-  modelOverrides: { notification_agent: "deployment/model-id" }
+  agentByProvide: { notify: "notification_agent" }
 });
 ```
 
@@ -222,7 +217,7 @@ Continuation sessions are keyed by principal, target, pinned contract digest, an
 
 The canonical model-facing tool exposes only `list`, `search`, `describe`, and `call` (or direct `{ target, input }`). Discovery is cursor-paginated and bounded. It omits deployment identity, policy internals, binding names, and implementation kind; exact schema projection reports explicit truncation when its hard budget is reached.
 
-Caller/principal identity, grant, trace/span IDs, deadline, cancellation, confirmation, and registration selection are host-owned and absent from the tool schema. Legacy `action`, `invoke`, `registry`, split describe operations, and nested `request` inputs are translated privately by Pi's `prepareArguments()`, and their authority-bearing fields are ignored. Calls use `invokeTracked()` and return a canonical immutable receipt, including truthful `OUTCOME_UNKNOWN` states.
+Caller/principal identity, grant, trace/span IDs, deadline, cancellation, confirmation, and registration selection are host-owned and absent from the tool schema. Unknown fields and previous command spellings are rejected. Calls use `invokeTracked()` and return a canonical immutable receipt, including truthful `OUTCOME_UNKNOWN` states.
 
 The Pi adapter has no independent concurrency queue: fabric admission is the single bounded scheduler. Persisted tool details are versioned strict JSON, root correlation IDs are projection-minted, and provenance payload previews, full registries, prompts, and streamed deltas are omitted. A pure bounded view model feeds Pi-native `Text`/`Markdown` components and host wrapping/truncation utilities.
 
@@ -244,7 +239,7 @@ Extension tests can import `checkProtocolPackage`, `checkProtocolTree`, or `asse
 
 ## Runtime distribution
 
-Ecosystem packages install normal package copies. The global host ABI converges compatible copies onto one process-wide fabric and fails closed on incompatible or split hosts; no filesystem runtime linker is used.
+Ecosystem packages install normal package copies. The global host ABI converges compatible v4 copies onto one process-wide fabric and fails closed when an incompatible host is already live; no legacy fabric anchor or filesystem runtime linker is used.
 
 ## Development
 

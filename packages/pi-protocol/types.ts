@@ -1,7 +1,7 @@
 import type { ProtocolDefinition, StandardEffect } from "./contract/types.ts";
 import type { AuditDiagnostics, AuditPolicy, ProgressObserver } from "./provenance/sink.ts";
 import type { CausalReceiptResult, InvocationReceiptSummary, InvokeTrackedResult } from "./provenance/receipt.ts";
-import type { CanonicalProvenanceEventV1 } from "./provenance/events.ts";
+import type { CanonicalProvenanceEventV1, ExecutionEventV1 } from "./provenance/events.ts";
 
 export type JsonSchemaLite = {
   type?: "string" | "number" | "integer" | "boolean" | "object" | "array" | "null";
@@ -29,38 +29,8 @@ export interface InvocationSessionControl {
   mode?: InvocationSessionMode;
 }
 
-export type ProtocolRuntimeEvent =
-  | {
-      type: "executor_session_model";
-      traceId: string;
-      spanId: string;
-      model: string;
-      thinkingLevel?: string;
-    }
-  | {
-      type: "executor_input_snapshot";
-      traceId: string;
-      spanId: string;
-      inputPreview: string;
-      inputTruncated?: boolean;
-    }
-  | {
-      type: "executor_output_delta";
-      traceId: string;
-      spanId: string;
-      textDelta: string;
-    }
-  | {
-      type: "executor_output_snapshot";
-      traceId: string;
-      spanId: string;
-      outputPreview: string;
-      outputTruncated?: boolean;
-    };
-
-export type ProtocolRuntimeEventEmitter = (event: ProtocolRuntimeEvent) => void | Promise<void>;
-
-export type ProtocolRuntimeEventRecorder = ProtocolRuntimeEventEmitter;
+export type ProtocolExecutionEventEmitter = (event: ExecutionEventV1) => void | Promise<void>;
+export type ProtocolExecutionObserver = ProtocolExecutionEventEmitter;
 
 export type StandardProtocolEffect = StandardEffect;
 
@@ -97,7 +67,7 @@ export interface ProtocolInvocationContext {
   callerNodeId?: string;
   session?: InvocationSessionControl;
   abortSignal?: AbortSignal;
-  emitRuntimeEvent?: ProtocolRuntimeEventEmitter;
+  emitExecutionEvent?: ProtocolExecutionEventEmitter;
   invocationId?: string;
   contractDigest?: string;
   signal?: AbortSignal;
@@ -112,30 +82,6 @@ export type ProtocolAgentExecutor = (
   input: unknown,
   context?: ProtocolInvocationContext,
 ) => unknown | Promise<unknown>;
-
-export type InvocationStatus = "started" | "succeeded" | "failed" | "aborted";
-
-export interface InvocationProvenanceEvent {
-  traceId: string;
-  spanId: string;
-  parentSpanId?: string;
-  callerNodeId?: string;
-  nodeId: string;
-  provide: string;
-  session?: InvocationSessionControl;
-  status: InvocationStatus;
-  durationMs?: number;
-  inputPreview?: string;
-  inputTruncated?: boolean;
-  outputPreview?: string;
-  outputTruncated?: boolean;
-  error?: { code: InvokeErrorCode; message: string };
-  registrationId?: string;
-  registrationGeneration?: number;
-  contractDigest?: string;
-}
-
-export type ProvenanceRecorder = (event: InvocationProvenanceEvent) => void | Promise<void>;
 
 // A node is the top-level thing we discover first.
 // Example: "scheduling" or "records".
@@ -176,20 +122,6 @@ export interface ProtocolRegistrationMetadata {
   sourcePath?: string;
   buildId?: string;
 }
-
-export type RegistrationProvenanceEvent = {
-  type: "registration.requested" | "registration.installed" | "registration.replaced" | "registration.removed" | "registration.rejected";
-  timestamp: number;
-  registrationId: string;
-  nodeId: string;
-  generation?: number;
-  contractDigest?: string;
-  previousContractDigest?: string;
-  error?: { code: "CONFLICT" | "CONTRACT_CHANGED" | "INVALID_BINDINGS" | "INVALID_DEFINITION"; message: string };
-  metadata?: ProtocolRegistrationMetadata;
-};
-
-export type RegistrationProvenanceRecorder = (event: RegistrationProvenanceEvent) => void | Promise<void>;
 
 export interface ProtocolRegistration {
   readonly registrationId: string;
@@ -292,14 +224,9 @@ export interface CreateProtocolFabricOptions {
 }
 
 export interface ProtocolFabric {
-  setProvenanceRecorder(recorder?: ProvenanceRecorder): void;
-  subscribeProvenanceRecorder(recorder: ProvenanceRecorder): RecorderUnsubscribe;
-  setRuntimeEventRecorder(recorder?: ProtocolRuntimeEventRecorder): void;
-  subscribeRuntimeEventRecorder(recorder: ProtocolRuntimeEventRecorder): RecorderUnsubscribe;
-  subscribeRegistrationProvenanceRecorder(recorder: RegistrationProvenanceRecorder): RecorderUnsubscribe;
-  registrationProvenance(): readonly RegistrationProvenanceEvent[];
   subscribeAudit(observer: (event: CanonicalProvenanceEventV1) => void | Promise<void>): RecorderUnsubscribe;
   subscribeProgress(observer: ProgressObserver): RecorderUnsubscribe;
+  subscribeExecution(observer: ProtocolExecutionObserver): RecorderUnsubscribe;
   auditDiagnostics(): AuditDiagnostics;
   diagnostics(): ProtocolFabricDiagnostics;
   getReceipt(invocationId: string, authority: object): InvocationReceiptSummary | undefined;
@@ -312,5 +239,4 @@ export interface ProtocolFabric {
   search(query: string, options?: ProtocolSearchOptions): ProtocolSearchResult;
   describeNode(nodeId: string): ProtocolNode | undefined;
   describeProvide(nodeId: string, provideName: string): ProvideSnapshot | undefined;
-  invoke(request: InvokeRequest): Promise<InvokeResult>;
 }

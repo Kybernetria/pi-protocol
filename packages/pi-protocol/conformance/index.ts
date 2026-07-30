@@ -2,12 +2,12 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parseProtocolManifest } from "../contract/index.ts";
-import type { CompatibilityDiagnostic, ProtocolDefinition } from "../contract/types.ts";
+import type { ProtocolDefinition } from "../contract/types.ts";
 import { parsePiAgentProfiles, resolvePiAgentProfiles } from "../sdk/agent-profile.ts";
 import { generateProtocolTypes } from "../cli/generator.ts";
 
 export type ConformanceIssueCode =
-  | "MANIFEST_MISSING" | "MANIFEST_INVALID" | "LEGACY_MANIFEST" | "PACKAGE_INVALID"
+  | "MANIFEST_MISSING" | "MANIFEST_INVALID" | "PACKAGE_INVALID"
   | "DEPENDENCY_MISSING" | "DEPENDENCY_INCOMPATIBLE" | "PROFILE_INVALID"
   | "GENERATED_MISSING" | "GENERATED_DRIFT" | "DISCOVERY_LIMIT";
 
@@ -21,11 +21,10 @@ export interface ProtocolPackageConformanceResult {
   readonly packageDir: string;
   readonly packageName?: string;
   readonly definition?: ProtocolDefinition;
-  readonly compatibility: readonly CompatibilityDiagnostic[];
   readonly issues: readonly ConformanceIssue[];
   readonly ok: boolean;
 }
-export interface CheckProtocolPackageOptions { allowLegacy?: boolean; requireDependency?: boolean; }
+export interface CheckProtocolPackageOptions { requireDependency?: boolean; }
 export interface DiscoverProtocolPackagesOptions { maxDepth?: number; maxDirectories?: number; }
 
 export function checkProtocolPackage(packageDir: string, options: CheckProtocolPackageOptions = {}): ProtocolPackageConformanceResult {
@@ -41,11 +40,8 @@ export function checkProtocolPackage(packageDir: string, options: CheckProtocolP
   }
 
   let definition: ProtocolDefinition | undefined;
-  let compatibility: readonly CompatibilityDiagnostic[] = [];
   try {
-    definition = parseProtocolManifest(readBounded(join(directory, "pi.protocol.json"), 1_048_576), { allowLegacyV02: options.allowLegacy ?? false });
-    compatibility = definition.diagnostics;
-    if (compatibility.length) issues.push(issue("warning", "LEGACY_MANIFEST", directory, "Legacy v0.2 manifest is deprecated"));
+    definition = parseProtocolManifest(readBounded(join(directory, "pi.protocol.json"), 1_048_576));
   } catch (error) {
     issues.push(issue("error", statSafe(join(directory, "pi.protocol.json")) ? "MANIFEST_INVALID" : "MANIFEST_MISSING", directory, message(error)));
   }
@@ -78,7 +74,6 @@ export function checkProtocolPackage(packageDir: string, options: CheckProtocolP
     packageDir: directory,
     ...(typeof packageJson?.name === "string" ? { packageName: packageJson.name } : {}),
     ...(definition ? { definition } : {}),
-    compatibility: Object.freeze([...compatibility]),
     issues: Object.freeze(issues),
     ok: !issues.some((entry) => entry.severity === "error"),
   });
@@ -131,8 +126,8 @@ function configuredGeneratedPath(packageJson: Record<string, unknown> | undefine
 function compatibleDependency(range: string): boolean {
   const value = range.trim();
   return /^(?:file:|link:|workspace:)/.test(value)
-    || /^https:\/\/github\.com\/Kybernetria\/pi-protocol\/releases\/download\/v3\.\d+\.\d+\/.+\.tgz$/.test(value)
-    || /(?:^|[<>=~^|\s])3(?:\.\d+)?(?:\.\d+)?/.test(value);
+    || /^https:\/\/github\.com\/Kybernetria\/pi-protocol\/releases\/download\/v4\.\d+\.\d+\/.+\.tgz$/.test(value)
+    || /(?:^|[<>=~^|\s])4(?:\.\d+)?(?:\.\d+)?/.test(value);
 }
 function readBounded(path: string, maxBytes: number): string {
   const stat = statSync(path);

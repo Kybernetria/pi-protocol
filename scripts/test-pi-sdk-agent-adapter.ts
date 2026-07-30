@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import type { ProtocolRuntimeEvent } from "../packages/pi-protocol/index.ts";
+import type { ExecutionEventV1 } from "../packages/pi-protocol/index.ts";
 import {
   createPiSdkAgentExecutor,
   type PiSdkAgentSessionEventLike,
@@ -89,7 +89,7 @@ assert.equal(fake.unsubscribed, true);
 assert.equal(fake.disposed, true);
 
 const runtimeFake = createFakeSession();
-const runtimeEvents: ProtocolRuntimeEvent[] = [];
+const executionEvents: ExecutionEventV1[] = [];
 const runtimeExecutor = createPiSdkAgentExecutor({
   createSession: () => runtimeFake.session,
 });
@@ -98,38 +98,26 @@ const runtimeResult = await runtimeExecutor("emit runtime please", {
   provide: "chat",
   traceId: "trace-direct-runtime-test",
   spanId: "span-direct-runtime-test",
-  emitRuntimeEvent: async (event) => {
-    runtimeEvents.push(event);
+  emitExecutionEvent: async (event) => {
+    executionEvents.push(event);
     throw new Error("direct runtime recorder failure should be ignored");
   },
 });
 assert.equal(runtimeResult, "hello world");
-assert.deepEqual(runtimeEvents, [
+assert.deepEqual(executionEvents, [
   {
-    type: "executor_input_snapshot",
-    traceId: "trace-direct-runtime-test",
-    spanId: "span-direct-runtime-test",
-    inputPreview: "emit runtime please",
-    inputTruncated: false,
-  },
-  {
-    type: "executor_output_delta",
+    schemaVersion: 1,
+    type: "executor.output_delta",
     traceId: "trace-direct-runtime-test",
     spanId: "span-direct-runtime-test",
     textDelta: "hello",
   },
   {
-    type: "executor_output_delta",
+    schemaVersion: 1,
+    type: "executor.output_delta",
     traceId: "trace-direct-runtime-test",
     spanId: "span-direct-runtime-test",
     textDelta: " world",
-  },
-  {
-    type: "executor_output_snapshot",
-    traceId: "trace-direct-runtime-test",
-    spanId: "span-direct-runtime-test",
-    outputPreview: "hello world",
-    outputTruncated: false,
   },
 ]);
 assert.equal(runtimeFake.unsubscribed, true);
@@ -158,12 +146,16 @@ await statefulExecutor("first", {
   nodeId: "agent_b",
   provide: "chat",
   callerNodeId: "agent_a",
+  principal: { id: "agent_a", kind: "agent" },
+  contractDigest: "sha256:test",
   session: { id: "thread_1", mode: "continue" },
 });
 await statefulExecutor("second", {
   nodeId: "agent_b",
   provide: "chat",
   callerNodeId: "agent_a",
+  principal: { id: "agent_a", kind: "agent" },
+  contractDigest: "sha256:test",
   session: { id: "thread_1", mode: "continue" },
 });
 assert.equal(statefulFakes.length, 1);
@@ -174,6 +166,8 @@ await statefulExecutor("done", {
   nodeId: "agent_b",
   provide: "chat",
   callerNodeId: "agent_a",
+  principal: { id: "agent_a", kind: "agent" },
+  contractDigest: "sha256:test",
   session: { id: "thread_1", mode: "end" },
 });
 assert.equal(statefulFakes.length, 1);
@@ -184,6 +178,8 @@ await statefulExecutor("new thread", {
   nodeId: "agent_b",
   provide: "chat",
   callerNodeId: "agent_a",
+  principal: { id: "agent_a", kind: "agent" },
+  contractDigest: "sha256:test",
   session: { id: "thread_1", mode: "continue" },
 });
 assert.equal(statefulFakes.length, 2);

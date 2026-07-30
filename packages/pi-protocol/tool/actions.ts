@@ -2,7 +2,7 @@ import { createChildInvokeRequest } from "../context.ts";
 import type { InvokeRequest, ProtocolFabric, ProtocolNode, ProvideSnapshot, ProvideSpec } from "../types.ts";
 import { requireText } from "./helpers.ts";
 import { invokeWithTraceUpdates } from "./trace.ts";
-import type { LegacyProtocolToolInput, ProtocolToolInput, ProtocolToolUpdateCallback } from "./types.ts";
+import type { ProtocolToolInput, ProtocolToolOperation, ProtocolToolUpdateCallback } from "./types.ts";
 
 export async function handleProtocolToolInput(
   fabric: ProtocolFabric,
@@ -48,31 +48,64 @@ export async function handleProtocolToolInput(
 }
 
 export function normalizeProtocolToolInput(input: unknown): ProtocolToolInput {
-  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("protocol input must be an object");
-  const source = input as LegacyProtocolToolInput;
-  const legacy = source.action;
-  const legacyOp = legacy === "registry" ? "list"
-    : legacy === "invoke" || legacy === "call" ? "call"
-    : legacy === "describe_node" || legacy === "describe_provide" ? "describe"
-    : legacy;
-  const sourceOp = source.op === "describe_node" || source.op === "describe_provide" ? "describe" : source.op;
-  if (sourceOp && legacyOp && sourceOp !== legacyOp) throw new Error("protocol op conflicts with legacy action");
-  const request = source.request;
-  const nodeId = source.nodeId ?? request?.nodeId;
-  const provide = source.provide ?? request?.provide;
-  const legacyTarget = nodeId ? (provide ? `${nodeId}.${provide}` : nodeId) : undefined;
-  const target = source.target ?? legacyTarget;
-  const op = sourceOp ?? legacyOp ?? (target ? "call" : "list");
+  if (!isRecord(input)) throw new Error("protocol input must be an object");
+  assertExactKeys(input, ["op", "query", "cursor", "limit", "filters", "target", "input", "session"]);
+  const op = input.op === undefined ? (input.target === undefined ? "list" : "call") : operation(input.op);
+  const output: ProtocolToolInput = { op };
+  if (input.query !== undefined) output.query = text(input.query, "query", 4_096);
+  if (input.cursor !== undefined) output.cursor = text(input.cursor, "cursor", 4_096);
+  if (input.target !== undefined) output.target = text(input.target, "target", 512);
+  if (input.limit !== undefined) {
+    if (!Number.isInteger(input.limit) || (input.limit as number) < 1 || (input.limit as number) > 50) throw new Error("protocol limit is invalid");
+    output.limit = input.limit as number;
+  }
+  if (input.filters !== undefined) output.filters = filters(input.filters);
+  if (Object.hasOwn(input, "input")) output.input = input.input;
+  if (input.session !== undefined) output.session = session(input.session);
+  return output;
+}
+
+function operation(value: unknown): ProtocolToolOperation {
+  if (value === "list" || value === "search" || value === "describe" || value === "call") return value;
+  throw new Error("protocol op is invalid");
+}
+
+function filters(value: unknown): NonNullable<ProtocolToolInput["filters"]> {
+  if (!isRecord(value)) throw new Error("protocol filters must be an object");
+  assertExactKeys(value, ["tags", "effects"]);
   return {
-    op,
-    ...(source.query !== undefined ? { query: source.query } : {}),
-    ...(source.cursor !== undefined ? { cursor: source.cursor } : {}),
-    ...(source.limit !== undefined ? { limit: source.limit } : {}),
-    ...(source.filters !== undefined ? { filters: { tags: source.filters.tags, effects: source.filters.effects } } : {}),
-    ...(target !== undefined ? { target } : {}),
-    ...(request && "input" in request ? { input: request.input } : "input" in source ? { input: source.input } : {}),
-    ...(source.session ?? request?.session ? { session: source.session ?? request?.session } : {}),
+    ...(value.tags !== undefined ? { tags: textArray(value.tags, "tags") } : {}),
+    ...(value.effects !== undefined ? { effects: textArray(value.effects, "effects") } : {}),
   };
+}
+
+function session(value: unknown): NonNullable<ProtocolToolInput["session"]> {
+  if (!isRecord(value)) throw new Error("protocol session must be an object");
+  assertExactKeys(value, ["id", "mode"]);
+  if (value.mode !== undefined && value.mode !== "ephemeral" && value.mode !== "continue" && value.mode !== "end") throw new Error("protocol session mode is invalid");
+  return {
+    ...(value.id !== undefined ? { id: text(value.id, "session.id", 256) } : {}),
+    ...(value.mode !== undefined ? { mode: value.mode } : {}),
+  };
+}
+
+function textArray(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || value.length > 64) throw new Error(`protocol ${label} is invalid`);
+  return value.map((item) => text(item, label, 256));
+}
+
+function text(value: unknown, label: string, maxLength: number): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > maxLength) throw new Error(`protocol ${label} is invalid`);
+  return value;
+}
+
+function assertExactKeys(value: Record<string, unknown>, allowed: readonly string[]): void {
+  const keys = new Set(allowed);
+  if (Object.keys(value).some((key) => !keys.has(key))) throw new Error("protocol input contains unsupported fields");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
 }
 
 function compactNodeCatalog(fabric: ProtocolFabric, requestedLimit?: number, cursor?: string): unknown {

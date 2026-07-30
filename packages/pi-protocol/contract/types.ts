@@ -126,30 +126,8 @@ export interface CompiledProvideContract {
   readonly validateOutput: CompiledContractValidator;
 }
 
-export type CompatibilityDiagnosticCode =
-  | "V02_DEPRECATED"
-  | "LEGACY_FIELD_PRIVATE"
-  | "LEGACY_EFFECT_MAPPED"
-  | "LEGACY_EFFECT_CONSERVATIVE";
-
-export interface CompatibilityDiagnostic {
-  readonly code: CompatibilityDiagnosticCode;
-  readonly path: string;
-  readonly message: string;
-}
-
-export interface LegacyV02Compatibility {
-  readonly sourceVersion: "0.2.0";
-  readonly bindings: Readonly<Record<string, { type: "handler"; handler: string } | { type: "agent"; agent: string }>>;
-  readonly agents?: Readonly<Record<string, JsonValue>>;
-  readonly privateMetadata?: Readonly<Record<string, JsonValue>>;
-}
-
 export interface ProtocolDefinition {
   readonly manifest: ProtocolManifestV1;
   readonly contractDigest: string;
-  readonly sourceSchemaVersion: 1 | "0.2.0";
   readonly provides: Readonly<Record<string, CompiledProvideContract>>;
-  readonly diagnostics: readonly CompatibilityDiagnostic[];
-  readonly compatibility?: LegacyV02Compatibility;
 }

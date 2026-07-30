@@ -1,9 +1,10 @@
+import { invokeResult } from "./helpers/invoke-test.ts";
 import { installTestNode, disposeTestNode } from "./helpers/install-test-node.ts";
 import assert from "node:assert/strict";
 import {
   ensureProtocolFabric,
   type JsonSchemaLite,
-  type ProtocolRuntimeEvent,
+  type ExecutionEventV1,
 } from "../packages/pi-protocol/index.ts";
 import {
   createPiSdkAgentExecutor,
@@ -62,11 +63,8 @@ function createFakeSession() {
 
 const fake = createFakeSession();
 const fabric = ensureProtocolFabric();
-const runtimeEvents: ProtocolRuntimeEvent[] = [];
-
-fabric.setRuntimeEventRecorder((event) => {
-  runtimeEvents.push(event);
-});
+const executionEvents: ExecutionEventV1[] = [];
+fabric.subscribeExecution((event) => { executionEvents.push(event); });
 
 installTestNode(fabric, {
   node: {
@@ -93,8 +91,8 @@ installTestNode(fabric, {
 
 assert.equal(fabric.describeProvide("sdk_adapter_test", "plan")?.execution.type, "agent");
 
-runtimeEvents.length = 0;
-const result = await fabric.invoke({
+executionEvents.length = 0;
+const result = await invokeResult(fabric, {
   nodeId: "sdk_adapter_test",
   provide: "plan",
   input: { goal: "ship protocol" },
@@ -110,32 +108,20 @@ assert.deepEqual(result, {
 });
 assert.deepEqual(fake.prompts, ['Plan {"goal":"ship protocol"}']);
 assert.equal(fake.disposed, true);
-assert.deepEqual(runtimeEvents, [
+assert.deepEqual(executionEvents, [
   {
-    type: "executor_input_snapshot",
-    traceId: "trace-sdk-runtime-test",
-    spanId: "span-sdk-runtime-test",
-    inputPreview: 'Plan {"goal":"ship protocol"}',
-    inputTruncated: false,
-  },
-  {
-    type: "executor_output_delta",
+    schemaVersion: 1,
+    type: "executor.output_delta",
     traceId: "trace-sdk-runtime-test",
     spanId: "span-sdk-runtime-test",
     textDelta: "planned: ",
   },
   {
-    type: "executor_output_delta",
+    schemaVersion: 1,
+    type: "executor.output_delta",
     traceId: "trace-sdk-runtime-test",
     spanId: "span-sdk-runtime-test",
     textDelta: 'Plan {"goal":"ship protocol"}',
-  },
-  {
-    type: "executor_output_snapshot",
-    traceId: "trace-sdk-runtime-test",
-    spanId: "span-sdk-runtime-test",
-    outputPreview: 'planned: Plan {"goal":"ship protocol"}',
-    outputTruncated: false,
   },
 ]);
 
@@ -165,14 +151,14 @@ installTestNode(fabric, {
   },
 });
 
-const firstStatefulResult = await fabric.invoke({
+const firstStatefulResult = await invokeResult(fabric, {
   nodeId: "sdk_stateful_adapter_test",
   provide: "chat",
   input: "first",
   callerNodeId: "agent_a",
   session: { id: "thread_1", mode: "continue" },
 });
-const secondStatefulResult = await fabric.invoke({
+const secondStatefulResult = await invokeResult(fabric, {
   nodeId: "sdk_stateful_adapter_test",
   provide: "chat",
   input: "second",
@@ -195,7 +181,7 @@ assert.equal(statefulFakes.length, 1);
 assert.deepEqual(statefulFakes[0].prompts, ["first", "second"]);
 assert.equal(statefulFakes[0].disposed, false);
 
-const endStatefulResult = await fabric.invoke({
+const endStatefulResult = await invokeResult(fabric, {
   nodeId: "sdk_stateful_adapter_test",
   provide: "chat",
   input: "done",
@@ -212,7 +198,7 @@ assert.equal(statefulFakes.length, 1);
 assert.deepEqual(statefulFakes[0].prompts, ["first", "second", "done"]);
 assert.equal(statefulFakes[0].disposed, true);
 
-const afterEndResult = await fabric.invoke({
+const afterEndResult = await invokeResult(fabric, {
   nodeId: "sdk_stateful_adapter_test",
   provide: "chat",
   input: "new thread",

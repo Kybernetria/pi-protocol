@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { InvocationProvenanceEvent, InvokeRequest, ProtocolFabric } from "./types.ts";
+import type { InvokeRequest, ProtocolFabric } from "./types.ts";
 
 export interface CurrentProtocolInvocationContext {
   nodeId: string;
@@ -23,7 +23,14 @@ export function getCurrentProtocolInvocationContext(): CurrentProtocolInvocation
 
 export function runWithProtocolInvocationContext<T>(
   request: InvokeRequest,
-  provenance: Omit<InvocationProvenanceEvent, "status" | "durationMs">,
+  provenance: {
+    traceId: string;
+    spanId: string;
+    parentSpanId?: string;
+    callerNodeId?: string;
+    registrationId?: string;
+    registrationGeneration?: number;
+  },
   callback: () => T,
 ): T {
   const parent = invocationContextStorage.getStore();
@@ -74,8 +81,8 @@ export function createChildInvokeRequest(request: InvokeRequest): InvokeRequest 
   };
 }
 
-export function invokeFromCurrentContext(fabric: ProtocolFabric, request: InvokeRequest): ReturnType<ProtocolFabric["invoke"]> {
-  return fabric.invoke(createChildInvokeRequest(request));
+export function invokeTrackedFromCurrentContext(fabric: ProtocolFabric, request: InvokeRequest): ReturnType<ProtocolFabric["invokeTracked"]> {
+  return fabric.invokeTracked(createChildInvokeRequest(request));
 }
 
 function createChildSpanId(current: CurrentProtocolInvocationContext): string {

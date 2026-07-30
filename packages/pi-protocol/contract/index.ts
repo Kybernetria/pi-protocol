@@ -7,16 +7,9 @@ export {
   type ProtocolContractLimits,
 } from "./limits.ts";
 export { canonicalJson, normalizeJsonValue } from "./normalize.ts";
-export {
-  parseProtocolDefinition,
-  parseProtocolManifest,
-  validateCanonicalProtocolManifest,
-  type ParseProtocolManifestOptions,
-} from "./parse.ts";
+export { parseProtocolManifest, type ParseProtocolManifestOptions } from "./parse.ts";
 export { STANDARD_EFFECTS } from "./types.ts";
 export type {
-  CompatibilityDiagnostic,
-  CompatibilityDiagnosticCode,
   CompiledContractValidator,
   CompiledProvideContract,
   ContractIssue,
@@ -24,7 +17,6 @@ export type {
   JsonPrimitive,
   JsonSchemaScalarType,
   JsonValue,
-  LegacyV02Compatibility,
   NullableJsonSchemaType,
   ProtocolContractErrorCode,
   ProtocolDefinition,

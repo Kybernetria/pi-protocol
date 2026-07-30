@@ -89,10 +89,6 @@ assert.equal(unavailable.ok, false);
 assert.equal(unavailable.error.code, "AUDIT_UNAVAILABLE");
 assert.equal(requiredCalls, 0, "required audit failure closes before effect execution");
 assert.equal(unavailable.receipt.effectsMayHaveOccurred, false);
-const directUnavailable = await requiredFabric.invoke({ nodeId: "required_node", provide: "run", input: null });
-assert.equal(directUnavailable.ok, false);
-assert.equal(directUnavailable.ok ? undefined : directUnavailable.error.code, "AUDIT_UNAVAILABLE");
-assert.equal(requiredCalls, 0, "legacy invoke is also a required-audit projection");
 
 let terminalAppends = 0;
 const terminalFabric = createProtocolFabric({

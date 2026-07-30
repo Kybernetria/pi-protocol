@@ -9,7 +9,7 @@ export async function runGenerateCli(argv = process.argv.slice(2)): Promise<numb
   const packageJson = JSON.parse(readBounded(join(packageDir, "package.json"), 1_048_576)) as { piProtocol?: { generated?: string } };
   const outputArg = option(argv, "--output") ?? packageJson.piProtocol?.generated ?? "protocol.generated.ts";
   const output = contained(packageDir, outputArg);
-  const definition = parseProtocolManifest(readBounded(join(packageDir, "pi.protocol.json"), 1_048_576), { allowLegacyV02: false });
+  const definition = parseProtocolManifest(readBounded(join(packageDir, "pi.protocol.json"), 1_048_576));
   const generated = generateProtocolTypes(definition);
   if (check) {
     let actual = "";

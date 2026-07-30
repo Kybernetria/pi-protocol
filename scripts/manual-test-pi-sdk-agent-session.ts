@@ -1,3 +1,4 @@
+import { invokeResult } from "./helpers/invoke-test.ts";
 import { installTestNode, disposeTestNode } from "./helpers/install-test-node.ts";
 import { ensureProtocolFabric, type JsonSchemaLite } from "../packages/pi-protocol/index.ts";
 import { createDefaultPiSdkAgentExecutor } from "../packages/pi-protocol/sdk/agent-session.ts";
@@ -50,7 +51,7 @@ installTestNode(fabric, {
   },
 });
 
-const result = await fabric.invoke({
+const result = await invokeResult(fabric, {
   nodeId: "live_sdk_agent",
   provide: "plan",
   input: { goal: "verify protocol agent execution through a real Pi SDK AgentSession" },

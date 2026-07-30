@@ -1,6 +1,6 @@
 {
   "name": "@kybernetria/pi-protocol",
-  "version": "3.0.3",
+  "version": "4.0.0",
   "description": "Pi Protocol — shared in-memory fabric with handler/agent execution, protocol tool, and pi SDK adapter",
   "type": "module",
   "main": "./index.ts",
@@ -18,11 +18,7 @@
     "./provenance": "./provenance/index.ts",
     "./conformance": "./conformance/index.ts",
     "./pi": "./tool/index.ts",
-    "./pi/agents": "./sdk/agent-session.ts",
-    "./tool": "./tool/index.ts",
-    "./sdk": "./sdk/index.ts",
-    "./sdk/agent-session": "./sdk/agent-session.ts",
-    "./sdk/agent-profile": "./sdk/agent-profile.ts"
+    "./pi/agents": "./sdk/agent-session.ts"
   },
   "files": [
     "*.ts",
@@ -57,13 +53,13 @@
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
-    "@mariozechner/pi-ai": "*"
+    "@earendil-works/pi-ai": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {
       "optional": true
     },
-    "@mariozechner/pi-ai": {
+    "@earendil-works/pi-ai": {
       "optional": true
     },
     "@earendil-works/pi-tui": {

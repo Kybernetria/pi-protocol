@@ -18,7 +18,7 @@ writeFileSync(join(first, "pi.protocol.json"), `${JSON.stringify(manifest, null,
 writeFileSync(join(first, "package.json"), JSON.stringify({
   name: "@tests/conformance-fixture",
   version: "1.0.0",
-  dependencies: { "@kybernetria/pi-protocol": "^3.0.0" },
+  dependencies: { "@kybernetria/pi-protocol": "^4.0.0" },
   piProtocol: { generated: "src/protocol.generated.ts" },
 }, null, 2));
 writeFileSync(join(first, "prompts", "agent.md"), "Use the protocol carefully.\n");
@@ -40,15 +40,11 @@ assert.equal(await runGenerateCli([first]), 0);
 assert.equal((await checkProtocolTree(root)).every((result) => result.ok), true);
 assert.equal(await runCheckCli([root, "--recursive"]), 0);
 
-const legacy = join(root, "legacy");
-mkdirSync(legacy);
-const legacySource = readFileSync(new URL("./fixtures/contracts/valid-v02.json", import.meta.url), "utf8");
-writeFileSync(join(legacy, "pi.protocol.json"), legacySource);
-writeFileSync(join(legacy, "package.json"), JSON.stringify({ name: "@tests/legacy", version: "1.0.0", dependencies: { "@kybernetria/pi-protocol": "^3.0.0" } }));
-assert.equal(checkProtocolPackage(legacy).issues.some((issue) => issue.code === "MANIFEST_INVALID"), true);
-const legacyAllowed = checkProtocolPackage(legacy, { allowLegacy: true });
-assert.equal(legacyAllowed.ok, true);
-assert.equal(legacyAllowed.issues.some((issue) => issue.code === "LEGACY_MANIFEST"), true);
+const unsupported = join(root, "unsupported");
+mkdirSync(unsupported);
+writeFileSync(join(unsupported, "pi.protocol.json"), JSON.stringify({ protocolVersion: "0.2.0" }));
+writeFileSync(join(unsupported, "package.json"), JSON.stringify({ name: "@tests/unsupported", version: "1.0.0", dependencies: { "@kybernetria/pi-protocol": "^4.0.0" } }));
+assert.equal(checkProtocolPackage(unsupported).issues.some((issue) => issue.code === "MANIFEST_INVALID"), true);
 
 const outside = mkdtempSync(join(tmpdir(), "pi-conformance-outside-"));
 writeFileSync(join(outside, "outside.md"), "private");

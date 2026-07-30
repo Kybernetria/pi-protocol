@@ -12,7 +12,6 @@ import {
 const validV1Source = await fixture("valid-v1.json");
 const validV1Value = JSON.parse(validV1Source) as Record<string, unknown>;
 const definition = parseProtocolManifest(validV1Source);
-assert.equal(definition.sourceSchemaVersion, 1);
 assert.match(definition.contractDigest, /^sha256:[0-9a-f]{64}$/);
 assert.ok(Object.isFrozen(definition));
 assert.ok(Object.isFrozen(definition.manifest));
@@ -34,21 +33,7 @@ const beforeAdmission = JSON.stringify(validV1Value);
 parseProtocolManifest(validV1Value);
 assert.equal(JSON.stringify(validV1Value), beforeAdmission, "Ajv admission must not mutate caller data");
 
-const validV02Source = await fixture("valid-v02.json");
-const legacy = parseProtocolManifest(validV02Source);
-const equivalentV1 = parseProtocolManifest(await fixture("equivalent-v1.json"));
-assert.equal(legacy.sourceSchemaVersion, "0.2.0");
-assert.deepEqual(legacy.manifest, equivalentV1.manifest);
-assert.equal(legacy.contractDigest, equivalentV1.contractDigest);
-assert.deepEqual(legacy.compatibility?.bindings.echo, { type: "handler", handler: "echo" });
-assert.equal(legacy.diagnostics[0]?.code, "V02_DEPRECATED");
-expectError(() => parseProtocolManifest(JSON.parse(validV02Source), { allowLegacyV02: false }), "UNSUPPORTED_VERSION");
-const secretSentinel = "SECRET_SENTINEL_DO_NOT_EXPOSE";
-const invalidLegacy = JSON.parse(validV02Source) as any;
-invalidLegacy.agents = { worker: { tools: [secretSentinel, secretSentinel] } };
-const redactedLegacyError = expectError(() => parseProtocolManifest(invalidLegacy), "MANIFEST_INVALID");
-assert.ok(!`${redactedLegacyError.message} ${JSON.stringify(redactedLegacyError.issues)}`.includes(secretSentinel));
-assert.equal(redactedLegacyError.cause, undefined);
+expectError(() => parseProtocolManifest({ protocolVersion: "0.2.0" }), "UNSUPPORTED_VERSION");
 
 const remoteRef = structuredClone(validV1Value);
 ((remoteRef.provides as Array<any>)[0]).inputSchema = { $ref: "https://attacker.invalid/schema" };
@@ -151,7 +136,7 @@ assert.equal(definition.provides.echo.validateInput(cyclicPayload).valid, false)
 assert.equal(definition.provides.echo.validateInput(new Proxy({ text: "hello" }, {})).valid, false);
 assert.ok(definition.provides.echo.validateInput({ text: "" }).valid === false);
 
-console.log("canonical contract parsing, compatibility, budgets, digests, and validators work");
+console.log("canonical contract parsing, budgets, digests, and validators work");
 
 async function fixture(name: string): Promise<string> {
   return readFile(new URL(`./fixtures/contracts/${name}`, import.meta.url), "utf8");

@@ -10,13 +10,10 @@ export {
   canonicalJson,
   fingerprintProtocolManifest,
   normalizeJsonValue,
-  parseProtocolDefinition,
+  parseProtocolManifest,
   resolveContractLimits,
-  validateCanonicalProtocolManifest,
 } from "./contract/index.ts";
 export type {
-  CompatibilityDiagnostic,
-  CompatibilityDiagnosticCode,
   CompiledContractValidator,
   CompiledProvideContract,
   ContractIssue,
@@ -24,7 +21,6 @@ export type {
   JsonPrimitive,
   JsonSchemaScalarType,
   JsonValue,
-  LegacyV02Compatibility,
   NullableJsonSchemaType,
   ParseProtocolManifestOptions,
   ProtocolContractErrorCode,

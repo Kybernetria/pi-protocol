@@ -23,7 +23,6 @@ import type {
   InvokeErrorCode,
   InvokeRequest,
   InvokeResult,
-  InvocationProvenanceEvent,
   ProtocolAgentExecutor,
   ProtocolBindings,
   ProtocolGrant,
@@ -33,11 +32,7 @@ import type {
   ProtocolRegistration,
   ProtocolRegistrationMetadata,
   ProtocolNode,
-  ProtocolRuntimeEvent,
-  ProtocolRuntimeEventRecorder,
-  ProvenanceRecorder,
-  RegistrationProvenanceEvent,
-  RegistrationProvenanceRecorder,
+  ProtocolExecutionObserver,
   StandardProtocolEffect,
   ProvideSnapshot,
   ProvideSpec,
@@ -52,14 +47,10 @@ import { executeAdmittedProvide } from "./execution.ts";
 
 // Symbol.for gives us a process-wide key. Any package using this same key
 // can find the same fabric through globalThis.
-const FABRIC_KEY = Symbol.for("pi-protocol.minimal.fabric");
-const FABRIC_VERSION_KEY = Symbol.for("pi-protocol.minimal.fabric.version");
-const FABRIC_VERSION = 9;
+const FABRIC_VERSION_KEY = Symbol.for("@kybernetria/pi-protocol.fabric.abi");
+const FABRIC_VERSION = 10;
 const HOST_ABI_KEY = Symbol.for("@kybernetria/pi-protocol.host.v1");
-const HOST_ABI_VERSION = 1;
-const MAX_REGISTRATION_EVENTS = 1_024;
-const INPUT_PREVIEW_MAX_CHARS = 20_000;
-const OUTPUT_PREVIEW_MAX_CHARS = 40_000;
+const HOST_ABI_VERSION = 2;
 
 interface RegisteredNode {
   node: ProtocolNode;
@@ -92,6 +83,18 @@ interface ProtocolHostAbi {
   readonly runtimeCopies: Array<{ moduleUrl: string; packageVersion: string }>;
 }
 
+interface RegistrationEventDraft {
+  type: "registration.requested" | "registration.installed" | "registration.replaced" | "registration.removed" | "registration.rejected";
+  timestamp: number;
+  registrationId: string;
+  nodeId: string;
+  generation?: number;
+  contractDigest?: string;
+  previousContractDigest?: string;
+  error?: { code: "CONFLICT" | "CONTRACT_CHANGED" | "INVALID_BINDINGS" | "INVALID_DEFINITION"; message: string };
+  metadata?: ProtocolRegistrationMetadata;
+}
+
 export function createProtocolFabric(options: CreateProtocolFabricOptions = {}): ProtocolFabric {
   const nodes = new Map<string, RegisteredNode>();
   const searchCatalog = new Map<string, readonly SearchCatalogEntry[]>();
@@ -104,12 +107,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
     nodes.delete(nodeId);
     searchCatalog.delete(nodeId);
   };
-  let provenanceRecorder: ProvenanceRecorder | undefined;
-  let runtimeEventRecorder: ProtocolRuntimeEventRecorder | undefined;
-  const provenanceSubscribers = new Set<ProvenanceRecorder>();
-  const runtimeEventSubscribers = new Set<ProtocolRuntimeEventRecorder>();
-  const registrationSubscribers = new Set<RegistrationProvenanceRecorder>();
-  const registrationEvents: RegistrationProvenanceEvent[] = [];
+  const executionSubscribers = new Set<ProtocolExecutionObserver>();
   const audit = new AuditLedger(options.audit);
   const principals = new WeakSet<object>();
   const systemPrincipal = mintProtocolPrincipal("system:local", "system");
@@ -121,32 +119,19 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
   );
   const confirmationEffects = new Set(options.confirmationRequiredEffects ?? ["external.transaction", "system.configure"]);
 
-  const emitRegistration = (event: RegistrationProvenanceEvent): void => {
-    const snapshot = freezeSnapshot({
-      ...event,
-      ...(event.metadata ? { metadata: { ...event.metadata } } : {}),
-      ...(event.error ? { error: { ...event.error } } : {}),
-    });
-    registrationEvents.push(snapshot);
+  const emitRegistration = (event: RegistrationEventDraft): void => {
     audit.registration({
-      type: snapshot.type,
-      occurredAt: snapshot.timestamp,
-      registrationId: snapshot.registrationId,
-      nodeId: snapshot.nodeId,
-      generation: snapshot.generation,
-      contractDigest: snapshot.contractDigest,
-      previousContractDigest: snapshot.previousContractDigest,
-      packageId: snapshot.metadata?.packageId,
-      packageVersion: snapshot.metadata?.packageVersion,
-      outcomeCode: snapshot.error?.code,
+      type: event.type,
+      occurredAt: event.timestamp,
+      registrationId: event.registrationId,
+      nodeId: event.nodeId,
+      generation: event.generation,
+      contractDigest: event.contractDigest,
+      previousContractDigest: event.previousContractDigest,
+      packageId: event.metadata?.packageId,
+      packageVersion: event.metadata?.packageVersion,
+      outcomeCode: event.error?.code,
     });
-    if (registrationEvents.length > MAX_REGISTRATION_EVENTS) registrationEvents.shift();
-    for (const recorder of registrationSubscribers) {
-      queueMicrotask(() => {
-        try { void Promise.resolve(recorder(snapshot)).catch(() => undefined); }
-        catch { /* Registration observers cannot alter publication. */ }
-      });
-    }
   };
 
   const prepareAtomicRegistration = (
@@ -217,7 +202,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
     };
   };
 
-  const performAuditedInvocation = async (request: InvokeRequest, waitForOutcome: boolean) => {
+  const performAuditedInvocation = async (request: InvokeRequest) => {
     try {
       request = snapshotInvokeRequest(request);
     } catch {
@@ -232,8 +217,6 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
       ? `${request.nodeId}.${request.provide}`
       : "invalid.invalid";
     const receipt = audit.createReceipt({ traceId: canonicalTraceId, spanId: canonicalSpanId, target: safeTarget });
-    const compatibilityProvenance = createInvocationProvenance(request);
-    const compatibilityStartedAt = Date.now();
     let releaseSlot: (() => void) | undefined;
     let releaseControlSignal: (() => void) | undefined;
     const reject = (code: InvokeErrorCode, message: string) => {
@@ -243,9 +226,6 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
       releaseControlSignal = undefined;
       audit.reject(receipt, code);
       const error = { code, message };
-      const preview = createInputPreview(request.input);
-      recordProvenance(provenanceRecorder, provenanceSubscribers, { ...compatibilityProvenance, status: "started", ...preview });
-      recordProvenance(provenanceRecorder, provenanceSubscribers, { ...compatibilityProvenance, status: code === "CANCELLED" ? "aborted" : "failed", durationMs: Date.now() - compatibilityStartedAt, ...preview, error });
       const result: InvokeResult = { ok: false, error };
       return audit.trackedResult(result, receipt);
     };
@@ -347,7 +327,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
     let controlState!: InvocationControlState;
     const invokeChild = async (target: string, input: unknown, childOptions?: import("./types.ts").ChildInvokeOptions) => {
       const parsed = parseTarget(target);
-      if (!parsed || !validChildOptions(childOptions)) return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input }, false);
+      if (!parsed || !validChildOptions(childOptions)) return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input });
       const childGrant = intersectGrant(grant, childOptions?.grant);
       const childDeadline = Math.min(deadline, childOptions?.deadline ?? deadline);
       const childCombined = combineInvocationSignals(combined.signal, childOptions?.signal, childDeadline);
@@ -364,7 +344,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
       };
       const resume = controlState.suspendConcurrency ? await controlState.suspendConcurrency() : async () => undefined;
       try {
-        return await runWithInvocationControl(seed, () => performAuditedInvocation({ nodeId: parsed.nodeId, provide: parsed.provide, input, abortSignal: childCombined.signal }, false));
+        return await runWithInvocationControl(seed, () => performAuditedInvocation({ nodeId: parsed.nodeId, provide: parsed.provide, input, abortSignal: childCombined.signal }));
       } finally {
         childCombined.dispose();
         await resume();
@@ -423,8 +403,6 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
         release();
         return audit.trackedResult(result, receipt);
       });
-    if (waitForOutcome) return settled;
-
     let removeAbort: () => void = () => undefined;
     const cancellation = new Promise<"cancel">((resolve) => {
       const onAbort = () => resolve("cancel");
@@ -444,65 +422,35 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
 
   const executePinned = async (registered: RegisteredNode, provide: ProtocolNode["provides"][number], request: InvokeRequest): Promise<InvokeResult> => {
     const provenance = {
-      ...createInvocationProvenance(request),
-      ...(registered.registrationId ? { registrationId: registered.registrationId } : {}),
-      ...(registered.generation !== undefined ? { registrationGeneration: registered.generation } : {}),
-      ...(registered.contractDigest ? { contractDigest: registered.contractDigest } : {}),
+      traceId: request.traceId ?? createId("trace"),
+      spanId: request.spanId ?? createId("span"),
+      parentSpanId: request.parentSpanId,
+      callerNodeId: request.callerNodeId,
+      registrationId: registered.registrationId,
+      registrationGeneration: registered.generation,
+      contractDigest: registered.contractDigest,
     };
-    const inputPreview = createInputPreview(request.input);
-    const startedAt = Date.now();
-    recordProvenance(provenanceRecorder, provenanceSubscribers, { ...provenance, status: "started", ...inputPreview });
     const canonicalProvide = registered.definition.provides[request.provide];
     const canonicalBinding = registered.bindingsByProvide[request.provide];
-    const result = await runWithProtocolInvocationContext(
+    return runWithProtocolInvocationContext(
       request,
       provenance,
-      () => executeAdmittedProvide({ request, provenance, provide: canonicalProvide, binding: canonicalBinding, emitRuntimeEvent: createRuntimeEventEmitter(runtimeEventRecorder, runtimeEventSubscribers) }),
+      () => executeAdmittedProvide({ request, provenance, provide: canonicalProvide, binding: canonicalBinding, emitExecutionEvent: createExecutionEventEmitter(executionSubscribers) }),
     );
-    await recordProvenance(provenanceRecorder, provenanceSubscribers, {
-      ...provenance,
-      status: result.ok ? "succeeded" : result.error.code === "CANCELLED" ? "aborted" : "failed",
-      durationMs: Date.now() - startedAt,
-      ...inputPreview,
-      ...(result.ok ? createOutputPreview(result.output) : { error: result.error }),
-    });
-    return result;
   };
 
   const fabric: ProtocolFabric = {
-    setProvenanceRecorder(recorder) {
-      provenanceRecorder = recorder;
-    },
-
-    subscribeProvenanceRecorder(recorder) {
-      provenanceSubscribers.add(recorder);
-      return createUnsubscribe(provenanceSubscribers, recorder);
-    },
-
-    setRuntimeEventRecorder(recorder) {
-      runtimeEventRecorder = recorder;
-    },
-
-    subscribeRuntimeEventRecorder(recorder) {
-      runtimeEventSubscribers.add(recorder);
-      return createUnsubscribe(runtimeEventSubscribers, recorder);
-    },
-
-    subscribeRegistrationProvenanceRecorder(recorder) {
-      registrationSubscribers.add(recorder);
-      return createUnsubscribe(registrationSubscribers, recorder);
-    },
-
-    registrationProvenance() {
-      return freezeSnapshot(registrationEvents.map((event) => ({ ...event })));
-    },
-
     subscribeAudit(observer) {
       return audit.subscribe(observer);
     },
 
     subscribeProgress(observer) {
       return audit.subscribeProgress(observer);
+    },
+
+    subscribeExecution(observer) {
+      executionSubscribers.add(observer);
+      return createUnsubscribe(executionSubscribers, observer);
     },
 
     auditDiagnostics() {
@@ -536,7 +484,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
     },
 
     invokeTracked(request) {
-      return performAuditedInvocation(request, false);
+      return performAuditedInvocation(request);
     },
 
     mintPrincipal(id, kind) {
@@ -547,15 +495,15 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
 
     invokeAs(principal, target, input, invokeOptions) {
       if (!isProtocolPrincipal(principal) || !principals.has(principal)) {
-        return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input }, false);
+        return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input });
       }
       const parsed = parseTarget(target);
       if (!parsed || !validGrant(invokeOptions?.grant)) {
-        return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input }, false);
+        return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input });
       }
       const grant = intersectGrant(Object.freeze({ targets: Object.freeze(["*"]), maxDepth: 32, maxInvocations: 1_024 }), invokeOptions.grant);
       const requestedDeadline = invokeOptions.deadline ?? Date.now() + defaultDeadlineMs;
-      if (!Number.isFinite(requestedDeadline)) return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input }, false);
+      if (!Number.isFinite(requestedDeadline)) return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input });
       const deadline = Math.min(requestedDeadline, Date.now() + 300_000);
       const combined = combineInvocationSignals(invokeOptions.signal, undefined, deadline);
       const rootBudget = { remainingInvocations: grant.maxInvocations ?? 64 };
@@ -576,7 +524,7 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
         provide: parsed.provide,
         input,
         abortSignal: combined.signal,
-      }, false)).finally(combined.dispose);
+      })).finally(combined.dispose);
     },
 
     install(definition, bindings, metadata) {
@@ -737,9 +685,6 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
       });
     },
 
-    async invoke(request) {
-      return (await performAuditedInvocation(request, true)).result;
-    },
   };
 
   Object.defineProperty(fabric, FABRIC_VERSION_KEY, { value: FABRIC_VERSION });
@@ -751,25 +696,16 @@ export function ensureProtocolFabric(options: CreateProtocolFabricOptions = {}):
   const host = globals[HOST_ABI_KEY] as ProtocolHostAbi | undefined;
   if (host !== undefined) {
     if (!isCompatibleHost(host)) throw new Error("Incompatible Pi Protocol host ABI is already installed");
-    const legacyAnchor = globals[FABRIC_KEY];
-    if (legacyAnchor === undefined) globals[FABRIC_KEY] = host.fabric;
-    else if (legacyAnchor !== host.fabric) throw new Error("Split Pi Protocol fabrics detected");
     recordRuntimeCopy(host);
     return host.fabric;
   }
 
-  const legacyAnchor = globals[FABRIC_KEY] as ProtocolFabric | undefined;
-  if (legacyAnchor !== undefined && !isCompatibleProtocolFabric(legacyAnchor)) {
-    throw new Error("Incompatible live Pi Protocol fabric cannot be replaced");
-  }
-  const fabric = legacyAnchor ?? createProtocolFabric(options);
-  const createdHost: ProtocolHostAbi = {
+  const fabric = createProtocolFabric(options);
+  globals[HOST_ABI_KEY] = {
     abiVersion: HOST_ABI_VERSION,
     fabric,
     runtimeCopies: [{ moduleUrl: import.meta.url, packageVersion: packageMetadata.version }],
-  };
-  globals[HOST_ABI_KEY] = createdHost;
-  globals[FABRIC_KEY] = fabric;
+  } satisfies ProtocolHostAbi;
   return fabric;
 }
 
@@ -783,14 +719,9 @@ function isCompatibleProtocolFabric(value: ProtocolFabric | undefined): value is
   return (
     Boolean(value) &&
     (value as unknown as Record<PropertyKey, unknown>)[FABRIC_VERSION_KEY] === FABRIC_VERSION &&
-    typeof value?.setProvenanceRecorder === "function" &&
-    typeof value.subscribeProvenanceRecorder === "function" &&
-    typeof value.setRuntimeEventRecorder === "function" &&
-    typeof value.subscribeRuntimeEventRecorder === "function" &&
-    typeof value.subscribeRegistrationProvenanceRecorder === "function" &&
-    typeof value.registrationProvenance === "function" &&
-    typeof value.subscribeAudit === "function" &&
+    typeof value?.subscribeAudit === "function" &&
     typeof value.subscribeProgress === "function" &&
+    typeof value.subscribeExecution === "function" &&
     typeof value.auditDiagnostics === "function" &&
     typeof value.diagnostics === "function" &&
     typeof value.getReceipt === "function" &&
@@ -804,8 +735,7 @@ function isCompatibleProtocolFabric(value: ProtocolFabric | undefined): value is
     typeof value.registry === "function" &&
     typeof value.search === "function" &&
     typeof value.describeNode === "function" &&
-    typeof value.describeProvide === "function" &&
-    typeof value.invoke === "function"
+    typeof value.describeProvide === "function"
   );
 }
 
@@ -903,7 +833,7 @@ function rejectedRegistrationEvent(
   definition: ProtocolDefinition,
   error: unknown,
   metadata?: ProtocolRegistrationMetadata,
-): RegistrationProvenanceEvent {
+): RegistrationEventDraft {
   const code = typeof error === "object" && error !== null && "code" in error
     ? String((error as { code: unknown }).code)
     : "INVALID_DEFINITION";
@@ -1043,89 +973,22 @@ function safeDefinitionDigest(definition: ProtocolDefinition): string | undefine
   catch { return undefined; }
 }
 
-function createInvocationProvenance(request: InvokeRequest): Omit<InvocationProvenanceEvent, "status" | "durationMs"> {
-  return {
-    traceId: request.traceId ?? createId("trace"),
-    spanId: request.spanId ?? createId("span"),
-    ...(request.parentSpanId ? { parentSpanId: request.parentSpanId } : {}),
-    ...(request.callerNodeId ? { callerNodeId: request.callerNodeId } : {}),
-    nodeId: request.nodeId,
-    provide: request.provide,
-    ...(request.session ? { session: request.session } : {}),
-  };
-}
-
-function recordProvenance(
-  recorder: ProvenanceRecorder | undefined,
-  subscribers: Set<ProvenanceRecorder>,
-  event: InvocationProvenanceEvent,
-): void {
-  recordAll(recorder, subscribers, event);
-}
-
-function createRuntimeEventEmitter(
-  recorder: ProtocolRuntimeEventRecorder | undefined,
-  subscribers: Set<ProtocolRuntimeEventRecorder>,
-): ((event: ProtocolRuntimeEvent) => Promise<void>) | undefined {
-  if (!recorder && subscribers.size === 0) return undefined;
-
+function createExecutionEventEmitter(
+  subscribers: Set<ProtocolExecutionObserver>,
+): ProtocolExecutionObserver | undefined {
+  if (subscribers.size === 0) return undefined;
   return async (event) => {
-    recordAll(recorder, subscribers, event);
+    for (const observer of subscribers) {
+      try { void Promise.resolve(observer(event)).catch(() => undefined); }
+      catch { /* Execution observers cannot alter invocation. */ }
+    }
   };
-}
-
-function recordAll<T>(
-  recorder: ((event: T) => void | Promise<void>) | undefined,
-  subscribers: Set<(event: T) => void | Promise<void>>,
-  event: T,
-): void {
-  const recorders = [recorder, ...subscribers].filter((item): item is (event: T) => void | Promise<void> => Boolean(item));
-  for (const nextRecorder of recorders) {
-    try { void Promise.resolve(nextRecorder(event)).catch(() => undefined); }
-    catch { /* Observational recorders cannot affect invocation. */ }
-  }
 }
 
 function createUnsubscribe<T>(subscribers: Set<T>, recorder: T): RecorderUnsubscribe {
   return () => {
     subscribers.delete(recorder);
   };
-}
-
-function createInputPreview(input: unknown): Pick<InvocationProvenanceEvent, "inputPreview" | "inputTruncated"> {
-  const preview = createPreview(input, INPUT_PREVIEW_MAX_CHARS);
-  return {
-    inputPreview: preview.preview,
-    inputTruncated: preview.truncated,
-  };
-}
-
-function createOutputPreview(output: unknown): Pick<InvocationProvenanceEvent, "outputPreview" | "outputTruncated"> {
-  const preview = createPreview(output, OUTPUT_PREVIEW_MAX_CHARS);
-  return {
-    outputPreview: preview.preview,
-    outputTruncated: preview.truncated,
-  };
-}
-
-function createPreview(value: unknown, maxChars: number): { preview: string; truncated: boolean } {
-  const text = stringifyPreviewValue(value);
-  if (text.length <= maxChars) {
-    return { preview: text, truncated: false };
-  }
-
-  return { preview: text.slice(0, maxChars), truncated: true };
-}
-
-function stringifyPreviewValue(value: unknown): string {
-  if (typeof value === "string") return value;
-
-  try {
-    const serialized = JSON.stringify(value);
-    return serialized === undefined ? String(value) : serialized;
-  } catch {
-    return String(value);
-  }
 }
 
 function buildSearchCatalog(node: ProtocolNode): readonly SearchCatalogEntry[] {

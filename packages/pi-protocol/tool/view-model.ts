@@ -1,6 +1,6 @@
-import type { InvocationProvenanceEvent, ProtocolRuntimeEvent } from "../types.ts";
+import type { ExecutionEventV1, ProvenanceEventV1 } from "../provenance/events.ts";
 import { isInvokeToolResult, isSuccessfulInvokeToolResult, isTextObject } from "./guards.ts";
-import type { LegacyProtocolToolInput, ProtocolToolExecutionResult, ProtocolToolInput } from "./types.ts";
+import type { ProtocolToolExecutionResult, ProtocolToolInput } from "./types.ts";
 import { normalizeProtocolToolInput } from "./actions.ts";
 
 const MAX_TRACE_EVENTS = 256;
@@ -39,7 +39,7 @@ export interface ProtocolViewModel {
 
 export function projectProtocolViewModel(
   result: ProtocolToolExecutionResult,
-  input: ProtocolToolInput | LegacyProtocolToolInput | undefined,
+  input: ProtocolToolInput | undefined,
   options: { expanded?: boolean; isPartial?: boolean } = {},
 ): ProtocolViewModel {
   const prepared = prepare(input);
@@ -64,10 +64,10 @@ export function projectProtocolViewModel(
     ? outputText(details.result.output)
     : result.content.map((item) => item.text).join("\n");
   const outputBound = boundText(rawOutput, options.expanded ? MAX_OUTPUT_CHARS : 160, options.expanded ? MAX_OUTPUT_LINES : 1);
-  const runtimeEvents = details.trace?.runtimeEvents ?? [];
-  const progress = options.isPartial ? progressText(runtimeEvents) : undefined;
-  const executorFacts = runtimeEvents
-    .filter((event): event is Extract<ProtocolRuntimeEvent, { type: "executor_session_model" }> => event.type === "executor_session_model")
+  const executionEvents = details.trace?.executionEvents ?? [];
+  const progress = options.isPartial ? progressText(executionEvents) : undefined;
+  const executorFacts = executionEvents
+    .filter((event): event is Extract<ExecutionEventV1, { type: "executor.session" }> => event.type === "executor.session")
     .slice(-8)
     .map((event) => `${event.model.slice(0, 256)}${event.thinkingLevel ? ` (${event.thinkingLevel.slice(0, 40)})` : ""}`);
   const presentation = details as { presentation?: { contentType?: unknown } };
@@ -76,7 +76,7 @@ export function projectProtocolViewModel(
     kind: "invocation",
     operation: "call",
     ...(target ? { target } : {}),
-    ...(details.state ? { state: details.state === "queued" ? "running" : details.state } : {}),
+    ...(details.state ? { state: details.state } : {}),
     trace: rows.rows,
     traceTruncated: rows.truncated,
     executorFacts,
@@ -84,7 +84,7 @@ export function projectProtocolViewModel(
     outputFormat: presentation.presentation?.contentType === "text/markdown" ? "markdown" : "text",
     outputTruncated: outputBound.truncated,
     ...(progress ? { progress } : {}),
-    progressTruncated: Boolean(options.isPartial) && (runtimeEvents.length > 64 || runtimeEvents.reduce((total, event) => total + (event.type === "executor_output_delta" ? event.textDelta.length : 0), 0) > 2_000),
+    progressTruncated: Boolean(options.isPartial) && (executionEvents.length > 64 || executionEvents.reduce((total, event) => total + (event.type === "executor.output_delta" ? event.textDelta.length : 0), 0) > 2_000),
     ...(details.toolCallId ? { toolCallId: details.toolCallId } : {}),
   });
 }
@@ -98,38 +98,49 @@ export function formatProtocolToolResult(result: unknown): string {
   return JSON.stringify(result, null, 2);
 }
 
-function traceRows(events: InvocationProvenanceEvent[]): { rows: ProtocolTraceRowViewModel[]; truncated: boolean } {
-  const latest = new Map<string, InvocationProvenanceEvent>();
-  for (const event of events.slice(-MAX_TRACE_EVENTS)) latest.set(event.spanId, event);
-  const selected = [...latest.values()].slice(-MAX_TRACE_ROWS);
-  const bySpan = new Map(selected.map((event) => [event.spanId, event]));
-  const depthOf = (event: InvocationProvenanceEvent): number => {
+function traceRows(events: ProvenanceEventV1[]): { rows: ProtocolTraceRowViewModel[]; truncated: boolean } {
+  const grouped = new Map<string, ProvenanceEventV1[]>();
+  for (const event of events.slice(-MAX_TRACE_EVENTS)) {
+    const list = grouped.get(event.invocationId) ?? [];
+    list.push(event);
+    grouped.set(event.invocationId, list);
+  }
+  const selected = [...grouped.values()].slice(-MAX_TRACE_ROWS);
+  const parentByInvocation = new Map(selected.map((list) => [list[0]!.invocationId, list[0]!.parentInvocationId]));
+  const depthOf = (event: ProvenanceEventV1): number => {
     let depth = 0;
-    let parent = event.parentSpanId;
-    const seen = new Set<string>([event.spanId]);
-    while (parent && bySpan.has(parent) && depth < MAX_DEPTH) {
+    let parent = event.parentInvocationId;
+    const seen = new Set<string>([event.invocationId]);
+    while (parent && parentByInvocation.has(parent) && depth < MAX_DEPTH) {
       if (seen.has(parent)) return MAX_DEPTH;
       seen.add(parent);
       depth += 1;
-      parent = bySpan.get(parent)?.parentSpanId;
+      parent = parentByInvocation.get(parent);
     }
     return depth;
   };
-  const rows = selected.map((event): ProtocolTraceRowViewModel => freeze({
-    depth: depthOf(event),
-    status: event.status === "started" ? "running" : event.status,
-    target: `${event.nodeId}.${event.provide}`,
-    ...(event.callerNodeId ? { caller: event.callerNodeId } : {}),
-    ...(event.durationMs !== undefined ? { durationMs: event.durationMs } : {}),
-    ...(event.error?.code ? { errorCode: event.error.code } : {}),
-  }));
-  return { rows, truncated: events.length > MAX_TRACE_EVENTS || latest.size > MAX_TRACE_ROWS || rows.some((row) => row.depth >= MAX_DEPTH) };
+  const rows = selected.map((list): ProtocolTraceRowViewModel => {
+    const first = list[0]!;
+    const last = list[list.length - 1]!;
+    const status: ProtocolTraceRowViewModel["status"] = last.type === "invocation.succeeded" ? "succeeded"
+      : last.type === "invocation.cancelled" ? "aborted"
+      : last.type === "invocation.failed" || last.type === "invocation.rejected" || last.type === "invocation.denied" ? "failed"
+      : "running";
+    return freeze({
+      depth: depthOf(first),
+      status,
+      target: first.target,
+      ...(last.durationMs !== undefined ? { durationMs: last.durationMs } : {}),
+      ...(last.outcomeCode ? { errorCode: last.outcomeCode } : {}),
+    });
+  });
+  return { rows, truncated: events.length > MAX_TRACE_EVENTS || grouped.size > MAX_TRACE_ROWS || rows.some((row) => row.depth >= MAX_DEPTH) };
 }
 
-function progressText(events: ProtocolRuntimeEvent[]): string | undefined {
+function progressText(events: ExecutionEventV1[]): string | undefined {
   let output = "";
   for (const event of events.slice(-64)) {
-    if (event.type !== "executor_output_delta") continue;
+    if (event.type !== "executor.output_delta") continue;
     output += event.textDelta.slice(0, Math.max(0, 2_000 - output.length));
     if (output.length >= 2_000) break;
   }
@@ -138,13 +149,12 @@ function progressText(events: ProtocolRuntimeEvent[]): string | undefined {
 
 function resolveTarget(input: ProtocolToolInput, details: {
   result: { ok: boolean; error?: { code?: string; message?: string } };
-  trace?: { events?: InvocationProvenanceEvent[]; runtimeEvents?: ProtocolRuntimeEvent[] };
+  trace?: { events?: ProvenanceEventV1[]; executionEvents?: ExecutionEventV1[] };
 }): string | undefined {
   if (input.target?.includes(".")) return input.target;
   const result = details.result as { ok?: unknown; nodeId?: unknown; provide?: unknown };
   if (result.ok === true && typeof result.nodeId === "string" && typeof result.provide === "string") return `${result.nodeId}.${result.provide}`;
-  const event = details.trace?.events?.at(-1);
-  return event ? `${event.nodeId}.${event.provide}` : undefined;
+  return details.trace?.events?.at(-1)?.target;
 }
 
 function outputText(output: unknown): string {
@@ -154,7 +164,7 @@ function outputText(output: unknown): string {
   try { return JSON.stringify(output, null, 2); } catch { return "[unrenderable output]"; }
 }
 
-function prepare(input: ProtocolToolInput | LegacyProtocolToolInput | undefined): ProtocolToolInput {
+function prepare(input: ProtocolToolInput | undefined): ProtocolToolInput {
   if (!input) return { op: "list" };
   try { return normalizeProtocolToolInput(input); } catch { return { op: "list" }; }
 }

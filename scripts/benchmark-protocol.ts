@@ -1,3 +1,4 @@
+import { invokeResult } from "./helpers/invoke-test.ts";
 import { installTestNode, disposeTestNode } from "./helpers/install-test-node.ts";
 import { performance } from "node:perf_hooks";
 import { createProtocolFabric, type JsonSchemaLite } from "../packages/pi-protocol/index.ts";
@@ -21,7 +22,7 @@ for (let index = 0; index < 1_000; index++) fabric.search("notification searchab
 const searchMs = performance.now() - searchStarted;
 const invokeStarted = performance.now();
 for (let index = 0; index < 1_000; index++) {
-  const result = await fabric.invoke({ nodeId: "benchmark_0", provide: "capability_0", input: { value: "ok" } });
+  const result = await invokeResult(fabric, { nodeId: "benchmark_0", provide: "capability_0", input: { value: "ok" } });
   if (!result.ok) throw new Error(result.error.message);
 }
 const invokeMs = performance.now() - invokeStarted;

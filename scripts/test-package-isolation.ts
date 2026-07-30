@@ -34,7 +34,7 @@ try {
   };
   assert.equal(installedPackage.dependencies?.ajv, "8.18.0");
   await assertMissing(join(consumer, "node_modules/@earendil-works/pi-coding-agent/package.json"));
-  await assertMissing(join(consumer, "node_modules/@mariozechner/pi-ai/package.json"));
+  await assertMissing(join(consumer, "node_modules/@earendil-works/pi-ai/package.json"));
   await assertMissing(join(consumer, "node_modules/@earendil-works/pi-tui/package.json"));
 
   await writeFile(join(consumer, "smoke.ts"), `
@@ -62,7 +62,7 @@ try {
   await writeFile(join(fixture, "package.json"), JSON.stringify({
     name: "@tests/isolated-extension",
     version: "1.0.0",
-    dependencies: { "@kybernetria/pi-protocol": "^3.0.0" },
+    dependencies: { "@kybernetria/pi-protocol": "^4.0.0" },
     piProtocol: { generated: "protocol.generated.ts" },
   }));
   await writeFile(join(fixture, "pi.protocol.json"), JSON.stringify({

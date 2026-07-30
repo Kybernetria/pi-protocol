@@ -1,11 +1,11 @@
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { normalizeProtocolToolInput } from "./actions.ts";
-import type { LegacyProtocolToolInput, ProtocolToolInput, ProtocolToolThemeLike } from "./types.ts";
+import type { ProtocolToolInput, ProtocolToolThemeLike } from "./types.ts";
 import type { ProtocolViewModel } from "./view-model.ts";
 
 export function renderProtocolCall(
-  input: ProtocolToolInput | LegacyProtocolToolInput,
+  input: ProtocolToolInput,
   theme: ProtocolToolThemeLike,
   previous?: unknown,
 ): Text {

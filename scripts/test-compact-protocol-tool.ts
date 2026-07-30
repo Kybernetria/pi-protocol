@@ -84,7 +84,7 @@ installTestNode(fabric, {
   handlers: { item: () => "item" },
 });
 
-const tool = createProtocolTool(fabric, { maxConcurrency: 1 });
+const tool = createProtocolTool(fabric);
 const registeredSchema = fabric.describeProvide("compact_test", "discover_schema");
 assert.equal(registeredSchema?.inputSchema.description, richInputSchema.description);
 assert.deepEqual(registeredSchema?.inputSchema.required, richInputSchema.required);
@@ -101,7 +101,7 @@ assert.ok(!listText.includes("compact_test.review"), "default list must not expa
 assert.ok(!listText.includes("inputSchema"), "node catalog must not dump schemas");
 assert.ok(listText.length < 2_500, "node catalog must remain compact as provide count grows");
 
-const expandedNode = await tool.execute("node-call", { op: "describe_node", nodeId: "compact_test" });
+const expandedNode = await tool.execute("node-call", { op: "describe", target: "compact_test" });
 const expandedNodeText = expandedNode.content[0]?.text ?? "";
 assert.ok(expandedNodeText.includes("compact_test.review"));
 assert.ok(expandedNodeText.includes('"input": "object { text }"'));
@@ -111,11 +111,7 @@ assert.ok(expandedNodeText.includes("invoke directly"));
 assert.ok(!expandedNodeText.includes("search_test.item_00"), "node expansion must include only the selected node");
 assert.ok(!expandedNodeText.includes("inputSchema"), "node expansion must use cards, not contracts");
 
-const translatedLegacyList = tool.prepareArguments?.({ action: "registry", expandProvides: true });
-assert.deepEqual(translatedLegacyList, { op: "list" }, "legacy fields must be translated privately to the modern shape");
-const legacyList = await tool.execute("legacy-list-call", { action: "registry", expandProvides: true });
-assert.ok(legacyList.content[0]?.text.includes('"nodeId": "compact_test"'));
-assert.ok(!legacyList.content[0]?.text.includes("compact_test.review"));
+assert.throws(() => tool.prepareArguments?.({ action: "registry" }), /unsupported fields/);
 
 const search = await tool.execute("search-call", { op: "search", query: "complete declared schema" });
 assert.ok(search.content[0]?.text.includes("compact_test.discover_schema"));
@@ -128,7 +124,7 @@ const boundedSearch = await tool.execute("bounded-search-call", {
   op: "search",
   query: "deterministic fixture",
   limit: 3,
-  filters: { nodeId: "search_test", tags: ["fixture"], execution: "handler", effects: ["fs.read"] },
+  filters: { tags: ["fixture"], effects: ["fs.read"] },
 });
 const bounded = boundedSearch.details as { totalMatches: number; capabilities: Array<{ target: string }> };
 assert.equal(bounded.totalMatches, 20);
@@ -139,9 +135,8 @@ assert.deepEqual(bounded.capabilities.map((card) => card.target), [
 ]);
 
 const described = await tool.execute("describe-call", {
-  action: "describe_provide",
-  nodeId: "compact_test",
-  provide: "discover_schema",
+  op: "describe",
+  target: "compact_test.discover_schema",
 });
 const describedDetails = described.details as {
   provide: {

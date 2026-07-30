@@ -4,7 +4,7 @@ import { checkProtocolTree } from "../packages/pi-protocol/conformance/index.ts"
 const rootArgument = process.argv[2];
 if (!rootArgument) throw new Error("Usage: npm run audit:extensions -- /absolute/path/to/extensions");
 const root = path.resolve(rootArgument);
-const results = await checkProtocolTree(root, { allowLegacy: process.argv.includes("--allow-legacy") });
+const results = await checkProtocolTree(root);
 for (const result of results) {
   console.log(`${result.ok ? "PASS" : "FAIL"} ${result.packageName ?? result.packageDir}`);
   for (const issue of result.issues) console.log(`  ${issue.severity.toUpperCase()} ${issue.code}: ${issue.message}`);

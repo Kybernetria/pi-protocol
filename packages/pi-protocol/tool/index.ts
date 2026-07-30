@@ -4,9 +4,7 @@ export { createProtocolTool, registerProtocolTool } from "./tool.ts";
 export { projectProtocolViewModel, type ProtocolTraceRowViewModel, type ProtocolViewModel } from "./view-model.ts";
 export {
   DEFAULT_PROTOCOL_TOOL_NAME,
-  type ProtocolToolAction,
   type ProtocolToolOperation,
-  type LegacyProtocolToolInput,
   type ProtocolToolExecutionResult,
   type ProtocolToolInput,
   type ProtocolToolLike,

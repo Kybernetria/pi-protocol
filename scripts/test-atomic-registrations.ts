@@ -1,10 +1,10 @@
+import { invokeResult } from "./helpers/invoke-test.ts";
 import assert from "node:assert/strict";
 import {
   createProtocolFabric,
   ensureProtocolFabric,
   getProtocolHostDiagnostics,
-  type InvocationProvenanceEvent,
-  type RegistrationProvenanceEvent,
+  type CanonicalProvenanceEventV1,
 } from "../packages/pi-protocol/index.ts";
 import { parseProtocolManifest } from "../packages/pi-protocol/contract/index.ts";
 
@@ -12,20 +12,15 @@ const globals = globalThis as Record<PropertyKey, unknown>;
 globals[Symbol.for("@kybernetria/pi-protocol.host.v1")] = { abiVersion: 999, fabric: {} };
 assert.throws(() => ensureProtocolFabric(), /Incompatible Pi Protocol host ABI/);
 delete globals[Symbol.for("@kybernetria/pi-protocol.host.v1")];
-delete globals[Symbol.for("pi-protocol.minimal.fabric")];
 const hostedFabric = ensureProtocolFabric();
 assert.equal(hostedFabric, ensureProtocolFabric());
-globals[Symbol.for("pi-protocol.minimal.fabric")] = createProtocolFabric();
-assert.throws(() => ensureProtocolFabric(), /Split Pi Protocol fabrics/);
-globals[Symbol.for("pi-protocol.minimal.fabric")] = hostedFabric;
-assert.equal(getProtocolHostDiagnostics()?.abiVersion, 1);
+assert.equal(globals[Symbol.for("pi-protocol.minimal.fabric")], undefined);
+assert.equal(getProtocolHostDiagnostics()?.abiVersion, 2);
 assert.match(getProtocolHostDiagnostics()?.runtimeCopies[0]?.packageVersion ?? "", /^\d+\./);
 
 const fabric = createProtocolFabric();
-const registrationEvents: RegistrationProvenanceEvent[] = [];
-const invocationEvents: InvocationProvenanceEvent[] = [];
-fabric.subscribeRegistrationProvenanceRecorder((event) => { registrationEvents.push(event); });
-fabric.subscribeProvenanceRecorder((event) => { invocationEvents.push(event); });
+const auditEvents: CanonicalProvenanceEventV1[] = [];
+fabric.subscribeAudit((event) => { auditEvents.push(event); });
 
 const original = definition("Original contract.");
 assert.throws(() => fabric.install(original, { handlers: {} }), hasCode("INVALID_BINDINGS"));
@@ -42,8 +37,8 @@ Object.defineProperty(accessorBindings, "echo", { get: () => async () => ({ vers
 assert.throws(() => fabric.install(original, { handlers: accessorBindings }), hasCode("INVALID_BINDINGS"));
 assert.throws(() => fabric.install(original, { handlers: { echo: async () => ({ version: "x" }) } }, { sourcePath: "x".repeat(5_000) }), hasCode("INVALID_DEFINITION"));
 assert.throws(() => fabric.install({ ...original } as typeof original, { handlers: { echo: async () => ({ version: "forged" }) } }), hasCode("INVALID_DEFINITION"));
-await Promise.resolve();
-assert.ok(registrationEvents.some((event) => event.type === "registration.rejected"));
+await waitFor(() => auditEvents.some((event) => event.type === "registration.rejected"));
+assert.ok(auditEvents.some((event) => event.type === "registration.rejected"));
 
 const oldGate = deferred<void>();
 let oldStarted = false;
@@ -66,11 +61,11 @@ assert.equal(registration.contractDigest, original.contractDigest);
 assert.ok(Object.isFrozen(fabric.describeNode("atomic_node")));
 assert.equal("register" in fabric, false);
 assert.equal("unregister" in fabric, false);
-const invalidInput = await fabric.invoke({ nodeId: "atomic_node", provide: "echo", input: { text: "" } });
+const invalidInput = await invokeResult(fabric, { nodeId: "atomic_node", provide: "echo", input: { text: "" } });
 assert.equal(invalidInput.ok, false);
 assert.equal(invalidInput.ok ? undefined : invalidInput.error.code, "INPUT_INVALID");
 
-const oldCall = fabric.invoke({ nodeId: "atomic_node", provide: "echo", input: { text: "work" } });
+const oldCall = invokeResult(fabric, { nodeId: "atomic_node", provide: "echo", input: { text: "work" } });
 await waitFor(() => oldStarted);
 const replacement = definition("Replacement contract.");
 const replacePromise = registration.replace(replacement, {
@@ -80,18 +75,17 @@ const replacePromise = registration.replace(replacement, {
 assert.equal(registration.generation, 2, "replacement publishes before old calls drain");
 assert.equal(registration.contractDigest, replacement.contractDigest);
 assert.equal(oldDisposed, false);
-const newCall = await fabric.invoke({ nodeId: "atomic_node", provide: "echo", input: { text: "work" } });
+const newCall = await invokeResult(fabric, { nodeId: "atomic_node", provide: "echo", input: { text: "work" } });
 assert.deepEqual(newCall, { ok: true, nodeId: "atomic_node", provide: "echo", output: { version: "new:work" } });
 
 oldGate.resolve();
 assert.deepEqual(await oldCall, { ok: true, nodeId: "atomic_node", provide: "echo", output: { version: "old:work" } });
 await replacePromise;
+await waitFor(() => auditEvents.some((event) => event.type === "invocation.succeeded" && "generation" in event && event.generation === 1));
 assert.equal(oldDisposed, true, "old resources dispose only after pinned calls finish");
-const oldOutcome = invocationEvents.find((event) => event.status === "succeeded" && event.outputPreview?.includes("old:work"));
-assert.equal(oldOutcome?.registrationGeneration, 1);
+const oldOutcome = auditEvents.find((event) => event.type === "invocation.succeeded" && event.generation === 1);
 assert.equal(oldOutcome?.contractDigest, original.contractDigest);
-const newOutcome = invocationEvents.find((event) => event.status === "succeeded" && event.outputPreview?.includes("new:work"));
-assert.equal(newOutcome?.registrationGeneration, 2);
+const newOutcome = auditEvents.find((event) => event.type === "invocation.succeeded" && event.generation === 2);
 assert.equal(newOutcome?.contractDigest, replacement.contractDigest);
 
 await assert.rejects(
@@ -100,14 +94,14 @@ await assert.rejects(
 );
 assert.equal(registration.generation, 2, "failed replacement leaves the active generation intact");
 assert.deepEqual(
-  await fabric.invoke({ nodeId: "atomic_node", provide: "echo", input: { text: "still-active" } }),
+  await invokeResult(fabric, { nodeId: "atomic_node", provide: "echo", input: { text: "still-active" } }),
   { ok: true, nodeId: "atomic_node", provide: "echo", output: { version: "new:still-active" } },
 );
 
 await registration.dispose();
 assert.equal(newDisposed, true);
 assert.equal(fabric.describeNode("atomic_node"), undefined);
-assert.equal((await fabric.invoke({ nodeId: "atomic_node", provide: "echo", input: { text: "gone" } })).ok, false);
+assert.equal((await invokeResult(fabric, { nodeId: "atomic_node", provide: "echo", input: { text: "gone" } })).ok, false);
 await assert.rejects(registration.replace(replacement, { handlers: { echo: async () => ({ version: "x" }) } }), hasCode("CONFLICT"));
 await registration.dispose();
 
@@ -120,19 +114,15 @@ selfRegistration = fabric.install(original, {
     },
   },
 });
-const selfLifecycle = await fabric.invoke({ nodeId: "atomic_node", provide: "echo", input: { text: "self" } });
+const selfLifecycle = await invokeResult(fabric, { nodeId: "atomic_node", provide: "echo", input: { text: "self" } });
 assert.equal(selfLifecycle.ok, false, "self-disposal is rejected instead of deadlocking");
 await selfRegistration.dispose();
 
-const eventTypes = fabric.registrationProvenance().map((event) => event.type);
+const eventTypes = auditEvents.map((event) => event.type);
 assert.ok(eventTypes.includes("registration.installed"));
 assert.ok(eventTypes.includes("registration.replaced"));
 assert.ok(eventTypes.includes("registration.removed"));
-for (let attempt = 0; attempt < 520; attempt += 1) {
-  assert.throws(() => fabric.install(original, { handlers: {} }), hasCode("INVALID_BINDINGS"));
-}
-assert.equal(fabric.registrationProvenance().length, 1_024, "registration provenance is ring-buffer bounded");
-assert.ok(Object.isFrozen(fabric.registrationProvenance()));
+assert.ok(fabric.auditDiagnostics().eventCount <= 2_048, "canonical audit retention is bounded");
 
 console.log("owned atomic registrations, draining generations, exact bindings, and fail-closed host ABI work");
 

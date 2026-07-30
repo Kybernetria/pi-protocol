@@ -2,19 +2,18 @@ import type { CompiledProvideContract } from "./contract/types.ts";
 import { createHandlerInvocationContext } from "./control.ts";
 import type {
   InvokeRequest,
-  InvocationProvenanceEvent,
   InvokeResult,
   ProtocolAgentExecutor,
   ProtocolHandler,
-  ProtocolRuntimeEventEmitter,
+  ProtocolExecutionEventEmitter,
 } from "./types.ts";
 
 export async function executeAdmittedProvide(input: {
   request: InvokeRequest;
-  provenance: Omit<InvocationProvenanceEvent, "status" | "durationMs">;
+  provenance: { traceId?: string; spanId?: string; parentSpanId?: string; callerNodeId?: string };
   provide: CompiledProvideContract;
   binding: ProtocolHandler | ProtocolAgentExecutor;
-  emitRuntimeEvent?: ProtocolRuntimeEventEmitter;
+  emitExecutionEvent?: ProtocolExecutionEventEmitter;
 }): Promise<InvokeResult> {
   if (input.request.abortSignal?.aborted) {
     return { ok: false, error: { code: "CANCELLED", message: "Invocation cancelled" } };
@@ -28,7 +27,7 @@ export async function executeAdmittedProvide(input: {
     ...controlled,
     session: input.request.session,
     abortSignal: controlled.signal ?? input.request.abortSignal,
-    emitRuntimeEvent: input.emitRuntimeEvent,
+    emitExecutionEvent: input.emitExecutionEvent,
   };
   try {
     const output = await input.binding(input.request.input, context);

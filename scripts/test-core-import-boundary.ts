@@ -17,7 +17,7 @@ for (const file of coreGraph.files) {
   assert.ok(!file.includes("/tool/"), `core reaches Pi tool code: ${file}`);
   assert.ok(!file.includes("/sdk/"), `core reaches Pi agent-session code: ${file}`);
   assert.ok(!file.endsWith("/extension.ts"), `core reaches Pi extension code: ${file}`);
-  assert.ok(!file.endsWith("/contract/parse.ts") && !file.endsWith("/contract/validate.ts") && !file.endsWith("/contract/compat-v02.ts"), `core should not load Ajv manifest admission: ${file}`);
+  assert.ok(!file.endsWith("/contract/parse.ts") && !file.endsWith("/contract/validate.ts"), `core should not load Ajv manifest admission: ${file}`);
 }
 for (const dependency of rootGraph.external) {
   assert.ok(!dependency.startsWith("@earendil-works/"), `root eagerly imports Pi coding-agent API: ${dependency}`);

@@ -21,7 +21,7 @@ const legacyEffects: Readonly<Record<string, StandardEffect>> = {
   model_network: "model.call", protocol_invoke: "protocol.invoke",
 };
 
-/** Canonically admit legacy-shaped test fixtures without exposing a runtime raw-registration API. */
+/** Canonically admit compact test fixtures without exposing a raw-registration API. */
 export function installTestNode(fabric: ProtocolFabric, input: TestNodeInput): ProtocolRegistration {
   const definition = parseProtocolManifest({
     $schema: "https://pi.dev/protocol/manifest-v1.schema.json",
@@ -41,7 +41,7 @@ export function installTestNode(fabric: ProtocolFabric, input: TestNodeInput): P
         effects: normalizedEffects(provide.effects, provide.policy?.confirmation === "required"),
       } : {}),
     })),
-  }, { allowLegacyV02: false });
+  });
   const handlers: Record<string, ProtocolHandler> = Object.create(null);
   const agents: Record<string, ProtocolAgentExecutor> = Object.create(null);
   for (const provide of input.node.provides) {

@@ -1,9 +1,10 @@
+import { invokeResult } from "./helpers/invoke-test.ts";
 import { installTestNode, disposeTestNode } from "./helpers/install-test-node.ts";
 import assert from "node:assert/strict";
 import {
   createProtocolFabric,
-  type InvocationProvenanceEvent,
-  type ProtocolRuntimeEvent,
+  type CanonicalProvenanceEventV1,
+  type ExecutionEventV1,
 } from "../packages/pi-protocol/index.ts";
 import {
   createPiSdkAgentExecutor,
@@ -47,17 +48,13 @@ function createFakeSession(onPrompt: (text: string, emit: (delta: string) => voi
 }
 
 const fabric = createProtocolFabric();
-const provenanceEvents: InvocationProvenanceEvent[] = [];
-const runtimeEvents: ProtocolRuntimeEvent[] = [];
+const auditEvents: CanonicalProvenanceEventV1[] = [];
+const executionEvents: ExecutionEventV1[] = [];
 const aSessions: ReturnType<typeof createFakeSession>[] = [];
 const bSessions: ReturnType<typeof createFakeSession>[] = [];
 
-fabric.setProvenanceRecorder((event) => {
-  provenanceEvents.push(event);
-});
-fabric.setRuntimeEventRecorder((event) => {
-  runtimeEvents.push(event);
-});
+fabric.subscribeAudit((event) => { auditEvents.push(event); });
+fabric.subscribeExecution((event) => { executionEvents.push(event); });
 
 installTestNode(fabric, {
   node: {
@@ -116,7 +113,7 @@ installTestNode(fabric, {
   },
 });
 
-const first = await fabric.invoke({
+const first = await invokeResult(fabric, {
   nodeId: "p2p_a",
   provide: "chat",
   input: "one",
@@ -127,26 +124,22 @@ const first = await fabric.invoke({
 });
 assert.equal(first.ok, true);
 
-const started = provenanceEvents.filter((event) => event.status === "started");
-const outerStarted = started.find((event) => event.nodeId === "p2p_a" && event.provide === "chat");
-const childStarted = started.find((event) => event.nodeId === "p2p_b" && event.provide === "chat");
+await Promise.resolve();
+const started = auditEvents.filter((event): event is Extract<CanonicalProvenanceEventV1, { invocationId: string }> => "invocationId" in event && event.type === "invocation.started");
+const outerStarted = started.find((event) => event.target === "p2p_a.chat");
+const childStarted = started.find((event) => event.target === "p2p_b.chat");
 assert.ok(outerStarted);
 assert.ok(childStarted);
-assert.equal(outerStarted.traceId, "trace-p2p");
-assert.equal(outerStarted.spanId, "root");
-assert.equal(childStarted.traceId, "trace-p2p");
-assert.equal(childStarted.parentSpanId, "root");
-assert.match(childStarted.spanId, /^root\.p2p_a_chat_1$/);
-assert.equal(childStarted.callerNodeId, "p2p_a.chat");
-assert.deepEqual(childStarted.session, { id: "thread", mode: "continue" });
+assert.equal(childStarted.parentInvocationId, outerStarted.invocationId);
+assert.notEqual(childStarted.traceId, "trace-p2p", "canonical audit correlation is host-minted");
 
-const deltas = runtimeEvents.filter((event) => event.type === "executor_output_delta");
+const deltas = executionEvents.filter((event): event is Extract<ExecutionEventV1, { type: "executor.output_delta" }> => event.type === "executor.output_delta");
 assert.ok(deltas.some((event) => event.traceId === "trace-p2p" && event.spanId === "root" && event.textDelta === "A:start:"));
-assert.ok(deltas.some((event) => event.traceId === "trace-p2p" && event.spanId === childStarted.spanId && event.textDelta === "B:1:"));
-assert.ok(deltas.some((event) => event.traceId === "trace-p2p" && event.spanId === childStarted.spanId && event.textDelta === "child(one)"));
+assert.ok(deltas.some((event) => event.traceId === "trace-p2p" && /^root\.p2p_a_chat_1$/.test(event.spanId) && event.textDelta === "B:1:"));
+assert.ok(deltas.some((event) => event.traceId === "trace-p2p" && /^root\.p2p_a_chat_1$/.test(event.spanId) && event.textDelta === "child(one)"));
 assert.ok(deltas.some((event) => event.traceId === "trace-p2p" && event.spanId === "root" && event.textDelta === "A:end"));
 
-await fabric.invoke({
+await invokeResult(fabric, {
   nodeId: "p2p_a",
   provide: "chat",
   input: "two",
@@ -162,7 +155,7 @@ assert.deepEqual(bSessions[0].prompts, ["child(one)", "child(two)"]);
 assert.equal(aSessions[0].disposed, false);
 assert.equal(bSessions[0].disposed, false);
 
-await fabric.invoke({
+await invokeResult(fabric, {
   nodeId: "p2p_a",
   provide: "chat",
   input: "done",
@@ -176,7 +169,7 @@ assert.equal(bSessions.length, 1);
 assert.equal(aSessions[0].disposed, true);
 assert.equal(bSessions[0].disposed, true);
 
-await fabric.invoke({
+await invokeResult(fabric, {
   nodeId: "p2p_a",
   provide: "chat",
   input: "ephemeral",

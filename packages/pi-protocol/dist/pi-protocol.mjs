@@ -7144,292 +7144,6 @@ function isAdmittedProtocolDefinition(value) {
   return candidate[DEFINITION_MARK] === true && Object.isFrozen(candidate) && Object.isFrozen(candidate.manifest) && candidate.manifest.schemaVersion === 1 && /^sha256:[0-9a-f]{64}$/.test(candidate.contractDigest) && typeof candidate.provides === "object" && candidate.provides !== null;
 }
 
-// packages/pi-protocol/contract/types.ts
-var STANDARD_EFFECTS = [
-  "fs.read",
-  "fs.write",
-  "db.read",
-  "db.write",
-  "network.read",
-  "network.send",
-  "process.spawn",
-  "model.call",
-  "protocol.invoke",
-  "external.transaction",
-  "system.configure"
-];
-
-// packages/pi-protocol/contract/compat-v02.ts
-var MANIFEST_KEYS = /* @__PURE__ */ new Set(["protocolVersion", "nodeId", "packageId", "version", "purpose", "tags", "settings", "ui", "display", "agents", "provides"]);
-var PROVIDE_KEYS = /* @__PURE__ */ new Set(["name", "description", "version", "tags", "effects", "policy", "display", "inputSchema", "outputSchema", "execution"]);
-var AGENT_KEYS = /* @__PURE__ */ new Set(["description", "protocolAccess", "tools", "systemPrompt", "modelHint"]);
-var MODEL_HINT_KEYS = /* @__PURE__ */ new Set(["tier", "specific", "provider", "thinkingLevel"]);
-var DISPLAY_KEYS = /* @__PURE__ */ new Set(["label", "accentToken", "outputToken", "urlToken", "accentHex", "outputHex", "urlHex", "resultMode"]);
-var POLICY_KEYS = /* @__PURE__ */ new Set(["confirmation", "blacklistedCallers"]);
-var SETTING_KEYS = /* @__PURE__ */ new Set(["type", "label", "description", "default", "enum", "minimum", "maximum"]);
-var SCHEMA_KEYS = /* @__PURE__ */ new Set(["type", "required", "properties", "items", "enum", "description"]);
-var SCHEMA_TYPES = /* @__PURE__ */ new Set(["string", "number", "integer", "boolean", "object", "array", "null"]);
-var NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
-var STANDARD_EFFECT_SET = new Set(STANDARD_EFFECTS);
-var ALL_EFFECTS = [...STANDARD_EFFECTS];
-var LEGACY_EFFECTS = Object.freeze({
-  "read-only": ["fs.read", "db.read", "network.read"],
-  model_network: ["model.call", "network.read", "network.send"],
-  filesystem_read: ["fs.read"],
-  filesystem_write: ["fs.write"],
-  database_read: ["db.read"],
-  database_write: ["db.write"],
-  network: ["network.read", "network.send"],
-  subprocess: ["process.spawn"]
-});
-function validateLegacyProtocolManifest(value) {
-  if (!isPlainObject(value)) throw new Error("Protocol manifest must be an object");
-  rejectUnknownKeys(value, MANIFEST_KEYS, "manifest");
-  if (value.protocolVersion !== "0.2.0") throw new Error('Protocol manifest protocolVersion must be "0.2.0"');
-  assertName(value.nodeId, "manifest.nodeId");
-  assertNonEmptyString(value.purpose, "manifest.purpose");
-  optionalString(value.packageId, "manifest.packageId");
-  optionalString(value.version, "manifest.version");
-  optionalStringArray(value.tags, "manifest.tags");
-  validateDisplayShape(value.display, "manifest.display");
-  validateSettingsShape(value.settings);
-  validateUiShape(value.ui);
-  if (!Array.isArray(value.provides) || value.provides.length === 0) throw new Error("Protocol manifest provides must be a non-empty array");
-  const agents = value.agents === void 0 ? {} : value.agents;
-  if (!isPlainObject(agents)) throw new Error("Protocol manifest agents must be an object");
-  for (const [agentName, rawAgent] of Object.entries(agents)) {
-    assertName(agentName, `manifest agent name ${agentName}`);
-    if (!isPlainObject(rawAgent)) throw new Error(`Manifest agent ${agentName} must be an object`);
-    rejectUnknownKeys(rawAgent, AGENT_KEYS, `manifest.agents.${agentName}`);
-    optionalString(rawAgent.description, `manifest.agents.${agentName}.description`);
-    validateLegacyAgentTools(value.nodeId, agentName, rawAgent.tools);
-    validateLegacyProtocolAccessPolicy(value.nodeId, agentName, rawAgent.protocolAccess);
-    if (rawAgent.systemPrompt !== void 0) validateInstructionShape(rawAgent.systemPrompt, agentName);
-    validateModelHintShape(rawAgent.modelHint, agentName);
-  }
-  const seen = /* @__PURE__ */ new Set();
-  for (const [index, rawProvide] of value.provides.entries()) {
-    if (!isPlainObject(rawProvide)) throw new Error(`Manifest provide at index ${index} must be an object`);
-    rejectUnknownKeys(rawProvide, PROVIDE_KEYS, `manifest.provides[${index}]`);
-    assertName(rawProvide.name, `manifest.provides[${index}].name`);
-    const name2 = rawProvide.name;
-    if (seen.has(name2)) throw new Error(`Duplicate provide name ${value.nodeId}.${name2}`);
-    seen.add(name2);
-    assertNonEmptyString(rawProvide.description, `manifest provide ${name2} description`);
-    optionalString(rawProvide.version, `manifest provide ${name2} version`);
-    optionalStringArray(rawProvide.tags, `manifest provide ${name2} tags`);
-    optionalStringArray(rawProvide.effects, `manifest provide ${name2} effects`);
-    validateDisplayShape(rawProvide.display, `manifest provide ${name2} display`);
-    validatePolicyShape(rawProvide.policy, name2);
-    validateSchemaShape(rawProvide.inputSchema, `${value.nodeId}.${name2}.inputSchema`);
-    validateSchemaShape(rawProvide.outputSchema, `${value.nodeId}.${name2}.outputSchema`);
-    if (!isPlainObject(rawProvide.execution)) throw new Error(`Manifest provide ${name2} execution must be an object`);
-    const execution = rawProvide.execution;
-    if (execution.type === "handler") {
-      if (Object.keys(execution).some((key) => key !== "type" && key !== "handler")) throw new Error(`Manifest provide ${name2} handler execution has unknown fields`);
-      assertName(execution.handler, `manifest provide ${name2} execution.handler`);
-    } else if (execution.type === "agent") {
-      if (Object.keys(execution).some((key) => key !== "type" && key !== "agent")) throw new Error(`Manifest provide ${name2} agent execution has unknown fields`);
-      assertName(execution.agent, `manifest provide ${name2} execution.agent`);
-      if (!(execution.agent in agents)) throw new Error(`Manifest ${value.nodeId}.${name2} references undeclared agent ${execution.agent}`);
-    } else {
-      throw new Error(`Manifest provide ${name2} execution.type must be handler or agent`);
-    }
-  }
-}
-function decodeLegacyProtocolManifest(value) {
-  validateLegacyProtocolManifest(value);
-  const diagnostics = [{
-    code: "V02_DEPRECATED",
-    path: "/protocolVersion",
-    message: "Protocol manifest v0.2 is deprecated; generate schemaVersion 1 manifests"
-  }];
-  const bindings = /* @__PURE__ */ Object.create(null);
-  const privateProvides = /* @__PURE__ */ Object.create(null);
-  const provides = value.provides.map((provide, index) => {
-    bindings[provide.name] = { ...provide.execution };
-    const privateFields = {};
-    for (const key of ["version", "policy", "display"]) {
-      if (provide[key] !== void 0) privateFields[key] = provide[key];
-    }
-    if (Object.keys(privateFields).length > 0) privateProvides[provide.name] = privateFields;
-    const effects = mapLegacyEffects(provide.effects, `/provides/${index}/effects`, diagnostics);
-    return {
-      name: provide.name,
-      description: provide.description,
-      inputSchema: provide.inputSchema,
-      outputSchema: provide.outputSchema,
-      ...provide.tags ? { tags: provide.tags } : {},
-      ...effects.length > 0 ? { effects } : {}
-    };
-  });
-  const privateMetadata = {};
-  for (const key of ["packageId", "version", "settings", "ui", "display"]) {
-    if (value[key] !== void 0) privateMetadata[key] = value[key];
-  }
-  if (Object.keys(privateProvides).length > 0) privateMetadata.provides = privateProvides;
-  if (Object.keys(privateMetadata).length > 0 || value.agents) {
-    diagnostics.push({
-      code: "LEGACY_FIELD_PRIVATE",
-      path: "/",
-      message: "Legacy implementation and presentation metadata was kept outside the public contract"
-    });
-  }
-  const manifest = {
-    $schema: "https://pi.dev/protocol/manifest-v1.schema.json",
-    schemaVersion: 1,
-    node: {
-      id: value.nodeId,
-      purpose: value.purpose,
-      ...value.tags ? { tags: value.tags } : {}
-    },
-    provides
-  };
-  const compatibility = {
-    sourceVersion: "0.2.0",
-    bindings,
-    ...value.agents ? { agents: value.agents } : {},
-    ...Object.keys(privateMetadata).length > 0 ? { privateMetadata } : {}
-  };
-  return { manifest, compatibility, diagnostics };
-}
-function validateLegacyAgentTools(nodeId, agentName, tools) {
-  if (tools === void 0) return;
-  if (!Array.isArray(tools)) throw new Error(`Manifest ${nodeId} agent ${agentName} tools must be an array of tool names.`);
-  const seen = /* @__PURE__ */ new Set();
-  for (const tool of tools) {
-    if (typeof tool !== "string" || !tool.trim() || tool !== tool.trim()) {
-      throw new Error(`Manifest ${nodeId} agent ${agentName} tools must contain non-empty, unpadded tool names.`);
-    }
-    if (seen.has(tool)) throw new Error(`Manifest ${nodeId} agent ${agentName} tools contains duplicate tool ${JSON.stringify(tool)}.`);
-    seen.add(tool);
-  }
-}
-function mapLegacyEffects(effects, path, diagnostics) {
-  if (!effects?.length) return [];
-  const mapped = /* @__PURE__ */ new Set();
-  for (const effect of effects) {
-    if (STANDARD_EFFECT_SET.has(effect)) {
-      mapped.add(effect);
-      continue;
-    }
-    const known = LEGACY_EFFECTS[effect];
-    if (known) {
-      for (const item of known) mapped.add(item);
-      diagnostics.push({ code: "LEGACY_EFFECT_MAPPED", path, message: `A legacy effect was mapped to the standard effect vocabulary` });
-      continue;
-    }
-    for (const item of ALL_EFFECTS) mapped.add(item);
-    diagnostics.push({
-      code: "LEGACY_EFFECT_CONSERVATIVE",
-      path,
-      message: "An unknown legacy effect was conservatively mapped to all standard effects"
-    });
-  }
-  return STANDARD_EFFECTS.filter((effect) => mapped.has(effect));
-}
-function validateLegacyProtocolAccessPolicy(nodeId, agentName, value) {
-  if (value === void 0) return;
-  if (!isPlainObject(value)) throw new Error(`Manifest ${nodeId} agent ${agentName} protocolAccess must be an object`);
-  rejectUnknownKeys(value, /* @__PURE__ */ new Set(["allowedTargets", "deniedTargets"]), `manifest.agents.${agentName}.protocolAccess`);
-  for (const field of ["allowedTargets", "deniedTargets"]) {
-    const targets = value[field];
-    if (targets === void 0) continue;
-    if (!Array.isArray(targets) || targets.some((target) => typeof target !== "string" || !/^[a-z0-9][a-z0-9_-]*\.[a-z0-9][a-z0-9_-]*$/.test(target))) {
-      throw new Error(`Manifest ${nodeId} agent ${agentName} protocolAccess.${field} must contain exact node.provide targets`);
-    }
-    if (new Set(targets).size !== targets.length) throw new Error(`Manifest ${nodeId} agent ${agentName} protocolAccess.${field} contains a duplicate target`);
-  }
-}
-function validateModelHintShape(value, agentName) {
-  if (value === void 0) return;
-  if (!isPlainObject(value)) throw new Error(`Manifest agent ${agentName} modelHint must be an object`);
-  rejectUnknownKeys(value, MODEL_HINT_KEYS, `manifest.agents.${agentName}.modelHint`);
-  if (value.tier !== void 0 && !["fast", "balanced", "reasoning"].includes(String(value.tier))) throw new Error(`Manifest agent ${agentName} modelHint.tier is invalid`);
-  optionalString(value.specific, `manifest agent ${agentName} modelHint.specific`);
-  optionalString(value.provider, `manifest agent ${agentName} modelHint.provider`);
-  if (value.thinkingLevel !== void 0 && !["off", "minimal", "low", "medium", "high", "xhigh"].includes(String(value.thinkingLevel))) throw new Error(`Manifest agent ${agentName} modelHint.thinkingLevel is invalid`);
-}
-function validateDisplayShape(value, path) {
-  if (value === void 0) return;
-  if (!isPlainObject(value)) throw new Error(`${path} must be an object`);
-  rejectUnknownKeys(value, DISPLAY_KEYS, path);
-  for (const key of DISPLAY_KEYS) optionalString(value[key], `${path}.${key}`);
-  for (const key of ["accentHex", "outputHex", "urlHex"]) {
-    if (value[key] !== void 0 && !/^#[0-9a-fA-F]{6}$/.test(value[key])) throw new Error(`${path}.${key} must be strict #RRGGBB`);
-  }
-}
-function validatePolicyShape(value, provideName) {
-  if (value === void 0) return;
-  if (!isPlainObject(value)) throw new Error(`Manifest provide ${provideName} policy must be an object`);
-  rejectUnknownKeys(value, POLICY_KEYS, `manifest provide ${provideName} policy`);
-  if (value.confirmation !== void 0 && value.confirmation !== "free" && value.confirmation !== "required") throw new Error(`Manifest provide ${provideName} policy.confirmation is invalid`);
-  optionalStringArray(value.blacklistedCallers, `manifest provide ${provideName} policy.blacklistedCallers`);
-}
-function validateSettingsShape(value) {
-  if (value === void 0) return;
-  if (!isPlainObject(value)) throw new Error("manifest.settings must be an object");
-  for (const [name2, setting] of Object.entries(value)) {
-    if (!isPlainObject(setting)) throw new Error(`manifest.settings.${name2} must be an object`);
-    rejectUnknownKeys(setting, SETTING_KEYS, `manifest.settings.${name2}`);
-    if (!["string", "boolean", "number", "integer"].includes(String(setting.type))) throw new Error(`manifest.settings.${name2}.type is invalid`);
-    optionalString(setting.label, `manifest.settings.${name2}.label`);
-    optionalString(setting.description, `manifest.settings.${name2}.description`);
-    if (setting.enum !== void 0 && (!Array.isArray(setting.enum) || setting.enum.some((item) => typeof item !== "string"))) throw new Error(`manifest.settings.${name2}.enum must be a string array`);
-    if (setting.minimum !== void 0 && typeof setting.minimum !== "number") throw new Error(`manifest.settings.${name2}.minimum must be a number`);
-    if (setting.maximum !== void 0 && typeof setting.maximum !== "number") throw new Error(`manifest.settings.${name2}.maximum must be a number`);
-  }
-}
-function validateUiShape(value) {
-  if (value === void 0) return;
-  if (!isPlainObject(value)) throw new Error("manifest.ui must be an object");
-  rejectUnknownKeys(value, /* @__PURE__ */ new Set(["agentColors"]), "manifest.ui");
-  if (value.agentColors !== void 0 && (!isPlainObject(value.agentColors) || Object.values(value.agentColors).some((color) => typeof color !== "string"))) {
-    throw new Error("manifest.ui.agentColors must be a string map");
-  }
-}
-function validateInstructionShape(value, agentName) {
-  if (!isPlainObject(value)) throw new Error(`Manifest agent ${agentName} systemPrompt must be an object`);
-  const unknown = Object.keys(value).filter((key) => !["text", "file", "mode"].includes(key));
-  if (unknown.length) throw new Error(`Manifest agent ${agentName} systemPrompt has unknown field ${unknown[0]}`);
-  const hasText = typeof value.text === "string";
-  const hasFile = typeof value.file === "string";
-  if (hasText === hasFile) throw new Error(`Manifest agent ${agentName} systemPrompt must specify exactly one of "text" or "file"`);
-  if (value.mode !== void 0 && value.mode !== "append" && value.mode !== "replace") throw new Error(`Manifest agent ${agentName} systemPrompt.mode must be append or replace`);
-}
-function validateSchemaShape(value, path) {
-  if (!isPlainObject(value)) throw new Error(`${path} must be a JsonSchemaLite object`);
-  rejectUnknownKeys(value, SCHEMA_KEYS, path);
-  if (value.type !== void 0 && (typeof value.type !== "string" || !SCHEMA_TYPES.has(value.type))) throw new Error(`${path}.type is unsupported`);
-  if (value.required !== void 0 && (!Array.isArray(value.required) || value.required.some((item) => typeof item !== "string"))) throw new Error(`${path}.required must be a string array`);
-  if (value.properties !== void 0) {
-    if (!isPlainObject(value.properties)) throw new Error(`${path}.properties must be an object`);
-    for (const [name2, schema] of Object.entries(value.properties)) validateSchemaShape(schema, `${path}.properties.${name2}`);
-  }
-  if (value.items !== void 0) validateSchemaShape(value.items, `${path}.items`);
-  if (value.enum !== void 0 && !Array.isArray(value.enum)) throw new Error(`${path}.enum must be an array`);
-  if (value.description !== void 0 && typeof value.description !== "string") throw new Error(`${path}.description must be a string`);
-}
-function rejectUnknownKeys(value, allowed, path) {
-  const unknown = Object.keys(value).find((key) => !allowed.has(key));
-  if (unknown) throw new Error(`${path} uses unsupported field ${unknown}`);
-}
-function assertName(value, path) {
-  if (typeof value !== "string" || !NAME_PATTERN.test(value)) throw new Error(`${path} must use lowercase letters, numbers, underscores, or dashes`);
-}
-function assertNonEmptyString(value, path) {
-  if (typeof value !== "string" || !value.trim()) throw new Error(`${path} must be a non-empty string`);
-}
-function optionalString(value, path) {
-  if (value !== void 0 && typeof value !== "string") throw new Error(`${path} must be a string`);
-}
-function optionalStringArray(value, path) {
-  if (value !== void 0 && (!Array.isArray(value) || value.some((item) => typeof item !== "string"))) throw new Error(`${path} must be a string array`);
-}
-function isPlainObject(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 // packages/pi-protocol/contract/json.ts
 import { types as utilTypes } from "node:util";
 function parseJsonSource(source, limits) {
@@ -8144,50 +7858,15 @@ function parseProtocolManifest(source, options = {}) {
   if (!isRecord(value)) {
     throw new ProtocolContractError("MANIFEST_INVALID", "Protocol manifest must be a JSON object");
   }
-  if (Object.hasOwn(value, "schemaVersion")) {
-    if (value.schemaVersion !== 1) {
-      throw new ProtocolContractError("UNSUPPORTED_VERSION", "Protocol manifest schemaVersion is not supported");
-    }
-    assertCanonicalManifest(value, limits);
-    return createDefinition(value, 1, [], void 0, limits);
+  if (value.schemaVersion !== 1) {
+    throw new ProtocolContractError("UNSUPPORTED_VERSION", "Protocol manifest schemaVersion is not supported");
   }
-  if (value.protocolVersion === "0.2.0") {
-    if (options.allowLegacyV02 === false) {
-      throw new ProtocolContractError("UNSUPPORTED_VERSION", "Protocol manifest v0.2 compatibility is disabled");
-    }
-    let decoded;
-    try {
-      decoded = decodeLegacyProtocolManifest(value);
-    } catch {
-      throw new ProtocolContractError(
-        "MANIFEST_INVALID",
-        "Legacy protocol manifest is invalid",
-        [{ path: "", keyword: "legacyV02", message: "legacy manifest failed compatibility validation" }]
-      );
-    }
-    const canonicalValue = assertBoundedJsonValue(decoded.manifest, limits);
-    assertCanonicalManifest(canonicalValue, limits);
-    return createDefinition(
-      canonicalValue,
-      "0.2.0",
-      decoded.diagnostics.slice(0, limits.maxDiagnostics),
-      decoded.compatibility,
-      limits
-    );
-  }
-  throw new ProtocolContractError("UNSUPPORTED_VERSION", "Protocol manifest version is not supported");
-}
-function createDefinition(manifestValue, sourceSchemaVersion, diagnostics, compatibility, limits) {
-  const manifest = normalizeJsonValue(manifestValue);
-  const normalizedCompatibility = compatibility ? normalizeJsonValue(compatibility) : void 0;
-  const normalizedDiagnostics = Object.freeze(diagnostics.map((item) => Object.freeze({ ...item })));
+  assertCanonicalManifest(value, limits);
+  const manifest = normalizeJsonValue(value);
   const definition = {
     manifest,
     contractDigest: fingerprintProtocolManifest(manifest),
-    sourceSchemaVersion,
-    provides: compileProvideContracts(manifest, limits),
-    diagnostics: normalizedDiagnostics,
-    ...normalizedCompatibility ? { compatibility: normalizedCompatibility } : {}
+    provides: compileProvideContracts(manifest, limits)
   };
   markAdmittedProtocolDefinition(definition);
   return Object.freeze(definition);
@@ -8195,6 +7874,21 @@ function createDefinition(manifestValue, sourceSchemaVersion, diagnostics, compa
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+// packages/pi-protocol/contract/types.ts
+var STANDARD_EFFECTS = [
+  "fs.read",
+  "fs.write",
+  "db.read",
+  "db.write",
+  "network.read",
+  "network.send",
+  "process.spawn",
+  "model.call",
+  "protocol.invoke",
+  "external.transaction",
+  "system.configure"
+];
 
 // packages/pi-protocol/sdk/agent-profile.ts
 import { readFileSync, realpathSync, statSync } from "node:fs";
@@ -8366,11 +8060,8 @@ function checkProtocolPackage(packageDir, options = {}) {
     issues.push(issue("error", "PACKAGE_INVALID", directory, message(error)));
   }
   let definition;
-  let compatibility = [];
   try {
-    definition = parseProtocolManifest(readBounded(join(directory, "pi.protocol.json"), 1048576), { allowLegacyV02: options.allowLegacy ?? false });
-    compatibility = definition.diagnostics;
-    if (compatibility.length) issues.push(issue("warning", "LEGACY_MANIFEST", directory, "Legacy v0.2 manifest is deprecated"));
+    definition = parseProtocolManifest(readBounded(join(directory, "pi.protocol.json"), 1048576));
   } catch (error) {
     issues.push(issue("error", statSafe(join(directory, "pi.protocol.json")) ? "MANIFEST_INVALID" : "MANIFEST_MISSING", directory, message(error)));
   }
@@ -8404,7 +8095,6 @@ function checkProtocolPackage(packageDir, options = {}) {
     packageDir: directory,
     ...typeof packageJson?.name === "string" ? { packageName: packageJson.name } : {},
     ...definition ? { definition } : {},
-    compatibility: Object.freeze([...compatibility]),
     issues: Object.freeze(issues),
     ok: !issues.some((entry) => entry.severity === "error")
   });
@@ -8451,7 +8141,7 @@ function configuredGeneratedPath(packageJson, directory) {
 }
 function compatibleDependency(range) {
   const value = range.trim();
-  return /^(?:file:|link:|workspace:)/.test(value) || /^https:\/\/github\.com\/Kybernetria\/pi-protocol\/releases\/download\/v3\.\d+\.\d+\/.+\.tgz$/.test(value) || /(?:^|[<>=~^|\s])3(?:\.\d+)?(?:\.\d+)?/.test(value);
+  return /^(?:file:|link:|workspace:)/.test(value) || /^https:\/\/github\.com\/Kybernetria\/pi-protocol\/releases\/download\/v4\.\d+\.\d+\/.+\.tgz$/.test(value) || /(?:^|[<>=~^|\s])4(?:\.\d+)?(?:\.\d+)?/.test(value);
 }
 function readBounded(path, maxBytes) {
   const stat = statSync2(path);
@@ -8491,15 +8181,14 @@ function message(error) {
 // packages/pi-protocol/cli/check.ts
 async function runCheckCli(argv2 = process.argv.slice(2)) {
   const recursive = argv2.includes("--recursive");
-  const allowLegacy = argv2.includes("--allow-legacy");
   const json = argv2.includes("--json");
   const paths = argv2.filter((arg) => !arg.startsWith("--"));
   const targets = paths.length ? paths : [process.cwd()];
   const results = [];
   for (const target of targets) {
     const path = resolve3(target);
-    if (recursive) results.push(...await checkProtocolTree(path, { allowLegacy }));
-    else results.push(checkProtocolPackage(path, { allowLegacy }));
+    if (recursive) results.push(...await checkProtocolTree(path));
+    else results.push(checkProtocolPackage(path));
   }
   if (json) console.log(JSON.stringify({ schemaVersion: 1, results }, null, 2));
   else for (const result of results) {
@@ -8519,7 +8208,7 @@ import { createHash as createHash2 } from "node:crypto";
 // packages/pi-protocol/package.json
 var package_default = {
   name: "@kybernetria/pi-protocol",
-  version: "3.0.3",
+  version: "4.0.0",
   description: "Pi Protocol \u2014 shared in-memory fabric with handler/agent execution, protocol tool, and pi SDK adapter",
   type: "module",
   main: "./index.ts",
@@ -8537,11 +8226,7 @@ var package_default = {
     "./provenance": "./provenance/index.ts",
     "./conformance": "./conformance/index.ts",
     "./pi": "./tool/index.ts",
-    "./pi/agents": "./sdk/agent-session.ts",
-    "./tool": "./tool/index.ts",
-    "./sdk": "./sdk/index.ts",
-    "./sdk/agent-session": "./sdk/agent-session.ts",
-    "./sdk/agent-profile": "./sdk/agent-profile.ts"
+    "./pi/agents": "./sdk/agent-session.ts"
   },
   files: [
     "*.ts",
@@ -8576,13 +8261,13 @@ var package_default = {
   peerDependencies: {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
-    "@mariozechner/pi-ai": "*"
+    "@earendil-works/pi-ai": "*"
   },
   peerDependenciesMeta: {
     "@earendil-works/pi-coding-agent": {
       optional: true
     },
-    "@mariozechner/pi-ai": {
+    "@earendil-works/pi-ai": {
       optional: true
     },
     "@earendil-works/pi-tui": {
@@ -9174,7 +8859,7 @@ async function executeAdmittedProvide(input) {
     ...controlled,
     session: input.request.session,
     abortSignal: controlled.signal ?? input.request.abortSignal,
-    emitRuntimeEvent: input.emitRuntimeEvent
+    emitExecutionEvent: input.emitExecutionEvent
   };
   try {
     const output = await input.binding(input.request.input, context);
@@ -9202,14 +8887,10 @@ function isAbortError(error) {
 }
 
 // packages/pi-protocol/fabric.ts
-var FABRIC_KEY = /* @__PURE__ */ Symbol.for("pi-protocol.minimal.fabric");
-var FABRIC_VERSION_KEY = /* @__PURE__ */ Symbol.for("pi-protocol.minimal.fabric.version");
-var FABRIC_VERSION = 9;
+var FABRIC_VERSION_KEY = /* @__PURE__ */ Symbol.for("@kybernetria/pi-protocol.fabric.abi");
+var FABRIC_VERSION = 10;
 var HOST_ABI_KEY = /* @__PURE__ */ Symbol.for("@kybernetria/pi-protocol.host.v1");
-var HOST_ABI_VERSION = 1;
-var MAX_REGISTRATION_EVENTS = 1024;
-var INPUT_PREVIEW_MAX_CHARS = 2e4;
-var OUTPUT_PREVIEW_MAX_CHARS = 4e4;
+var HOST_ABI_VERSION = 2;
 function createProtocolFabric(options = {}) {
   const nodes = /* @__PURE__ */ new Map();
   const searchCatalog = /* @__PURE__ */ new Map();
@@ -9222,12 +8903,7 @@ function createProtocolFabric(options = {}) {
     nodes.delete(nodeId);
     searchCatalog.delete(nodeId);
   };
-  let provenanceRecorder;
-  let runtimeEventRecorder;
-  const provenanceSubscribers = /* @__PURE__ */ new Set();
-  const runtimeEventSubscribers = /* @__PURE__ */ new Set();
-  const registrationSubscribers = /* @__PURE__ */ new Set();
-  const registrationEvents = [];
+  const executionSubscribers = /* @__PURE__ */ new Set();
   const audit = new AuditLedger(options.audit);
   const principals = /* @__PURE__ */ new WeakSet();
   const systemPrincipal = mintProtocolPrincipal("system:local", "system");
@@ -9239,33 +8915,18 @@ function createProtocolFabric(options = {}) {
   );
   const confirmationEffects = new Set(options.confirmationRequiredEffects ?? ["external.transaction", "system.configure"]);
   const emitRegistration = (event) => {
-    const snapshot = freezeSnapshot({
-      ...event,
-      ...event.metadata ? { metadata: { ...event.metadata } } : {},
-      ...event.error ? { error: { ...event.error } } : {}
-    });
-    registrationEvents.push(snapshot);
     audit.registration({
-      type: snapshot.type,
-      occurredAt: snapshot.timestamp,
-      registrationId: snapshot.registrationId,
-      nodeId: snapshot.nodeId,
-      generation: snapshot.generation,
-      contractDigest: snapshot.contractDigest,
-      previousContractDigest: snapshot.previousContractDigest,
-      packageId: snapshot.metadata?.packageId,
-      packageVersion: snapshot.metadata?.packageVersion,
-      outcomeCode: snapshot.error?.code
+      type: event.type,
+      occurredAt: event.timestamp,
+      registrationId: event.registrationId,
+      nodeId: event.nodeId,
+      generation: event.generation,
+      contractDigest: event.contractDigest,
+      previousContractDigest: event.previousContractDigest,
+      packageId: event.metadata?.packageId,
+      packageVersion: event.metadata?.packageVersion,
+      outcomeCode: event.error?.code
     });
-    if (registrationEvents.length > MAX_REGISTRATION_EVENTS) registrationEvents.shift();
-    for (const recorder of registrationSubscribers) {
-      queueMicrotask(() => {
-        try {
-          void Promise.resolve(recorder(snapshot)).catch(() => void 0);
-        } catch {
-        }
-      });
-    }
   };
   const prepareAtomicRegistration = (definition, bindings, registrationId, generation, metadata) => {
     if (!isAdmittedProtocolDefinition(definition)) throw registrationError("INVALID_DEFINITION", "Definition was not admitted by the canonical contract parser");
@@ -9325,7 +8986,7 @@ function createProtocolFabric(options = {}) {
       disposeBindings: bindings.dispose
     };
   };
-  const performAuditedInvocation = async (request, waitForOutcome) => {
+  const performAuditedInvocation = async (request) => {
     try {
       request = snapshotInvokeRequest(request);
     } catch {
@@ -9338,8 +8999,6 @@ function createProtocolFabric(options = {}) {
     const canonicalSpanId = createId("span");
     const safeTarget = validTargetPart(request.nodeId) && validTargetPart(request.provide) ? `${request.nodeId}.${request.provide}` : "invalid.invalid";
     const receipt = audit.createReceipt({ traceId: canonicalTraceId, spanId: canonicalSpanId, target: safeTarget });
-    const compatibilityProvenance = createInvocationProvenance(request);
-    const compatibilityStartedAt = Date.now();
     let releaseSlot;
     let releaseControlSignal;
     const reject = (code, message2) => {
@@ -9349,9 +9008,6 @@ function createProtocolFabric(options = {}) {
       releaseControlSignal = void 0;
       audit.reject(receipt, code);
       const error = { code, message: message2 };
-      const preview = createInputPreview(request.input);
-      recordProvenance(provenanceRecorder, provenanceSubscribers, { ...compatibilityProvenance, status: "started", ...preview });
-      recordProvenance(provenanceRecorder, provenanceSubscribers, { ...compatibilityProvenance, status: code === "CANCELLED" ? "aborted" : "failed", durationMs: Date.now() - compatibilityStartedAt, ...preview, error });
       const result = { ok: false, error };
       return audit.trackedResult(result, receipt);
     };
@@ -9448,7 +9104,7 @@ function createProtocolFabric(options = {}) {
     let controlState;
     const invokeChild = async (target, input, childOptions) => {
       const parsed = parseTarget(target);
-      if (!parsed || !validChildOptions(childOptions)) return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input }, false);
+      if (!parsed || !validChildOptions(childOptions)) return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input });
       const childGrant = intersectGrant(grant, childOptions?.grant);
       const childDeadline = Math.min(deadline, childOptions?.deadline ?? deadline);
       const childCombined = combineInvocationSignals(combined.signal, childOptions?.signal, childDeadline);
@@ -9463,7 +9119,7 @@ function createProtocolFabric(options = {}) {
       };
       const resume = controlState.suspendConcurrency ? await controlState.suspendConcurrency() : async () => void 0;
       try {
-        return await runWithInvocationControl(seed, () => performAuditedInvocation({ nodeId: parsed.nodeId, provide: parsed.provide, input, abortSignal: childCombined.signal }, false));
+        return await runWithInvocationControl(seed, () => performAuditedInvocation({ nodeId: parsed.nodeId, provide: parsed.provide, input, abortSignal: childCombined.signal }));
       } finally {
         childCombined.dispose();
         await resume();
@@ -9520,7 +9176,6 @@ function createProtocolFabric(options = {}) {
       release();
       return audit.trackedResult(result, receipt);
     });
-    if (waitForOutcome) return settled;
     let removeAbort = () => void 0;
     const cancellation = new Promise((resolve5) => {
       const onAbort = () => resolve5("cancel");
@@ -9539,57 +9194,32 @@ function createProtocolFabric(options = {}) {
   };
   const executePinned = async (registered, provide, request) => {
     const provenance = {
-      ...createInvocationProvenance(request),
-      ...registered.registrationId ? { registrationId: registered.registrationId } : {},
-      ...registered.generation !== void 0 ? { registrationGeneration: registered.generation } : {},
-      ...registered.contractDigest ? { contractDigest: registered.contractDigest } : {}
+      traceId: request.traceId ?? createId("trace"),
+      spanId: request.spanId ?? createId("span"),
+      parentSpanId: request.parentSpanId,
+      callerNodeId: request.callerNodeId,
+      registrationId: registered.registrationId,
+      registrationGeneration: registered.generation,
+      contractDigest: registered.contractDigest
     };
-    const inputPreview = createInputPreview(request.input);
-    const startedAt = Date.now();
-    recordProvenance(provenanceRecorder, provenanceSubscribers, { ...provenance, status: "started", ...inputPreview });
     const canonicalProvide = registered.definition.provides[request.provide];
     const canonicalBinding = registered.bindingsByProvide[request.provide];
-    const result = await runWithProtocolInvocationContext(
+    return runWithProtocolInvocationContext(
       request,
       provenance,
-      () => executeAdmittedProvide({ request, provenance, provide: canonicalProvide, binding: canonicalBinding, emitRuntimeEvent: createRuntimeEventEmitter(runtimeEventRecorder, runtimeEventSubscribers) })
+      () => executeAdmittedProvide({ request, provenance, provide: canonicalProvide, binding: canonicalBinding, emitExecutionEvent: createExecutionEventEmitter(executionSubscribers) })
     );
-    await recordProvenance(provenanceRecorder, provenanceSubscribers, {
-      ...provenance,
-      status: result.ok ? "succeeded" : result.error.code === "CANCELLED" ? "aborted" : "failed",
-      durationMs: Date.now() - startedAt,
-      ...inputPreview,
-      ...result.ok ? createOutputPreview(result.output) : { error: result.error }
-    });
-    return result;
   };
   const fabric = {
-    setProvenanceRecorder(recorder) {
-      provenanceRecorder = recorder;
-    },
-    subscribeProvenanceRecorder(recorder) {
-      provenanceSubscribers.add(recorder);
-      return createUnsubscribe(provenanceSubscribers, recorder);
-    },
-    setRuntimeEventRecorder(recorder) {
-      runtimeEventRecorder = recorder;
-    },
-    subscribeRuntimeEventRecorder(recorder) {
-      runtimeEventSubscribers.add(recorder);
-      return createUnsubscribe(runtimeEventSubscribers, recorder);
-    },
-    subscribeRegistrationProvenanceRecorder(recorder) {
-      registrationSubscribers.add(recorder);
-      return createUnsubscribe(registrationSubscribers, recorder);
-    },
-    registrationProvenance() {
-      return freezeSnapshot(registrationEvents.map((event) => ({ ...event })));
-    },
     subscribeAudit(observer) {
       return audit.subscribe(observer);
     },
     subscribeProgress(observer) {
       return audit.subscribeProgress(observer);
+    },
+    subscribeExecution(observer) {
+      executionSubscribers.add(observer);
+      return createUnsubscribe(executionSubscribers, observer);
     },
     auditDiagnostics() {
       return audit.diagnostics();
@@ -9618,7 +9248,7 @@ function createProtocolFabric(options = {}) {
       return audit.causal(invocationId, authority, lookupOptions);
     },
     invokeTracked(request) {
-      return performAuditedInvocation(request, false);
+      return performAuditedInvocation(request);
     },
     mintPrincipal(id, kind) {
       const principal = mintProtocolPrincipal(id, kind);
@@ -9627,15 +9257,15 @@ function createProtocolFabric(options = {}) {
     },
     invokeAs(principal, target, input, invokeOptions) {
       if (!isProtocolPrincipal(principal) || !principals.has(principal)) {
-        return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input }, false);
+        return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input });
       }
       const parsed = parseTarget(target);
       if (!parsed || !validGrant(invokeOptions?.grant)) {
-        return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input }, false);
+        return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input });
       }
       const grant = intersectGrant(Object.freeze({ targets: Object.freeze(["*"]), maxDepth: 32, maxInvocations: 1024 }), invokeOptions.grant);
       const requestedDeadline = invokeOptions.deadline ?? Date.now() + defaultDeadlineMs;
-      if (!Number.isFinite(requestedDeadline)) return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input }, false);
+      if (!Number.isFinite(requestedDeadline)) return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input });
       const deadline = Math.min(requestedDeadline, Date.now() + 3e5);
       const combined = combineInvocationSignals(invokeOptions.signal, void 0, deadline);
       const rootBudget = { remainingInvocations: grant.maxInvocations ?? 64 };
@@ -9656,7 +9286,7 @@ function createProtocolFabric(options = {}) {
         provide: parsed.provide,
         input,
         abortSignal: combined.signal
-      }, false)).finally(combined.dispose);
+      })).finally(combined.dispose);
     },
     install(definition, bindings, metadata) {
       const registrationId = createId("registration");
@@ -9813,9 +9443,6 @@ function createProtocolFabric(options = {}) {
         nodeId: node.nodeId,
         globalId: `${node.nodeId}.${provide.name}`
       });
-    },
-    async invoke(request) {
-      return (await performAuditedInvocation(request, true)).result;
     }
   };
   Object.defineProperty(fabric, FABRIC_VERSION_KEY, { value: FABRIC_VERSION });
@@ -9826,24 +9453,15 @@ function ensureProtocolFabric(options = {}) {
   const host = globals[HOST_ABI_KEY];
   if (host !== void 0) {
     if (!isCompatibleHost(host)) throw new Error("Incompatible Pi Protocol host ABI is already installed");
-    const legacyAnchor2 = globals[FABRIC_KEY];
-    if (legacyAnchor2 === void 0) globals[FABRIC_KEY] = host.fabric;
-    else if (legacyAnchor2 !== host.fabric) throw new Error("Split Pi Protocol fabrics detected");
     recordRuntimeCopy(host);
     return host.fabric;
   }
-  const legacyAnchor = globals[FABRIC_KEY];
-  if (legacyAnchor !== void 0 && !isCompatibleProtocolFabric(legacyAnchor)) {
-    throw new Error("Incompatible live Pi Protocol fabric cannot be replaced");
-  }
-  const fabric = legacyAnchor ?? createProtocolFabric(options);
-  const createdHost = {
+  const fabric = createProtocolFabric(options);
+  globals[HOST_ABI_KEY] = {
     abiVersion: HOST_ABI_VERSION,
     fabric,
     runtimeCopies: [{ moduleUrl: import.meta.url, packageVersion: package_default.version }]
   };
-  globals[HOST_ABI_KEY] = createdHost;
-  globals[FABRIC_KEY] = fabric;
   return fabric;
 }
 function getProtocolHostDiagnostics() {
@@ -9852,7 +9470,7 @@ function getProtocolHostDiagnostics() {
   return freezeSnapshot({ abiVersion: host.abiVersion, runtimeCopies: host.runtimeCopies.map((copy) => ({ ...copy })) });
 }
 function isCompatibleProtocolFabric(value) {
-  return Boolean(value) && value[FABRIC_VERSION_KEY] === FABRIC_VERSION && typeof value?.setProvenanceRecorder === "function" && typeof value.subscribeProvenanceRecorder === "function" && typeof value.setRuntimeEventRecorder === "function" && typeof value.subscribeRuntimeEventRecorder === "function" && typeof value.subscribeRegistrationProvenanceRecorder === "function" && typeof value.registrationProvenance === "function" && typeof value.subscribeAudit === "function" && typeof value.subscribeProgress === "function" && typeof value.auditDiagnostics === "function" && typeof value.diagnostics === "function" && typeof value.getReceipt === "function" && typeof value.lookupCausalProvenance === "function" && typeof value.invokeTracked === "function" && typeof value.mintPrincipal === "function" && typeof value.invokeAs === "function" && typeof value.install === "function" && !("register" in value) && !("unregister" in value) && typeof value.registry === "function" && typeof value.search === "function" && typeof value.describeNode === "function" && typeof value.describeProvide === "function" && typeof value.invoke === "function";
+  return Boolean(value) && value[FABRIC_VERSION_KEY] === FABRIC_VERSION && typeof value?.subscribeAudit === "function" && typeof value.subscribeProgress === "function" && typeof value.subscribeExecution === "function" && typeof value.auditDiagnostics === "function" && typeof value.diagnostics === "function" && typeof value.getReceipt === "function" && typeof value.lookupCausalProvenance === "function" && typeof value.invokeTracked === "function" && typeof value.mintPrincipal === "function" && typeof value.invokeAs === "function" && typeof value.install === "function" && !("register" in value) && !("unregister" in value) && typeof value.registry === "function" && typeof value.search === "function" && typeof value.describeNode === "function" && typeof value.describeProvide === "function";
 }
 function isCompatibleHost(value) {
   return Boolean(value) && value?.abiVersion === HOST_ABI_VERSION && Array.isArray(value.runtimeCopies) && isCompatibleProtocolFabric(value.fabric);
@@ -10053,69 +9671,21 @@ function safeDefinitionDigest(definition) {
     return void 0;
   }
 }
-function createInvocationProvenance(request) {
-  return {
-    traceId: request.traceId ?? createId("trace"),
-    spanId: request.spanId ?? createId("span"),
-    ...request.parentSpanId ? { parentSpanId: request.parentSpanId } : {},
-    ...request.callerNodeId ? { callerNodeId: request.callerNodeId } : {},
-    nodeId: request.nodeId,
-    provide: request.provide,
-    ...request.session ? { session: request.session } : {}
-  };
-}
-function recordProvenance(recorder, subscribers, event) {
-  recordAll(recorder, subscribers, event);
-}
-function createRuntimeEventEmitter(recorder, subscribers) {
-  if (!recorder && subscribers.size === 0) return void 0;
+function createExecutionEventEmitter(subscribers) {
+  if (subscribers.size === 0) return void 0;
   return async (event) => {
-    recordAll(recorder, subscribers, event);
-  };
-}
-function recordAll(recorder, subscribers, event) {
-  const recorders = [recorder, ...subscribers].filter((item) => Boolean(item));
-  for (const nextRecorder of recorders) {
-    try {
-      void Promise.resolve(nextRecorder(event)).catch(() => void 0);
-    } catch {
+    for (const observer of subscribers) {
+      try {
+        void Promise.resolve(observer(event)).catch(() => void 0);
+      } catch {
+      }
     }
-  }
+  };
 }
 function createUnsubscribe(subscribers, recorder) {
   return () => {
     subscribers.delete(recorder);
   };
-}
-function createInputPreview(input) {
-  const preview = createPreview(input, INPUT_PREVIEW_MAX_CHARS);
-  return {
-    inputPreview: preview.preview,
-    inputTruncated: preview.truncated
-  };
-}
-function createOutputPreview(output) {
-  const preview = createPreview(output, OUTPUT_PREVIEW_MAX_CHARS);
-  return {
-    outputPreview: preview.preview,
-    outputTruncated: preview.truncated
-  };
-}
-function createPreview(value, maxChars) {
-  const text = stringifyPreviewValue(value);
-  if (text.length <= maxChars) {
-    return { preview: text, truncated: false };
-  }
-  return { preview: text.slice(0, maxChars), truncated: true };
-}
-function stringifyPreviewValue(value) {
-  if (typeof value === "string") return value;
-  try {
-    const serialized = JSON.stringify(value);
-    return serialized === void 0 ? String(value) : serialized;
-  } catch {
-    return String(value);
-  }
 }
 function buildSearchCatalog(node) {
   return Object.freeze(node.provides.map((provide, provideIndex) => Object.freeze({
@@ -10253,7 +9823,7 @@ async function runGenerateCli(argv2 = process.argv.slice(2)) {
   const packageJson = JSON.parse(readBounded2(join2(packageDir, "package.json"), 1048576));
   const outputArg = option(argv2, "--output") ?? packageJson.piProtocol?.generated ?? "protocol.generated.ts";
   const output = contained(packageDir, outputArg);
-  const definition = parseProtocolManifest(readBounded2(join2(packageDir, "pi.protocol.json"), 1048576), { allowLegacyV02: false });
+  const definition = parseProtocolManifest(readBounded2(join2(packageDir, "pi.protocol.json"), 1048576));
   const generated = generateProtocolTypes(definition);
   if (check) {
     let actual = "";

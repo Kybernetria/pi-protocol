@@ -1,4 +1,4 @@
-import { Type } from "@mariozechner/pi-ai";
+import { Type } from "@earendil-works/pi-ai";
 import type { ProtocolFabric } from "../types.ts";
 import { handleProtocolToolInput, normalizeProtocolToolInput } from "./actions.ts";
 import { renderProtocolCall, renderProtocolViewModel } from "./renderer.ts";

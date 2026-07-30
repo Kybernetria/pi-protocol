@@ -61,3 +61,21 @@ export interface ProgressEventV1 {
   readonly completed?: number;
   readonly total?: number;
 }
+
+/** Ephemeral executor telemetry. It is bounded, observer-only, and never added to the audit ledger. */
+export type ExecutionEventV1 =
+  | {
+      readonly schemaVersion: 1;
+      readonly type: "executor.session";
+      readonly traceId: string;
+      readonly spanId: string;
+      readonly model: string;
+      readonly thinkingLevel?: string;
+    }
+  | {
+      readonly schemaVersion: 1;
+      readonly type: "executor.output_delta";
+      readonly traceId: string;
+      readonly spanId: string;
+      readonly textDelta: string;
+    };

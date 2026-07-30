@@ -47,7 +47,7 @@ installTestNode(fabric, {
   handlers: { commit: async () => { effect = true; await gate; return {}; } },
 });
 
-const tool = createProtocolTool(fabric, { maxConcurrency: 1 });
+const tool = createProtocolTool(fabric);
 const parameterText = JSON.stringify(tool.parameters);
 assert(!parameterText.includes("request"));
 assert(!parameterText.includes("action"));
@@ -57,11 +57,10 @@ assert(!parameterText.includes("describe_node"));
 assert(!parameterText.includes("describe_provide"));
 assert(!parameterText.includes('"nodeId"'));
 assert(!parameterText.includes('"provide"'));
-const translated = tool.prepareArguments?.({
+assert.throws(() => tool.prepareArguments?.({
   action: "invoke",
-  request: { nodeId: "projection_01", provide: "provide_00", input: {}, callerNodeId: "forged", traceId: "forged" },
-});
-assert.deepEqual(translated, { op: "call", target: "projection_01.provide_00", input: {} });
+  request: { nodeId: "projection_01", provide: "provide_00", input: {} },
+}), /unsupported fields/);
 
 const first = await tool.execute("page-one", { op: "list" });
 const firstDetails = first.details as { schemaVersion: 1; nodes: unknown[]; nextCursor?: string };
@@ -81,41 +80,32 @@ const largeSchema = await tool.execute("large-schema", { op: "describe", target:
 assert.equal((largeSchema.details as { provide: { schemaTruncated: boolean } }).provide.schemaTruncated, true);
 assert((largeSchema.content[0]?.text.length ?? 0) < 70_000, "exact contract projection must have a hard output bound");
 
-const conflict = await tool.execute("bad-command", { op: "list", action: "invoke" });
+const conflict = await tool.execute("bad-command", { op: "list", action: "invoke" } as never);
 assert.deepEqual((conflict.details as { error: unknown }).error, { code: "INVALID_REQUEST", message: "Protocol tool request is invalid" });
 const badCursor = await tool.execute("bad-cursor", { op: "list", cursor: "../../secret" });
 assert.equal((badCursor.details as { error: { code: string } }).error.code, "INVALID_REQUEST");
 
-const legacyIdentity = await tool.execute("identity", {
-  action: "invoke",
-  request: {
-    nodeId: "projection_01",
-    provide: "provide_00",
-    input: {},
-    traceId: "model-forged-trace",
-    spanId: "model-forged-span",
-    callerNodeId: "model-forged-caller",
-  },
+const identity = await tool.execute("identity", {
+  target: "projection_01.provide_00",
+  input: {},
 });
-const identityDetails = legacyIdentity.details as {
+const identityDetails = identity.details as {
   schemaVersion: 1;
   op: "call";
   receipt: { schemaVersion: 1; invocationId: string };
-  trace: { events: Array<{ traceId: string; spanId: string; callerNodeId?: string; inputPreview?: string }> };
+  trace: { events: Array<{ traceId: string; spanId: string }> };
 };
 assert.equal(identityDetails.schemaVersion, 1);
 assert.equal(identityDetails.op, "call");
 assert.equal(identityDetails.receipt.schemaVersion, 1);
-assert.deepEqual(legacyIdentity.details, JSON.parse(JSON.stringify(legacyIdentity.details)), "persisted details must be strict JSON");
-assert(!JSON.stringify(legacyIdentity.details).includes('"registry"'));
-assert(!JSON.stringify(legacyIdentity.details).includes("executor_output_delta"), "streamed deltas must not persist in final details");
-const projected = projectProtocolViewModel(legacyIdentity, { target: "projection_01.provide_00", input: {} }, { expanded: true });
+assert.deepEqual(identity.details, JSON.parse(JSON.stringify(identity.details)), "persisted details must be strict JSON");
+assert(!JSON.stringify(identity.details).includes('"action"'));
+assert(!JSON.stringify(identity.details).includes("executor.output_delta"), "streamed deltas must not persist in final details");
+const projected = projectProtocolViewModel(identity, { target: "projection_01.provide_00", input: {} }, { expanded: true });
 assert(Object.isFrozen(projected));
 assert(Object.isFrozen(projected.trace));
-assert(identityDetails.trace.events.every((event) => event.traceId !== "model-forged-trace"));
-assert(identityDetails.trace.events.every((event) => event.spanId !== "model-forged-span"));
-assert(identityDetails.trace.events.every((event) => event.callerNodeId !== "model-forged-caller"));
-assert(identityDetails.trace.events.every((event) => event.inputPreview === undefined));
+assert(identityDetails.trace.events.every((event) => /^trace_/.test(event.traceId)));
+assert(identityDetails.trace.events.every((event) => /^span_/.test(event.spanId)));
 
 let updates = 0;
 const withFailingObserver = await tool.execute("observer", { target: "projection_01.provide_00", input: {} }, undefined, () => {
@@ -123,7 +113,7 @@ const withFailingObserver = await tool.execute("observer", { target: "projection
   throw new Error("observer failed");
 });
 assert.equal((withFailingObserver.details as { state: string }).state, "completed");
-assert(updates > 0);
+assert.equal(updates, 0, "plain handlers emit no synthetic execution updates");
 
 const controller = new AbortController();
 const pending = tool.execute("effect", { target: "projection_effect.commit", input: {} }, controller.signal);
