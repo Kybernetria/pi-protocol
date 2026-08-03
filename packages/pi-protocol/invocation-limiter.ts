@@ -1,11 +1,14 @@
+import { scheduleDeadline } from "./deadline-timer.ts";
+
 export class InvocationLimiter {
   private active = 0;
   private readonly queue: Array<{
     resolve: (release: () => void) => void;
     reject: (error: Error & { code: string }) => void;
     signal?: AbortSignal;
+    deadline: number;
     onAbort?: () => void;
-    timer?: ReturnType<typeof setTimeout>;
+    deadlineDisposer?: () => void;
   }> = [];
 
   constructor(private readonly maximum: number, private readonly maximumQueue: number) {}
@@ -19,23 +22,25 @@ export class InvocationLimiter {
     }
     if (this.queue.length >= this.maximumQueue) return Promise.reject(controlError("OVERLOADED", "Invocation queue is full"));
     return new Promise((resolve, reject) => {
-      const waiter = { resolve, reject, signal } as (typeof this.queue)[number];
+      const waiter = { resolve, reject, signal, deadline } as (typeof this.queue)[number];
       const remove = () => {
         const index = this.queue.indexOf(waiter);
         if (index >= 0) this.queue.splice(index, 1);
       };
       const cleanup = () => {
         remove();
-        if (waiter.timer) clearTimeout(waiter.timer);
+        waiter.deadlineDisposer?.();
         signal?.removeEventListener("abort", waiter.onAbort!);
       };
       waiter.onAbort = () => { cleanup(); reject(controlError("CANCELLED", "Invocation cancelled while waiting")); };
       signal?.addEventListener("abort", waiter.onAbort, { once: true });
-      waiter.timer = setTimeout(() => {
-        cleanup();
-        reject(controlError("DEADLINE_EXCEEDED", "Invocation deadline exceeded while waiting"));
-      }, Math.max(1, deadline - Date.now()));
       this.queue.push(waiter);
+      if (Number.isFinite(deadline)) {
+        waiter.deadlineDisposer = scheduleDeadline(deadline, () => {
+          cleanup();
+          reject(controlError("DEADLINE_EXCEEDED", "Invocation deadline exceeded while waiting"));
+        });
+      }
     });
   }
 
@@ -57,8 +62,9 @@ export class InvocationLimiter {
     while (this.active < this.maximum && this.queue.length) {
       const waiter = this.queue.shift()!;
       waiter.signal?.removeEventListener("abort", waiter.onAbort!);
-      if (waiter.timer) clearTimeout(waiter.timer);
+      waiter.deadlineDisposer?.();
       if (waiter.signal?.aborted) { waiter.reject(controlError("CANCELLED", "Invocation cancelled while waiting")); continue; }
+      if (Date.now() >= waiter.deadline) { waiter.reject(controlError("DEADLINE_EXCEEDED", "Invocation deadline exceeded while waiting")); continue; }
       this.active += 1;
       waiter.resolve(this.releaseOnce());
     }

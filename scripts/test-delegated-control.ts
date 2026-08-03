@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createProtocolFabric, type ConfirmationRequest, type ProtocolInvocationContext } from "../packages/pi-protocol/index.ts";
+import { InvocationLimiter } from "../packages/pi-protocol/invocation-limiter.ts";
 import { parseProtocolManifest } from "../packages/pi-protocol/contract/index.ts";
 import { getInvocationControl } from "../packages/pi-protocol/control.ts";
 import {
@@ -10,6 +11,7 @@ import {
 const fabric = createProtocolFabric();
 const principal = fabric.mintPrincipal("agent:test", "agent");
 let seenPrincipal = "";
+let seenDeadline: number | undefined;
 let progressSeen = false;
 let bridgedControl: PiSdkProtocolControlContext | undefined;
 fabric.subscribeProgress({ emit: () => { progressSeen = true; } });
@@ -17,6 +19,7 @@ fabric.install(definition("control_node"), {
   handlers: {
     identity: async (_input, context) => {
       seenPrincipal = context?.principal?.id ?? "missing";
+      seenDeadline = context?.deadline;
       return { principal: seenPrincipal, remaining: context?.remainingBudget?.remainingInvocations };
     },
     child: async () => ({ value: "child" }),
@@ -40,6 +43,7 @@ const identity = await fabric.invokeAs(principal, "control_node.identity", {}, {
 });
 assert.equal(identity.ok, true);
 assert.equal(seenPrincipal, "agent:test");
+assert.equal(seenDeadline, Number.POSITIVE_INFINITY, "protocol invocations have no implicit deadline");
 assert.ok(Object.isFrozen(identity.receipt));
 
 const forbidden = await fabric.invokeAs(principal, "control_node.secret", {}, {
@@ -173,6 +177,16 @@ assert.equal(errorCode(third), "OVERLOADED");
 gateRelease();
 assert.equal((await first).ok, true);
 assert.equal((await second).ok, true);
+
+const directLimiter = new InvocationLimiter(1, 1);
+const heldSlot = await directLimiter.acquire(undefined, Number.POSITIVE_INFINITY);
+const overdueDeadline = Date.now() + 10;
+const overdueWaiter = directLimiter.acquire(undefined, overdueDeadline);
+const blockUntil = Date.now() + 30;
+while (Date.now() < blockUntil) { /* keep the deadline timer from running before dispatch */ }
+heldSlot();
+await assert.rejects(overdueWaiter, (error: any) => error.code === "DEADLINE_EXCEEDED");
+assert.deepEqual(directLimiter.diagnostics(), { active: 0, queued: 0 });
 
 const delegatedLimited = createProtocolFabric({ maxConcurrentInvocations: 1, maxQueuedInvocations: 2 });
 let detachedRelease!: () => void;

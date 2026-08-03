@@ -8747,6 +8747,30 @@ function intersectGrant(parent, requested) {
   });
 }
 
+// packages/pi-protocol/deadline-timer.ts
+var MAX_TIMER_DELAY_MS = 2147483647;
+function scheduleDeadline(deadline, onDeadline) {
+  let timer;
+  let disposed = false;
+  const arm = () => {
+    if (disposed) return;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      onDeadline();
+      return;
+    }
+    timer = setTimeout(() => {
+      timer = void 0;
+      arm();
+    }, Math.min(remaining, MAX_TIMER_DELAY_MS));
+  };
+  arm();
+  return () => {
+    disposed = true;
+    if (timer !== void 0) clearTimeout(timer);
+  };
+}
+
 // packages/pi-protocol/invocation-limiter.ts
 var InvocationLimiter = class {
   constructor(maximum, maximumQueue) {
@@ -8766,14 +8790,14 @@ var InvocationLimiter = class {
     }
     if (this.queue.length >= this.maximumQueue) return Promise.reject(controlError("OVERLOADED", "Invocation queue is full"));
     return new Promise((resolve5, reject) => {
-      const waiter = { resolve: resolve5, reject, signal };
+      const waiter = { resolve: resolve5, reject, signal, deadline };
       const remove = () => {
         const index = this.queue.indexOf(waiter);
         if (index >= 0) this.queue.splice(index, 1);
       };
       const cleanup = () => {
         remove();
-        if (waiter.timer) clearTimeout(waiter.timer);
+        waiter.deadlineDisposer?.();
         signal?.removeEventListener("abort", waiter.onAbort);
       };
       waiter.onAbort = () => {
@@ -8781,11 +8805,13 @@ var InvocationLimiter = class {
         reject(controlError("CANCELLED", "Invocation cancelled while waiting"));
       };
       signal?.addEventListener("abort", waiter.onAbort, { once: true });
-      waiter.timer = setTimeout(() => {
-        cleanup();
-        reject(controlError("DEADLINE_EXCEEDED", "Invocation deadline exceeded while waiting"));
-      }, Math.max(1, deadline - Date.now()));
       this.queue.push(waiter);
+      if (Number.isFinite(deadline)) {
+        waiter.deadlineDisposer = scheduleDeadline(deadline, () => {
+          cleanup();
+          reject(controlError("DEADLINE_EXCEEDED", "Invocation deadline exceeded while waiting"));
+        });
+      }
     });
   }
   diagnostics() {
@@ -8804,9 +8830,13 @@ var InvocationLimiter = class {
     while (this.active < this.maximum && this.queue.length) {
       const waiter = this.queue.shift();
       waiter.signal?.removeEventListener("abort", waiter.onAbort);
-      if (waiter.timer) clearTimeout(waiter.timer);
+      waiter.deadlineDisposer?.();
       if (waiter.signal?.aborted) {
         waiter.reject(controlError("CANCELLED", "Invocation cancelled while waiting"));
+        continue;
+      }
+      if (Date.now() >= waiter.deadline) {
+        waiter.reject(controlError("DEADLINE_EXCEEDED", "Invocation deadline exceeded while waiting"));
         continue;
       }
       this.active += 1;
@@ -8908,7 +8938,7 @@ function createProtocolFabric(options = {}) {
   const principals = /* @__PURE__ */ new WeakSet();
   const systemPrincipal = mintProtocolPrincipal("system:local", "system");
   principals.add(systemPrincipal);
-  const defaultDeadlineMs = boundedInteger(options.defaultDeadlineMs, 3e4, 10, 3e5, "defaultDeadlineMs");
+  const defaultDeadlineMs = options.defaultDeadlineMs === void 0 ? Number.POSITIVE_INFINITY : boundedInteger(options.defaultDeadlineMs, 3e4, 10, Number.MAX_SAFE_INTEGER, "defaultDeadlineMs");
   const limiter = new InvocationLimiter(
     boundedInteger(options.maxConcurrentInvocations, 32, 1, 1024, "maxConcurrentInvocations"),
     boundedInteger(options.maxQueuedInvocations, 128, 0, 4096, "maxQueuedInvocations")
@@ -9264,9 +9294,11 @@ function createProtocolFabric(options = {}) {
         return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input });
       }
       const grant = intersectGrant(Object.freeze({ targets: Object.freeze(["*"]), maxDepth: 32, maxInvocations: 1024 }), invokeOptions.grant);
-      const requestedDeadline = invokeOptions.deadline ?? Date.now() + defaultDeadlineMs;
-      if (!Number.isFinite(requestedDeadline)) return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input });
-      const deadline = Math.min(requestedDeadline, Date.now() + 3e5);
+      const requestedDeadline = invokeOptions.deadline;
+      if (requestedDeadline !== void 0 && !Number.isFinite(requestedDeadline)) {
+        return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input });
+      }
+      const deadline = requestedDeadline ?? Number.POSITIVE_INFINITY;
       const combined = combineInvocationSignals(invokeOptions.signal, void 0, deadline);
       const rootBudget = { remainingInvocations: grant.maxInvocations ?? 64 };
       const seed = {
@@ -9596,12 +9628,11 @@ function combineInvocationSignals(first, second, deadline) {
     if (source.aborted) controller.abort();
     else source.addEventListener("abort", onAbort);
   }
-  const delay = Number.isFinite(deadline) ? Math.max(0, deadline - Date.now()) : void 0;
-  const timer = delay === void 0 ? void 0 : setTimeout(() => controller.abort(), delay);
+  const deadlineDisposer = Number.isFinite(deadline) ? scheduleDeadline(deadline, () => controller.abort()) : void 0;
   return {
     signal: controller.signal,
     dispose: () => {
-      if (timer) clearTimeout(timer);
+      deadlineDisposer?.();
       for (const source of sources) source.removeEventListener("abort", onAbort);
     }
   };

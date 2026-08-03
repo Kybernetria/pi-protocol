@@ -18,6 +18,7 @@ import {
   type InvocationControlState,
 } from "./control.ts";
 import { InvocationLimiter } from "./invocation-limiter.ts";
+import { scheduleDeadline } from "./deadline-timer.ts";
 import type {
   CreateProtocolFabricOptions,
   InvokeErrorCode,
@@ -112,7 +113,11 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
   const principals = new WeakSet<object>();
   const systemPrincipal = mintProtocolPrincipal("system:local", "system");
   principals.add(systemPrincipal);
-  const defaultDeadlineMs = boundedInteger(options.defaultDeadlineMs, 30_000, 10, 300_000, "defaultDeadlineMs");
+  // Long-running protocol agents and model-backed handlers may legitimately run for hours.
+  // Keep cancellation host-controlled, but impose no implicit wall-clock deadline.
+  const defaultDeadlineMs = options.defaultDeadlineMs === undefined
+    ? Number.POSITIVE_INFINITY
+    : boundedInteger(options.defaultDeadlineMs, 30_000, 10, Number.MAX_SAFE_INTEGER, "defaultDeadlineMs");
   const limiter = new InvocationLimiter(
     boundedInteger(options.maxConcurrentInvocations, 32, 1, 1_024, "maxConcurrentInvocations"),
     boundedInteger(options.maxQueuedInvocations, 128, 0, 4_096, "maxQueuedInvocations"),
@@ -502,9 +507,11 @@ export function createProtocolFabric(options: CreateProtocolFabricOptions = {}):
         return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input });
       }
       const grant = intersectGrant(Object.freeze({ targets: Object.freeze(["*"]), maxDepth: 32, maxInvocations: 1_024 }), invokeOptions.grant);
-      const requestedDeadline = invokeOptions.deadline ?? Date.now() + defaultDeadlineMs;
-      if (!Number.isFinite(requestedDeadline)) return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input });
-      const deadline = Math.min(requestedDeadline, Date.now() + 300_000);
+      const requestedDeadline = invokeOptions.deadline;
+      if (requestedDeadline !== undefined && !Number.isFinite(requestedDeadline)) {
+        return performAuditedInvocation({ nodeId: "invalid", provide: "invalid", input });
+      }
+      const deadline = requestedDeadline ?? Number.POSITIVE_INFINITY;
       const combined = combineInvocationSignals(invokeOptions.signal, undefined, deadline);
       const rootBudget = { remainingInvocations: grant.maxInvocations ?? 64 };
       const seed: InvocationControlState = {
@@ -896,12 +903,13 @@ function combineInvocationSignals(first: AbortSignal | undefined, second: AbortS
     if (source.aborted) controller.abort();
     else source.addEventListener("abort", onAbort);
   }
-  const delay = Number.isFinite(deadline) ? Math.max(0, deadline - Date.now()) : undefined;
-  const timer = delay === undefined ? undefined : setTimeout(() => controller.abort(), delay);
+  const deadlineDisposer = Number.isFinite(deadline)
+    ? scheduleDeadline(deadline, () => controller.abort())
+    : undefined;
   return {
     signal: controller.signal,
     dispose: () => {
-      if (timer) clearTimeout(timer);
+      deadlineDisposer?.();
       for (const source of sources) source.removeEventListener("abort", onAbort);
     },
   };
